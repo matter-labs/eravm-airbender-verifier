@@ -4,13 +4,7 @@ use once_cell::sync::OnceCell;
 
 use crate::{glue::tracers::IntoOldVmTracer, interface::Call};
 
-// mod metrics;
-// pub mod vm_1_4_1;
-// pub mod vm_1_4_2;
-// pub mod vm_boojum_integration;
 pub mod vm_latest;
-// pub mod vm_refunds_enhancement;
-// pub mod vm_virtual_blocks;
 
 #[derive(Debug, Clone)]
 pub struct CallTracer {
@@ -46,19 +40,6 @@ impl CallTracer {
             max_stack_depth: 0,
             max_near_calls: 0,
         }
-    }
-
-    fn extract_result(&mut self) -> Vec<Call> {
-        std::mem::take(&mut self.stack)
-            .into_iter()
-            .map(|x| x.farcall)
-            .collect()
-    }
-
-    fn store_result(&mut self) {
-        let result = self.extract_result();
-        let cell = self.result.as_ref();
-        cell.set(result).unwrap();
     }
 
     fn push_call_and_update_stats(&mut self, farcall: Call, near_calls_after: usize) {

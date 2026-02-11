@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 // use vise::{Buckets, EncodeLabelSet, EncodeLabelValue, Family, Histogram, Metrics};
 use zk_evm_1_5_2::aux_structures::Timestamp;
 

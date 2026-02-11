@@ -33,42 +33,6 @@ pub fn derive_base_fee_and_gas_per_pubdata(
     vm_version: VmVersion,
 ) -> (u64, u64) {
     match vm_version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::Vm1_3_2 => {
-        //     crate::vm_1_3_2::vm_with_bootloader::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::utils::fee::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::utils::fee::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::utils::fee::derive_base_fee_and_gas_per_pubdata(
-        //         batch_fee_input.into_l1_pegged(),
-        //     )
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::utils::fee::derive_base_fee_and_gas_per_pubdata(
-        //     batch_fee_input.into_pubdata_independent(),
-        // ),
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::utils::fee::derive_base_fee_and_gas_per_pubdata(
-        //     batch_fee_input.into_pubdata_independent(),
-        // ),
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -85,24 +49,6 @@ pub fn derive_base_fee_and_gas_per_pubdata(
 
 pub fn get_batch_base_fee(l1_batch_env: &L1BatchEnv, vm_version: VmVersion) -> u64 {
     match vm_version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::get_batch_base_fee(l1_batch_env)
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::get_batch_base_fee(l1_batch_env)
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::get_batch_base_fee(l1_batch_env),
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::utils::fee::get_batch_base_fee(l1_batch_env)
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::utils::fee::get_batch_base_fee(l1_batch_env)
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::utils::fee::get_batch_base_fee(l1_batch_env)
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::utils::fee::get_batch_base_fee(l1_batch_env),
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::utils::fee::get_batch_base_fee(l1_batch_env),
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -183,62 +129,13 @@ pub fn adjust_pubdata_price_for_tx(
 }
 
 pub fn derive_overhead(
-    gas_limit: u64,
-    gas_price_per_pubdata: u32,
+    _gas_limit: u64,
+    _gas_price_per_pubdata: u32,
     encoded_len: usize,
-    tx_type: u8,
+    _tx_type: u8,
     vm_version: VmVersion,
 ) -> u32 {
     match vm_version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::transaction_data::derive_overhead(
-        //         gas_limit,
-        //         gas_price_per_pubdata,
-        //         encoded_len,
-        //     )
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::transaction_data::derive_overhead(
-        //         gas_limit,
-        //         gas_price_per_pubdata,
-        //         encoded_len,
-        //         crate::vm_m6::transaction_data::OverheadCoefficients::from_tx_type(tx_type),
-        //     )
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::transaction_data::derive_overhead(
-        //     gas_limit,
-        //     gas_price_per_pubdata,
-        //     encoded_len,
-        //     crate::vm_1_3_2::transaction_data::OverheadCoefficients::from_tx_type(tx_type),
-        // ),
-        // VmVersion::VmVirtualBlocks => crate::vm_virtual_blocks::utils::overhead::derive_overhead(
-        //     gas_limit,
-        //     gas_price_per_pubdata,
-        //     encoded_len,
-        //     crate::vm_virtual_blocks::utils::overhead::OverheadCoefficients::from_tx_type(tx_type),
-        // ),
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::utils::overhead::derive_overhead(
-        //         gas_limit,
-        //         gas_price_per_pubdata,
-        //         encoded_len,
-        //         crate::vm_refunds_enhancement::utils::overhead::OverheadCoefficients::from_tx_type(
-        //             tx_type,
-        //         ),
-        //     )
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::utils::overhead::derive_overhead(
-        //         gas_limit,
-        //         gas_price_per_pubdata,
-        //         encoded_len,
-        //         crate::vm_boojum_integration::utils::overhead::OverheadCoefficients::from_tx_type(
-        //             tx_type,
-        //         ),
-        //     )
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::utils::overhead::derive_overhead(encoded_len),
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::utils::overhead::derive_overhead(encoded_len),
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -251,24 +148,6 @@ pub fn derive_overhead(
 
 pub fn get_bootloader_encoding_space(version: VmVersion) -> u32 {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::BOOTLOADER_TX_ENCODING_SPACE
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::BOOTLOADER_TX_ENCODING_SPACE
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::BOOTLOADER_TX_ENCODING_SPACE,
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::constants::BOOTLOADER_TX_ENCODING_SPACE
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::BOOTLOADER_TX_ENCODING_SPACE
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::BOOTLOADER_TX_ENCODING_SPACE
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::BOOTLOADER_TX_ENCODING_SPACE,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::BOOTLOADER_TX_ENCODING_SPACE,
         VmVersion::Vm1_5_0SmallBootloaderMemory => {
             crate::vm_latest::constants::get_bootloader_tx_encoding_space(
                 crate::vm_latest::MultiVmSubversion::SmallBootloaderMemory,
@@ -299,20 +178,6 @@ pub fn get_bootloader_encoding_space(version: VmVersion) -> u32 {
 
 pub fn get_bootloader_max_txs_in_batch(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::MAX_TXS_IN_BLOCK
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::MAX_TXS_IN_BLOCK
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::MAX_TXS_IN_BLOCK,
-        // VmVersion::VmVirtualBlocks => crate::vm_virtual_blocks::constants::MAX_TXS_IN_BLOCK,
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::MAX_TXS_IN_BLOCK
-        // }
-        // VmVersion::VmBoojumIntegration => crate::vm_boojum_integration::constants::MAX_TXS_IN_BLOCK,
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::MAX_TXS_IN_BATCH,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::MAX_TXS_IN_BATCH,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -346,21 +211,6 @@ pub fn get_bootloader_max_interop_roots_in_batch(version: VmVersion) -> usize {
 
 pub fn gas_bootloader_batch_tip_overhead(version: VmVersion) -> u32 {
     match version {
-        // VmVersion::M5WithRefunds
-        // | VmVersion::M5WithoutRefunds
-        // | VmVersion::M6Initial
-        // | VmVersion::M6BugWithCompressionFixed
-        // | VmVersion::Vm1_3_2
-        // | VmVersion::VmVirtualBlocks
-        // | VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     // For these versions the overhead has not been calculated and it has not been used with those versions.
-        //     0
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::BOOTLOADER_BATCH_TIP_OVERHEAD
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::BOOTLOADER_BATCH_TIP_OVERHEAD,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::BOOTLOADER_BATCH_TIP_OVERHEAD,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -373,21 +223,6 @@ pub fn gas_bootloader_batch_tip_overhead(version: VmVersion) -> u32 {
 
 pub fn circuit_statistics_bootloader_batch_tip_overhead(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds
-        // | VmVersion::M5WithoutRefunds
-        // | VmVersion::M6Initial
-        // | VmVersion::M6BugWithCompressionFixed
-        // | VmVersion::Vm1_3_2
-        // | VmVersion::VmVirtualBlocks
-        // | VmVersion::VmVirtualBlocksRefundsEnhancement
-        // | VmVersion::VmBoojumIntegration
-        // | VmVersion::Vm1_4_1 => {
-        //     // For these versions the overhead has not been calculated and it has not been used with those versions.
-        //     0
-        // }
-        // VmVersion::Vm1_4_2 => {
-        //     crate::vm_1_4_2::constants::BOOTLOADER_BATCH_TIP_CIRCUIT_STATISTICS_OVERHEAD as usize
-        // }
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -402,21 +237,6 @@ pub fn circuit_statistics_bootloader_batch_tip_overhead(version: VmVersion) -> u
 
 pub fn execution_metrics_bootloader_batch_tip_overhead(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds
-        // | VmVersion::M5WithoutRefunds
-        // | VmVersion::M6Initial
-        // | VmVersion::M6BugWithCompressionFixed
-        // | VmVersion::Vm1_3_2
-        // | VmVersion::VmVirtualBlocks
-        // | VmVersion::VmVirtualBlocksRefundsEnhancement
-        // | VmVersion::VmBoojumIntegration
-        // | VmVersion::Vm1_4_1 => {
-        //     // For these versions the overhead has not been calculated and it has not been used with those versions.
-        //     0
-        // }
-        // VmVersion::Vm1_4_2 => {
-        //     crate::vm_1_4_2::constants::BOOTLOADER_BATCH_TIP_METRICS_SIZE_OVERHEAD as usize
-        // }
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -431,22 +251,6 @@ pub fn execution_metrics_bootloader_batch_tip_overhead(version: VmVersion) -> us
 
 pub fn get_max_gas_per_pubdata_byte(version: VmVersion) -> u64 {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::MAX_GAS_PER_PUBDATA_BYTE
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::MAX_GAS_PER_PUBDATA_BYTE
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::MAX_GAS_PER_PUBDATA_BYTE,
-        // VmVersion::VmVirtualBlocks => crate::vm_virtual_blocks::constants::MAX_GAS_PER_PUBDATA_BYTE,
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::MAX_GAS_PER_PUBDATA_BYTE
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::MAX_GAS_PER_PUBDATA_BYTE
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::MAX_GAS_PER_PUBDATA_BYTE,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::MAX_GAS_PER_PUBDATA_BYTE,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -459,24 +263,6 @@ pub fn get_max_gas_per_pubdata_byte(version: VmVersion) -> u64 {
 
 pub fn get_used_bootloader_memory_bytes(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::USED_BOOTLOADER_MEMORY_BYTES
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::USED_BOOTLOADER_MEMORY_BYTES
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::USED_BOOTLOADER_MEMORY_BYTES,
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::constants::USED_BOOTLOADER_MEMORY_BYTES
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::USED_BOOTLOADER_MEMORY_BYTES
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::USED_BOOTLOADER_MEMORY_BYTES
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::USED_BOOTLOADER_MEMORY_BYTES,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::USED_BOOTLOADER_MEMORY_BYTES,
         VmVersion::Vm1_5_0SmallBootloaderMemory => {
             crate::vm_latest::constants::get_used_bootloader_memory_bytes(
                 crate::vm_latest::MultiVmSubversion::SmallBootloaderMemory,
@@ -507,24 +293,6 @@ pub fn get_used_bootloader_memory_bytes(version: VmVersion) -> usize {
 
 pub fn get_used_bootloader_memory_words(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::USED_BOOTLOADER_MEMORY_WORDS
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::USED_BOOTLOADER_MEMORY_WORDS
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::USED_BOOTLOADER_MEMORY_WORDS,
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::constants::USED_BOOTLOADER_MEMORY_WORDS
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::USED_BOOTLOADER_MEMORY_WORDS
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::USED_BOOTLOADER_MEMORY_WORDS
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::USED_BOOTLOADER_MEMORY_WORDS,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::USED_BOOTLOADER_MEMORY_WORDS,
         VmVersion::Vm1_5_0SmallBootloaderMemory => {
             crate::vm_latest::constants::get_used_bootloader_memory_words(
                 crate::vm_latest::MultiVmSubversion::SmallBootloaderMemory,
@@ -555,22 +323,6 @@ pub fn get_used_bootloader_memory_words(version: VmVersion) -> usize {
 
 pub fn get_max_batch_gas_limit(version: VmVersion) -> u64 {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::utils::BLOCK_GAS_LIMIT as u64
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::utils::BLOCK_GAS_LIMIT as u64
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::utils::BLOCK_GAS_LIMIT as u64,
-        // VmVersion::VmVirtualBlocks => crate::vm_virtual_blocks::constants::BLOCK_GAS_LIMIT as u64,
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::BLOCK_GAS_LIMIT as u64
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::BLOCK_GAS_LIMIT as u64
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::BLOCK_GAS_LIMIT as u64,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::BLOCK_GAS_LIMIT as u64,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -583,24 +335,6 @@ pub fn get_max_batch_gas_limit(version: VmVersion) -> u64 {
 
 pub fn get_eth_call_gas_limit(version: VmVersion) -> u64 {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::utils::ETH_CALL_GAS_LIMIT as u64
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::utils::ETH_CALL_GAS_LIMIT as u64
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::utils::ETH_CALL_GAS_LIMIT as u64,
-        // VmVersion::VmVirtualBlocks => {
-        //     crate::vm_virtual_blocks::constants::ETH_CALL_GAS_LIMIT as u64
-        // }
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::ETH_CALL_GAS_LIMIT as u64
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::ETH_CALL_GAS_LIMIT as u64
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::ETH_CALL_GAS_LIMIT as u64,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::ETH_CALL_GAS_LIMIT as u64,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -613,21 +347,6 @@ pub fn get_eth_call_gas_limit(version: VmVersion) -> u64 {
 
 pub fn get_max_batch_base_layer_circuits(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds
-        // | VmVersion::M5WithoutRefunds
-        // | VmVersion::M6Initial
-        // | VmVersion::M6BugWithCompressionFixed
-        // | VmVersion::Vm1_3_2
-        // | VmVersion::VmVirtualBlocks
-        // | VmVersion::VmVirtualBlocksRefundsEnhancement
-        // | VmVersion::VmBoojumIntegration
-        // | VmVersion::Vm1_4_1
-        // | VmVersion::Vm1_4_2 => {
-        //     // For pre-v1.4.2 the maximal number of circuits has not been calculated, but since
-        //     // these are used only for replaying transactions, we'll reuse the same value as for v1.4.2.
-        //     // We avoid providing `0` for the old versions to avoid potential errors when working with old versions.
-        //     crate::vm_1_4_2::constants::MAX_BASE_LAYER_CIRCUITS
-        // }
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -640,22 +359,6 @@ pub fn get_max_batch_base_layer_circuits(version: VmVersion) -> usize {
 
 pub fn get_max_new_factory_deps(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds | VmVersion::M5WithoutRefunds => {
-        //     crate::vm_m5::vm_with_bootloader::MAX_NEW_FACTORY_DEPS
-        // }
-        // VmVersion::M6Initial | VmVersion::M6BugWithCompressionFixed => {
-        //     crate::vm_m6::vm_with_bootloader::MAX_NEW_FACTORY_DEPS
-        // }
-        // VmVersion::Vm1_3_2 => crate::vm_1_3_2::vm_with_bootloader::MAX_NEW_FACTORY_DEPS,
-        // VmVersion::VmVirtualBlocks => crate::vm_virtual_blocks::constants::MAX_NEW_FACTORY_DEPS,
-        // VmVersion::VmVirtualBlocksRefundsEnhancement => {
-        //     crate::vm_refunds_enhancement::constants::MAX_NEW_FACTORY_DEPS
-        // }
-        // VmVersion::VmBoojumIntegration => {
-        //     crate::vm_boojum_integration::constants::MAX_NEW_FACTORY_DEPS
-        // }
-        // VmVersion::Vm1_4_1 => crate::vm_1_4_1::constants::MAX_NEW_FACTORY_DEPS,
-        // VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::MAX_NEW_FACTORY_DEPS,
         version @ (VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway
@@ -670,16 +373,6 @@ pub fn get_max_new_factory_deps(version: VmVersion) -> usize {
 
 pub fn get_max_vm_pubdata_per_batch(version: VmVersion) -> usize {
     match version {
-        // VmVersion::M5WithRefunds
-        // | VmVersion::M5WithoutRefunds
-        // | VmVersion::M6Initial
-        // | VmVersion::M6BugWithCompressionFixed
-        // | VmVersion::Vm1_3_2
-        // | VmVersion::VmVirtualBlocks
-        // | VmVersion::VmVirtualBlocksRefundsEnhancement
-        // | VmVersion::VmBoojumIntegration
-        // | VmVersion::Vm1_4_1
-        // | VmVersion::Vm1_4_2 => crate::vm_1_4_2::constants::MAX_VM_PUBDATA_PER_BATCH,
         VmVersion::Vm1_5_0SmallBootloaderMemory
         | VmVersion::Vm1_5_0IncreasedBootloaderMemory
         | VmVersion::VmGateway

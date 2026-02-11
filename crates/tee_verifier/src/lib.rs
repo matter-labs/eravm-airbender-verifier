@@ -12,12 +12,10 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{ReadStorage, StorageSnapshot, StorageView},
-        FinishedL1Batch, L2BlockEnv, VmFactory, VmInterface, VmInterfaceExt,
-        VmInterfaceHistoryEnabled,
+        FinishedL1Batch, L2BlockEnv, VmInterface, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     pubdata_builders::pubdata_params_to_builder,
-    vm_latest::HistoryEnabled,
-    FastVmInstance, LegacyVmInstance,
+    FastVmInstance,
 };
 use zksync_prover_interface::inputs::{StorageLogMetadata, WitnessInputMerklePaths};
 use zksync_tee_prover_interface::inputs::V1TeeVerifierInput;
@@ -88,7 +86,6 @@ impl Verify for V1TeeVerifierInput {
         let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
         let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
         let vm = FastVmInstance::fast(self.l1_batch_env, self.system_env.clone(), storage_view);
-        // let vm = LegacyVmInstance::new(self.l1_batch_env, self.system_env.clone(), storage_view);
 
         let vm_out = execute_vm(
             self.l2_blocks_execution_data,
@@ -185,7 +182,6 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
 fn execute_vm<S: ReadStorage>(
     l2_blocks_execution_data: Vec<L2BlockExecutionData>,
     mut vm: FastVmInstance<S>,
-    // mut vm: LegacyVmInstance<S, HistoryEnabled>,
     pubdata_params: PubdataParams,
     protocol_version: ProtocolVersionId,
 ) -> anyhow::Result<FinishedL1Batch> {
@@ -280,11 +276,7 @@ fn generate_tree_instructions(
         .collect::<Result<Vec<_>, _>>()
 }
 
-fn execute_tx<S: ReadStorage>(
-    tx: &Transaction,
-    vm: &mut FastVmInstance<S>,
-    // vm: &mut LegacyVmInstance<S, HistoryEnabled>,
-) -> anyhow::Result<()> {
+fn execute_tx<S: ReadStorage>(tx: &Transaction, vm: &mut FastVmInstance<S>) -> anyhow::Result<()> {
     // Attempt to run VM with bytecode compression on.
     vm.make_snapshot();
     if vm
