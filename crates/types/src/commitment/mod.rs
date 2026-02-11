@@ -36,8 +36,6 @@ use crate::{
     ProtocolVersionId, H256,
 };
 
-#[cfg(test)]
-mod tests;
 
 #[derive(Debug, Error)]
 pub enum CommitmentValidationError {

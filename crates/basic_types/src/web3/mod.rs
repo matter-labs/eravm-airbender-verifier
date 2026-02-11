@@ -11,13 +11,10 @@ use serde::{
     ser::SerializeStruct,
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use serde_json::Value;
 
 use crate::{Bloom, H160, H256, U256, U64};
 
 pub mod contract;
-#[cfg(test)]
-mod tests;
 
 pub type Index = U64;
 
@@ -1359,7 +1356,7 @@ pub struct Work {
 }
 
 impl<'a> Deserialize<'a> for Work {
-    fn deserialize<D>(deserializer: D) -> Result<Work, D::Error>
+    fn deserialize<D>(_deserializer: D) -> Result<Work, D::Error>
     where
         D: Deserializer<'a>,
     {

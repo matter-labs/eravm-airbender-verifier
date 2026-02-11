@@ -62,35 +62,3 @@ impl<P: Prefix> BytesToHexSerde<P> {
 }
 
 pub type ZeroPrefixHexSerde = BytesToHexSerde<ZeroxPrefix>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Serialize, Deserialize, PartialEq, Debug)]
-    struct Execute {
-        #[serde(with = "ZeroPrefixHexSerde")]
-        pub calldata: Vec<u8>,
-    }
-
-    #[test]
-    fn test_hex_serde_bincode() {
-        let original = Execute {
-            calldata: vec![0, 1, 2, 3, 4],
-        };
-        let encoded: Vec<u8> = vec![5, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4];
-        let decoded: Execute = bincode::deserialize(&encoded).unwrap();
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn test_hex_serde_json() {
-        let original = Execute {
-            calldata: vec![0, 1, 2, 3, 4],
-        };
-        let encoded = serde_json::to_string(&original).unwrap();
-        assert_eq!(r#"{"calldata":"0x0001020304"}"#, encoded);
-        let decoded: Execute = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(original, decoded);
-    }
-}

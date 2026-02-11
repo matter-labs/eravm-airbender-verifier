@@ -11,7 +11,6 @@ members = [
   "crates/tee_prover_interface",
   "crates/tee_verifier",
   "crates/types",
-  "crates/utils",
   "crates/vm_interface",
 ]
 resolver = "2"
@@ -88,5 +87,4 @@ zksync_system_constants = { version = "29.7.1-non-semver-compat", path = "crates
 zksync_tee_prover_interface = { version = "29.7.1-non-semver-compat", path = "crates/tee_prover_interface" }
 zksync_tee_verifier = { version = "29.7.1-non-semver-compat", path = "crates/tee_verifier" }
 zksync_types = { version = "29.7.1-non-semver-compat", path = "crates/types" }
-zksync_utils = { version = "29.7.1-non-semver-compat", path = "crates/utils" }
 zksync_vm_interface = { version = "29.7.1-non-semver-compat", path = "crates/vm_interface" }

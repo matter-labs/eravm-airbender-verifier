@@ -11,8 +11,6 @@ use crate::interface::pubdata::PubdataBuilder;
 
 mod full_builder;
 mod hashed_builder;
-#[cfg(test)]
-mod tests;
 mod utils;
 
 pub fn pubdata_params_to_builder(

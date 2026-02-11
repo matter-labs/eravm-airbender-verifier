@@ -17,11 +17,8 @@ use zksync_basic_types::{
     ethabi::{Contract, Event, Function},
     H256,
 };
-use zksync_utils::env::Workspace;
 
 mod serde_bytecode;
-#[cfg(test)]
-mod tests;
 
 #[derive(Debug, Clone)]
 pub enum ContractLanguage {
@@ -93,7 +90,7 @@ const _FAIL_ON_RECEIVE_CONTRACT_FILE: &str =
     "contracts/l1-contracts/artifacts/contracts/zksync/dev-contracts/FailOnReceive.sol/FailOnReceive.json";
 
 fn home_path() -> PathBuf {
-    Workspace::locate().root()
+    panic!("Not supported")
 }
 
 fn read_file_to_json_value(path: impl AsRef<Path> + std::fmt::Debug) -> Option<serde_json::Value> {

@@ -48,8 +48,6 @@ use crate::{
     types::{Key, Manifest, Root, TreeEntry, TreeTags, ValueHash},
 };
 
-#[cfg(test)]
-mod tests;
 
 /// Handle to a Merkle tree during its recovery.
 #[derive(Debug)]

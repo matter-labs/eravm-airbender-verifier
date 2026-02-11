@@ -3487,7 +3487,6 @@ dependencies = [
  "serde",
  "serde_json",
  "zksync_basic_types",
- "zksync_utils",
 ]
 
 [[package]]
@@ -3728,17 +3727,6 @@ dependencies = [
  "zksync_protobuf",
  "zksync_protobuf_build",
  "zksync_system_constants",
-]
-
-[[package]]
-name = "zksync_utils"
-version = "29.7.1-non-semver-compat"
-dependencies = [
- "anyhow",
- "assert_matches",
- "once_cell",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

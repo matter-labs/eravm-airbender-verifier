@@ -1,10 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt, mem,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, collections::HashMap, fmt, mem, rc::Rc, time::Duration};
 
 use zksync_types::{StorageKey, StorageValue, H256};
 

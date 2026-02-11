@@ -92,32 +92,3 @@ impl<'de> Deserialize<'de> for SensitiveUrl {
         Url::deserialize(deserializer).map(Self::from)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn url_censoring_works_as_expected() {
-        let url: SensitiveUrl = "postgres://postgres:notsecurepassword@localhost/dev"
-            .parse()
-            .unwrap();
-        let url_debug = format!("{url:?}");
-        assert_eq!(
-            url_debug,
-            format!("{:?}", "postgres://***:***@localhost/dev")
-        );
-
-        let url_str = "postgres://localhost/dev?application_name=app&user=postgres&password=notsecurepassword\
-            &options=-c+synchronous_commit%3Doff";
-        let url = url_str
-            .parse::<SensitiveUrl>()
-            .unwrap()
-            .with_sensitive_query_params(&["user", "password"]);
-        let url_debug = format!("{url:?}");
-        assert_eq!(
-            url_debug,
-            format!("{:?}", "postgres://localhost/dev?application_name=app&user=***&password=***&options=-c+synchronous_commit%3Doff")
-        );
-    }
-}

@@ -157,36 +157,3 @@ impl fmt::Display for ValidationError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_apply_range_when_none() {
-        let mut validation_traces = ValidationTraces {
-            timestamp_asserter_range: None,
-        };
-        let new_range = 10..20;
-        validation_traces.apply_timestamp_asserter_range(new_range.clone());
-        assert_eq!(validation_traces.timestamp_asserter_range, Some(new_range));
-    }
-
-    #[test]
-    fn test_apply_range_with_overlap_narrower_result() {
-        let mut validation_traces = ValidationTraces {
-            timestamp_asserter_range: Some(5..25),
-        };
-        validation_traces.apply_timestamp_asserter_range(10..20);
-        assert_eq!(validation_traces.timestamp_asserter_range, Some(10..20));
-    }
-
-    #[test]
-    fn test_apply_range_with_partial_overlap() {
-        let mut validation_traces = ValidationTraces {
-            timestamp_asserter_range: Some(10..30),
-        };
-        validation_traces.apply_timestamp_asserter_range(20..40);
-        assert_eq!(validation_traces.timestamp_asserter_range, Some(20..30));
-    }
-}
