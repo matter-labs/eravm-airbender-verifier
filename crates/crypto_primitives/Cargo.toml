@@ -23,10 +23,8 @@ hex.workspace = true
 anyhow.workspace = true
 rand.workspace = true
 
-[target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
-# Keep bigint arithmetic enabled for proving targets.
-zksync_os_crypto = { package = "crypto", path = "../../../zksync-os/crypto", features = ["single_round_with_control", "bigint_ops"] }
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+airbender-crypto = { workspace = true, features = ["proving"] }
 
-[target.'cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))'.dependencies]
-# Keep host builds compiling without bigint-specific modules.
-zksync_os_crypto = { package = "crypto", path = "../../../zksync-os/crypto", features = ["single_round_with_control"] }
+[target.'cfg(not(target_arch = "riscv32"))'.dependencies]
+airbender-crypto.workspace = true

@@ -1,7 +1,5 @@
-// use blake2::{Blake2s256, Digest};
-
+use airbender_crypto::{blake2s::Blake2s256, MiniDigest};
 use zksync_basic_types::H256;
-use zksync_os_crypto::{blake2s::Blake2s256, MiniDigest};
 
 use crate::hasher::Hasher;
 

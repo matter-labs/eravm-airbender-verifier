@@ -24,6 +24,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "airbender-crypto"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
+ "blake2",
+ "blake2s_u32",
+ "cfg-if",
+ "common_constants 0.1.0 (git+https://github.com/matter-labs/zksync-airbender?branch=dev)",
+ "const_for",
+ "educe",
+ "itertools 0.14.0",
+ "k256",
+ "num-bigint",
+ "num-traits",
+ "p256",
+ "ripemd",
+ "ruint",
+ "seq-macro",
+ "sha2",
+ "sha3",
+ "zeroize",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -324,8 +353,9 @@ dependencies = [
 [[package]]
 name = "blake2s_u32"
 version = "0.1.0"
+source = "git+https://github.com/matter-labs/zksync-airbender?branch=dev#5ecb67472a3110878417527398d7e3a43875e57c"
 dependencies = [
- "common_constants",
+ "common_constants 0.1.0 (git+https://github.com/matter-labs/zksync-airbender?branch=dev)",
  "unroll",
 ]
 
@@ -502,6 +532,11 @@ name = "common_constants"
 version = "0.1.0"
 
 [[package]]
+name = "common_constants"
+version = "0.1.0"
+source = "git+https://github.com/matter-labs/zksync-airbender?branch=dev#5ecb67472a3110878417527398d7e3a43875e57c"
+
+[[package]]
 name = "compile-fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -647,9 +682,8 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "blake2",
- "blake2s_u32",
  "cfg-if",
- "common_constants",
+ "common_constants 0.1.0",
  "const_for",
  "educe",
  "itertools 0.14.0",
@@ -2764,20 +2798,19 @@ dependencies = [
 name = "zksync_basic_types"
 version = "29.7.1-non-semver-compat"
 dependencies = [
+ "airbender-crypto",
  "anyhow",
  "bincode",
  "const-decoder",
  "ethabi",
  "hex",
  "num_enum 0.7.5",
- "seq-macro",
  "serde",
  "serde_json",
  "serde_with",
  "sha2",
  "strum",
  "thiserror 2.0.18",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -2794,9 +2827,9 @@ dependencies = [
 name = "zksync_crypto_primitives"
 version = "29.7.1-non-semver-compat"
 dependencies = [
+ "airbender-crypto",
  "anyhow",
  "blake2",
- "crypto",
  "hex",
  "rand",
  "secp256k1",

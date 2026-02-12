@@ -15,7 +15,6 @@ const-decoder.workspace = true
 ethabi.workspace = true
 hex.workspace = true
 sha2.workspace = true
-tiny-keccak.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -26,7 +25,12 @@ anyhow.workspace = true
 serde_with.workspace = true
 # secrecy.workspace = true
 # vise.workspace = true
-seq-macro = "*"
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+airbender-crypto = { workspace = true, features = ["proving"] }
+
+[target.'cfg(not(target_arch = "riscv32"))'.dependencies]
+airbender-crypto.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
