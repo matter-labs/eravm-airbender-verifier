@@ -48,7 +48,6 @@ use crate::{
     types::{Key, Manifest, Root, TreeEntry, TreeTags, ValueHash},
 };
 
-
 /// Handle to a Merkle tree during its recovery.
 #[derive(Debug)]
 pub struct MerkleTreeRecovery<DB, H = Blake2Hasher> {

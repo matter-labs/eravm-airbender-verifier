@@ -57,6 +57,7 @@ pub use crate::{
         BlockOutput, BlockOutputWithProofs, Key, TreeEntry, TreeEntryWithProof, TreeInstruction,
         TreeLogEntry, TreeLogEntryWithProof, ValueHash,
     },
+    witness::{StorageLogMetadata, WitnessInputMerklePaths},
 };
 
 #[cfg(feature = "rocksdb")]
@@ -78,6 +79,8 @@ pub mod repair;
 mod storage;
 mod types;
 mod utils;
+/// Witness data structures shared with verifier-facing crates.
+pub mod witness;
 
 /// Unstable types that should not be used unless you know what you're doing (e.g., implementing
 /// `Database` trait for a custom type). There are no guarantees whatsoever that APIs / structure of

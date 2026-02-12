@@ -13,7 +13,6 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::Context as _;
 pub use ethabi::{
     self,
     ethereum_types::{
@@ -28,48 +27,23 @@ pub use self::{
         address_to_h256, address_to_u256, h256_to_address, h256_to_u256, u256_to_address,
         u256_to_h256,
     },
-    errors::{OrStopped, StopContext},
     stop_guard::{StopGuard, StopToken},
 };
 
 #[macro_use]
 mod macros;
-pub mod basic_fri_types;
 pub mod bytecode;
 pub mod commitment;
 mod conversions;
-mod errors;
-pub mod network;
 pub mod protocol_version;
-pub mod prover_dal;
-pub mod pubdata_da;
-// pub mod secrets;
 pub mod serde_wrappers;
-pub mod settlement;
 mod stop_guard;
-pub mod tee_types;
-// pub mod url;
 pub mod vm;
 pub mod web3;
 
 /// Computes `ceil(a / b)`.
 pub fn ceil_div_u256(a: U256, b: U256) -> U256 {
     (a + b - U256::from(1)) / b
-}
-
-/// Parses H256 from a slice of bytes.
-pub fn parse_h256(bytes: &[u8]) -> anyhow::Result<H256> {
-    Ok(<[u8; 32]>::try_from(bytes).context("invalid size")?.into())
-}
-
-/// Parses H256 from an optional slice of bytes.
-pub fn parse_h256_opt(bytes: Option<&[u8]>) -> anyhow::Result<H256> {
-    parse_h256(bytes.context("missing data")?)
-}
-
-/// Parses H160 from a slice of bytes.
-pub fn parse_h160(bytes: &[u8]) -> anyhow::Result<H160> {
-    Ok(<[u8; 20]>::try_from(bytes).context("invalid size")?.into())
 }
 
 /// Account place in the global state tree is uniquely identified by its address.
@@ -244,51 +218,6 @@ impl From<u32> for L2ChainId {
     }
 }
 
-/// Unique identifier of the L1 batch for provers.
-///
-/// With prover cluster, we can have multiple L2 chains being processed in parallel, and each L2 chain can have multiple batches,
-/// so the type identifies the batch uniquely.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct L1BatchId {
-    chain_id: L2ChainId,
-    batch_number: L1BatchNumber,
-}
-
-impl std::fmt::Display for L1BatchId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "L1BatchId(chain_id: {}, batch_number: {})",
-            self.chain_id.as_u64(),
-            self.batch_number.0
-        )
-    }
-}
-
-impl L1BatchId {
-    pub fn new(chain_id: L2ChainId, batch_number: L1BatchNumber) -> Self {
-        Self {
-            chain_id,
-            batch_number,
-        }
-    }
-
-    pub fn from_raw(chain_id: u64, batch_number: u32) -> Self {
-        Self {
-            chain_id: L2ChainId::new(chain_id).expect("Invalid chain ID"),
-            batch_number: L1BatchNumber(batch_number),
-        }
-    }
-
-    pub fn chain_id(&self) -> L2ChainId {
-        self.chain_id
-    }
-
-    pub fn batch_number(&self) -> L1BatchNumber {
-        self.batch_number
-    }
-}
-
 basic_type!(
     /// ZKsync network block sequential index.
     L2BlockNumber,
@@ -319,29 +248,6 @@ basic_type!(
     PriorityOpId,
     u64
 );
-
-basic_type!(
-    /// ChainId of a settlement layer.
-    SLChainId,
-    u64
-);
-
-basic_type!(
-    /// ChainId in the Ethereum network.
-    ///
-    /// IMPORTANT: Please, use this method when exactly the L1 chain id is required.
-    /// Note, that typically this is not the case and the majority of methods need to work
-    /// with *settlement layer* chain id, which is represented by `SLChainId`.
-    L1ChainId,
-    u64
-);
-
-// Every L1 can be a settlement layer.
-impl From<L1ChainId> for SLChainId {
-    fn from(value: L1ChainId) -> Self {
-        SLChainId(value.0)
-    }
-}
 
 #[allow(clippy::derivable_impls)]
 impl Default for L2BlockNumber {

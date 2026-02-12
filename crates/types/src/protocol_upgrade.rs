@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use zksync_basic_types::protocol_version::{
     L1VerifierConfig, ProtocolSemanticVersion, ProtocolVersionId, VerifierParams,
 };
-use zksync_contracts::{BaseSystemContractsHashes, DIAMOND_CUT};
+use zksync_contracts::BaseSystemContractsHashes;
 
 use crate::{
     abi::{self, ForceDeployment, GatewayUpgradeEncodedInput, ZkChainSpecificUpgradeData},
@@ -100,6 +100,56 @@ pub trait ProtocolUpgradePreimageOracle: Send + Sync {
     ) -> anyhow::Result<Vec<Vec<u8>>>;
 }
 
+fn diamond_cut_function() -> ethabi::Function {
+    let facet_cut_schema = ParamType::Tuple(vec![
+        ParamType::Address,
+        ParamType::Uint(8),
+        ParamType::Bool,
+        ParamType::Array(Box::new(ParamType::FixedBytes(4))),
+    ]);
+    let diamond_cut_schema = ParamType::Tuple(vec![
+        ParamType::Array(Box::new(facet_cut_schema)),
+        ParamType::Address,
+        ParamType::Bytes,
+    ]);
+
+    #[allow(deprecated)]
+    ethabi::Function {
+        name: "diamondCut".to_owned(),
+        inputs: vec![ethabi::Param {
+            name: "_diamondCut".to_owned(),
+            kind: diamond_cut_schema,
+            internal_type: Some("struct Diamond.DiamondCutData".to_owned()),
+        }],
+        outputs: vec![],
+        constant: None,
+        state_mutability: ethabi::StateMutability::NonPayable,
+    }
+}
+
+fn force_deploy_on_addresses_function() -> ethabi::Function {
+    let force_deployment_schema = ParamType::Tuple(vec![
+        ParamType::FixedBytes(32),
+        ParamType::Address,
+        ParamType::Bool,
+        ParamType::Uint(256),
+        ParamType::Bytes,
+    ]);
+
+    #[allow(deprecated)]
+    ethabi::Function {
+        name: "forceDeployOnAddresses".to_owned(),
+        inputs: vec![ethabi::Param {
+            name: "_deployments".to_owned(),
+            kind: ParamType::Array(Box::new(force_deployment_schema)),
+            internal_type: Some("struct IContractDeployer.ForceDeployment[]".to_owned()),
+        }],
+        outputs: vec![],
+        constant: None,
+        state_mutability: ethabi::StateMutability::NonPayable,
+    }
+}
+
 /// Some upgrades have chain-dependent calldata that has to be prepared properly.
 async fn prepare_upgrade_call(
     proposed_upgrade: &abi::ProposedUpgrade,
@@ -146,9 +196,7 @@ async fn prepare_upgrade_call(
         .map(ForceDeployment::encode)
         .collect();
 
-    let full_data = zksync_contracts::deployer_contract()
-        .function("forceDeployOnAddresses")
-        .unwrap()
+    let full_data = force_deploy_on_addresses_function()
         .encode_input(&[Token::Array(force_deployments_as_tokens)])
         .unwrap();
 
@@ -162,7 +210,7 @@ impl ProtocolUpgrade {
         chain_specific: Option<ZkChainSpecificUpgradeData>,
     ) -> anyhow::Result<Self> {
         // Unwraps are safe because we have validated the input against the function signature.
-        let diamond_cut_tokens = DIAMOND_CUT.decode_input(diamond_cut_data)?[0]
+        let diamond_cut_tokens = diamond_cut_function().decode_input(diamond_cut_data)?[0]
             .clone()
             .into_tuple()
             .unwrap();

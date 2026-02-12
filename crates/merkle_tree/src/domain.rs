@@ -2,7 +2,6 @@
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
-use zksync_prover_interface::inputs::{StorageLogMetadata, WitnessInputMerklePaths};
 use zksync_types::{L1BatchNumber, StorageKey};
 
 use crate::{
@@ -12,6 +11,7 @@ use crate::{
         Key, NodeKey, RawNode, Root, TreeEntry, TreeEntryWithProof, TreeInstruction, TreeLogEntry,
         ValueHash, TREE_DEPTH,
     },
+    witness::{StorageLogMetadata, WitnessInputMerklePaths},
     BlockOutput, HashTree, MerkleTree, MerkleTreePruner, MerkleTreePrunerHandle, NoVersionError,
     PruneDatabase,
 };

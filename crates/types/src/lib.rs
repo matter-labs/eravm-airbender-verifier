@@ -40,7 +40,6 @@ pub mod l2_to_l1_log;
 pub mod priority_op_onchain_data;
 pub mod protocol_upgrade;
 pub mod storage;
-pub mod system_contracts;
 pub mod tx;
 pub mod zk_evm_types;
 

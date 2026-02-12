@@ -274,12 +274,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
-name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,8 +1885,6 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "678b5a069e50bf00ecd22d0cd8ddf7c236f68581b03db652061ed5eb13a312ff"
 dependencies = [
- "base64",
- "hex",
  "serde",
  "serde_with_macros",
 ]
@@ -2774,7 +2766,6 @@ version = "29.7.1-non-semver-compat"
 dependencies = [
  "anyhow",
  "bincode",
- "chrono",
  "const-decoder",
  "ethabi",
  "hex",
@@ -2794,8 +2785,6 @@ name = "zksync_contracts"
 version = "29.7.1-non-semver-compat"
 dependencies = [
  "bincode",
- "hex",
- "once_cell",
  "serde",
  "serde_json",
  "zksync_basic_types",
@@ -2865,7 +2854,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zksync_crypto_primitives",
- "zksync_prover_interface",
  "zksync_system_constants",
  "zksync_types",
 ]
@@ -2919,15 +2907,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zksync_prover_interface"
-version = "29.7.1-non-semver-compat"
-dependencies = [
- "serde",
- "serde_with",
- "zksync_types",
-]
-
-[[package]]
 name = "zksync_system_constants"
 version = "29.7.1-non-semver-compat"
 dependencies = [
@@ -2936,22 +2915,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "zksync_tee_prover_interface"
-version = "29.7.1-non-semver-compat"
-dependencies = [
- "serde",
- "zksync_prover_interface",
- "zksync_types",
- "zksync_vm_interface",
-]
-
-[[package]]
 name = "zksync_tee_verifier"
 version = "29.7.1-non-semver-compat"
 dependencies = [
  "anyhow",
  "bincode",
- "once_cell",
  "serde",
  "serde_json",
  "tracing",
@@ -2959,9 +2927,8 @@ dependencies = [
  "zksync_crypto_primitives",
  "zksync_merkle_tree",
  "zksync_multivm",
- "zksync_prover_interface",
- "zksync_tee_prover_interface",
  "zksync_types",
+ "zksync_vm_interface",
 ]
 
 [[package]]

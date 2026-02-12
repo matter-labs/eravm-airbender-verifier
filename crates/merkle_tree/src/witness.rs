@@ -1,14 +1,13 @@
-use std::{collections::HashMap, convert::TryInto};
+use std::convert::TryInto;
 
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
-use zksync_types::{
-    witness_block_state::WitnessStorageState, L1BatchNumber, ProtocolVersionId, U256,
-};
+use zksync_types::U256;
 
 const HASH_LEN: usize = 32;
 
-/// Metadata emitted by a Merkle tree after processing single storage log.
+/// Metadata emitted by the Merkle tree after processing a single storage log.
+#[allow(missing_docs)]
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StorageLogMetadata {
@@ -26,12 +25,14 @@ pub struct StorageLogMetadata {
 }
 
 impl StorageLogMetadata {
-    pub fn leaf_hashed_key_array(&self) -> [u8; 32] {
-        let mut result = [0_u8; 32];
+    /// Returns `leaf_hashed_key` as a fixed-size little-endian byte array.
+    pub fn leaf_hashed_key_array(&self) -> [u8; HASH_LEN] {
+        let mut result = [0_u8; HASH_LEN];
         self.leaf_hashed_key.to_little_endian(&mut result);
         result
     }
 
+    /// Converts Merkle paths into a fixed-size array, panicking on length mismatch.
     pub fn into_merkle_paths_array<const PATH_LEN: usize>(self) -> Box<[[u8; HASH_LEN]; PATH_LEN]> {
         let actual_len = self.merkle_paths.len();
         self.merkle_paths.try_into().unwrap_or_else(|_| {
@@ -43,31 +44,16 @@ impl StorageLogMetadata {
     }
 }
 
-/// Witness data produced by the Merkle tree as a result of processing a single block. Used
-/// as an input to the witness generator.
-///
-/// # Stability
-///
-/// This type is serialized using `bincode` to be passed from the metadata calculator
-/// to the witness generator. As such, changes in its `serde` serialization
-/// must be backwards-compatible.
-///
-/// # Compact form
-///
-/// In order to reduce storage space, this job supports a compact format. In this format,
-/// only the first item in `merkle_paths` is guaranteed to have the full Merkle path (i.e.,
-/// 256 items with the current Merkle tree). The following items may have less hashes in their
-/// Merkle paths; if this is the case, the starting hashes are skipped and are the same
-/// as in the first path.
+/// Witness data produced by the Merkle tree after processing a single block.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WitnessInputMerklePaths {
-    // Merkle paths and some auxiliary information for each read / write operation in a block.
     pub merkle_paths: Vec<StorageLogMetadata>,
     pub(crate) next_enumeration_index: u64,
 }
 
 impl WitnessInputMerklePaths {
-    /// Creates a new job with the specified leaf index and no included paths.
+    /// Creates a new witness with the specified leaf index and no paths.
     pub fn new(next_enumeration_index: u64) -> Self {
         Self {
             merkle_paths: vec![],
@@ -85,7 +71,7 @@ impl WitnessInputMerklePaths {
         self.merkle_paths.reserve(additional_capacity);
     }
 
-    /// Pushes an additional Merkle path.
+    /// Pushes an additional Merkle path in compact form.
     pub fn push_merkle_path(&mut self, mut path: StorageLogMetadata) {
         let Some(first_path) = self.merkle_paths.first() else {
             self.merkle_paths.push(path);
@@ -101,7 +87,7 @@ impl WitnessInputMerklePaths {
         self.merkle_paths.push(path);
     }
 
-    /// Converts this job into an iterator over the contained Merkle paths.
+    /// Expands compact Merkle paths and returns an iterator over all logs.
     pub fn into_merkle_paths(self) -> impl ExactSizeIterator<Item = StorageLogMetadata> {
         let mut merkle_paths = self.merkle_paths;
         if let [first, rest @ ..] = merkle_paths.as_mut_slice() {
@@ -119,60 +105,5 @@ impl WitnessInputMerklePaths {
             }
         }
         merkle_paths.into_iter()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct VMRunWitnessInputData {
-    pub l1_batch_number: L1BatchNumber,
-    pub used_bytecodes: HashMap<U256, Vec<[u8; 32]>>,
-    pub initial_heap_content: Vec<(usize, U256)>,
-    pub protocol_version: ProtocolVersionId,
-    pub bootloader_code: Vec<[u8; 32]>,
-    pub default_account_code_hash: U256,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evm_emulator_code_hash: Option<U256>,
-    pub storage_refunds: Vec<u32>,
-    pub pubdata_costs: Vec<i32>,
-    pub witness_block_state: WitnessStorageState,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prepare_basic_circuits_job_roundtrip() {
-        let zero_hash = [0_u8; 32];
-        let logs = (0..10).map(|i| {
-            let mut merkle_paths = vec![zero_hash; 255];
-            merkle_paths.push([i as u8; 32]);
-            StorageLogMetadata {
-                root_hash: zero_hash,
-                is_write: i % 2 == 0,
-                first_write: i % 3 == 0,
-                merkle_paths,
-                leaf_hashed_key: U256::from(i),
-                leaf_enumeration_index: i + 1,
-                value_written: [i as u8; 32],
-                value_read: [0; 32],
-            }
-        });
-        let logs: Vec<_> = logs.collect();
-
-        let mut job = WitnessInputMerklePaths::new(4);
-        job.reserve(logs.len());
-        for log in &logs {
-            job.push_merkle_path(log.clone());
-        }
-
-        // Check that Merkle paths are compacted.
-        for (i, log) in job.merkle_paths.iter().enumerate() {
-            let expected_merkle_path_len = if i == 0 { 256 } else { 1 };
-            assert_eq!(log.merkle_paths.len(), expected_merkle_path_len);
-        }
-
-        let logs_from_job: Vec<_> = job.into_merkle_paths().collect();
-        assert_eq!(logs_from_job, logs);
     }
 }

@@ -5,9 +5,14 @@ use zksync_basic_types::{ethabi, Address, H256};
 use zksync_system_constants::L2_NATIVE_TOKEN_VAULT_ADDRESS;
 
 use crate::{
-    address_to_h256, system_contracts::DEPLOYMENT_NONCE_INCREMENT, u256_to_h256, web3::keccak256,
-    AccountTreeId, StorageKey, L2_BASE_TOKEN_ADDRESS, U256,
+    address_to_h256, u256_to_h256, web3::keccak256, AccountTreeId, StorageKey,
+    L2_BASE_TOKEN_ADDRESS, U256,
 };
+
+// Nonces are composed as `2^128 * deployment_nonce + tx_nonce`.
+// Keeping increments local avoids pulling in contract-loader code.
+pub const TX_NONCE_INCREMENT: U256 = U256([1, 0, 0, 0]);
+pub const DEPLOYMENT_NONCE_INCREMENT: U256 = U256([0, 0, 1, 0]);
 
 /// Displays a Unix timestamp (seconds since epoch) in human-readable form. Useful for logging.
 pub fn display_timestamp(timestamp: u64) -> impl fmt::Display {

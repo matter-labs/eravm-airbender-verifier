@@ -4,6 +4,8 @@
 //! executing the VM and verifying all the accessed memory slots by their
 //! merkle path.
 
+pub mod types;
+
 use anyhow::{bail, Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_merkle_tree::{
@@ -17,12 +19,12 @@ use zksync_multivm::{
     pubdata_builders::pubdata_params_to_builder,
     FastVmInstance,
 };
-use zksync_prover_interface::inputs::{StorageLogMetadata, WitnessInputMerklePaths};
-use zksync_tee_prover_interface::inputs::V1TeeVerifierInput;
 use zksync_types::{
     block::L2BlockExecutionData, commitment::PubdataParams, u256_to_h256, L1BatchNumber,
     ProtocolVersionId, StorageLog, StorageValue, Transaction, H256,
 };
+
+use crate::types::{StorageLogMetadata, V1TeeVerifierInput, WitnessInputMerklePaths};
 
 /// A structure to hold the result of verification.
 pub struct VerificationResult {
@@ -304,10 +306,9 @@ fn execute_tx<S: ReadStorage>(tx: &Transaction, vm: &mut FastVmInstance<S>) -> a
 mod tests {
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
-    use zksync_prover_interface::inputs::VMRunWitnessInputData;
-    use zksync_tee_prover_interface::inputs::TeeVerifierInput;
 
     use super::*;
+    use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_v1_serialization() {
