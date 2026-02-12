@@ -113,7 +113,7 @@ pub trait VmInterfaceHistoryEnabled: VmInterface {
     fn pop_front_snapshot_no_rollback(&mut self);
 }
 
-/// VM that tracks decommitment of bytecodes during execution. This is required to create a [`VmDump`].
+/// VM that tracks decommitment of bytecodes during execution.
 pub trait VmTrackingContracts: VmInterface {
     /// Returns hashes of all decommitted bytecodes.
     fn used_contract_hashes(&self) -> Vec<H256>;

@@ -16,23 +16,3 @@ pub struct FinishedL1Batch {
     /// List of state diffs. Could be none for old versions of the VM.
     pub state_diffs: Option<Vec<StateDiffRecord>>,
 }
-
-impl FinishedL1Batch {
-    pub fn mock() -> Self {
-        FinishedL1Batch {
-            block_tip_execution_result: VmExecutionResultAndLogs::mock_success(),
-            final_execution_state: CurrentExecutionState {
-                events: vec![],
-                deduplicated_storage_logs: vec![],
-                used_contract_hashes: vec![],
-                user_l2_to_l1_logs: vec![],
-                system_logs: vec![],
-                storage_refunds: Vec::new(),
-                pubdata_costs: Vec::new(),
-            },
-            final_bootloader_memory: Some(vec![]),
-            pubdata_input: Some(vec![]),
-            state_diffs: Some(vec![]),
-        }
-    }
-}

@@ -28,13 +28,9 @@ use crate::{
 pub type SerialId = u64;
 
 pub mod abi;
-pub mod aggregated_operations;
 pub mod blob;
 pub mod block;
 pub mod commitment;
-#[cfg(feature = "contract-verification")]
-pub mod contract_verification;
-pub mod debug_flat_call;
 pub mod fee;
 pub mod fee_model;
 pub mod interop_root;
@@ -43,19 +39,13 @@ pub mod l2;
 pub mod l2_to_l1_log;
 pub mod priority_op_onchain_data;
 pub mod protocol_upgrade;
-pub mod snapshots;
 pub mod storage;
 pub mod system_contracts;
-pub mod tokens;
 pub mod tx;
 pub mod zk_evm_types;
 
-pub mod api;
-pub mod base_token_ratio;
-pub mod eth_sender;
 pub mod helpers;
 pub mod transaction_request;
-pub mod transaction_status_commitment;
 pub mod utils;
 
 /// Denotes the first byte of the special ZKsync's EIP-712-signed transaction.

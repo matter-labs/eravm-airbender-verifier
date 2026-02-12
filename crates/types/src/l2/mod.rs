@@ -8,11 +8,9 @@ use zksync_crypto_primitives::K256PrivateKey;
 
 use self::error::SignError;
 use crate::{
-    api,
-    api::TransactionRequest,
     fee::{encoding_len, Fee},
     helpers::unix_timestamp_ms,
-    transaction_request::PaymasterParams,
+    transaction_request::{Eip712Meta, PaymasterParams, TransactionRequest},
     tx::Execute,
     web3::Bytes,
     Address, EIP712TypedStructure, ExecuteTransactionCommon, InputData, L2ChainId, Nonce,
@@ -349,7 +347,7 @@ impl From<L2Tx> for TransactionRequest {
                 base_tx_req.transaction_type = Some(U64::from(tx_type));
                 base_tx_req.max_priority_fee_per_gas =
                     Some(tx.common_data.fee.max_priority_fee_per_gas);
-                base_tx_req.eip712_meta = Some(api::Eip712Meta {
+                base_tx_req.eip712_meta = Some(Eip712Meta {
                     gas_per_pubdata: tx.common_data.fee.gas_per_pubdata_limit,
                     factory_deps: tx.execute.factory_deps,
                     custom_signature: Some(tx.common_data.signature),
@@ -380,53 +378,6 @@ impl From<L2Tx> for Transaction {
             execute,
             received_timestamp_ms,
             raw_bytes,
-        }
-    }
-}
-
-impl From<L2Tx> for api::Transaction {
-    fn from(tx: L2Tx) -> Self {
-        let tx_type = tx.common_data.transaction_type as u32;
-        let (v, r, s) =
-            if let Ok(sig) = PackedEthSignature::deserialize_packed(&tx.common_data.signature) {
-                (
-                    Some(U64::from(sig.v())),
-                    Some(U256::from(sig.r())),
-                    Some(U256::from(sig.s())),
-                )
-            } else {
-                (None, None, None)
-            };
-        // Legacy transactions are not supposed to have `yParity` and are reliant on `v` instead.
-        // Other transactions are required to have `yParity` which replaces the deprecated `v` value
-        // (still included for backwards compatibility).
-        let y_parity = match tx.common_data.transaction_type {
-            TransactionType::LegacyTransaction => None,
-            _ => v,
-        };
-
-        Self {
-            hash: tx.hash(),
-            chain_id: U256::from(tx.common_data.extract_chain_id().unwrap_or_default()),
-            nonce: U256::from(tx.common_data.nonce.0),
-            from: Some(tx.common_data.initiator_address),
-            to: tx.recipient_account(),
-            value: tx.execute.value,
-            gas_price: Some(tx.common_data.fee.max_fee_per_gas),
-            max_priority_fee_per_gas: Some(tx.common_data.fee.max_priority_fee_per_gas),
-            max_fee_per_gas: Some(tx.common_data.fee.max_fee_per_gas),
-            gas: tx.common_data.fee.gas_limit,
-            input: Bytes(tx.execute.calldata),
-            y_parity,
-            v,
-            r,
-            s,
-            transaction_type: if tx_type == 0 {
-                None
-            } else {
-                Some(U64::from(tx_type))
-            },
-            ..Default::default()
         }
     }
 }

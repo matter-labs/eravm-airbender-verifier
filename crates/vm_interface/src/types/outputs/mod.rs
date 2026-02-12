@@ -3,9 +3,8 @@ use std::borrow::Cow;
 pub use self::{
     bytecode::CompressedBytecodeInfo,
     execution_result::{
-        BatchTransactionExecutionResult, Call, CallType, ExecutionResult,
-        OneshotTransactionExecutionResult, Refunds, TransactionExecutionResult, TxExecutionStatus,
-        VmEvent, VmExecutionLogs, VmExecutionResultAndLogs,
+        Call, CallType, ExecutionResult, Refunds, VmEvent, VmExecutionLogs,
+        VmExecutionResultAndLogs,
     },
     execution_state::{BootloaderMemory, CurrentExecutionState},
     finished_l1batch::FinishedL1Batch,

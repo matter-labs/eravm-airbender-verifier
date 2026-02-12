@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use zksync_basic_types::AccountTreeId;
 
 use crate::{
-    api::ApiStorageLog,
-    h256_to_u256, u256_to_h256,
+    u256_to_h256,
     zk_evm_types::{self, LogQuery, Timestamp},
     StorageKey, StorageValue, U256,
 };
@@ -94,41 +93,9 @@ impl From<zk_evm_types::LogQuery> for StorageLog {
     }
 }
 
-impl From<StorageLog> for ApiStorageLog {
-    fn from(storage_log: StorageLog) -> Self {
-        Self {
-            address: *storage_log.key.address(),
-            key: h256_to_u256(*storage_log.key.key()),
-            written_value: h256_to_u256(storage_log.value),
-        }
-    }
-}
-
-impl From<&StorageLogWithPreviousValue> for ApiStorageLog {
-    fn from(log: &StorageLogWithPreviousValue) -> Self {
-        log.log.into()
-    }
-}
-
 /// Log query, which handle initial and repeated writes to the storage
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageLogQuery {
     pub log_query: LogQuery,
     pub log_type: StorageLogKind,
-}
-
-impl From<&StorageLogQuery> for ApiStorageLog {
-    fn from(log_query: &StorageLogQuery) -> Self {
-        log_query.log_query.into()
-    }
-}
-
-impl From<LogQuery> for ApiStorageLog {
-    fn from(log_query: LogQuery) -> Self {
-        ApiStorageLog {
-            address: log_query.address,
-            key: log_query.key,
-            written_value: log_query.written_value,
-        }
-    }
 }

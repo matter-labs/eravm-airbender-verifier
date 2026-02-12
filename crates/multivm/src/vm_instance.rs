@@ -7,7 +7,6 @@ use crate::{
     glue::history_mode::HistoryMode,
     interface::{
         storage::{ImmutableStorageView, ReadStorage, StoragePtr, StorageView},
-        utils::ShadowVm,
         BytecodeCompressionResult, FinishedL1Batch, L1BatchEnv, L2BlockEnv, PushTransactionResult,
         SystemEnv, VmExecutionResultAndLogs, VmFactory, VmInterface, VmInterfaceHistoryEnabled,
         VmMemoryMetrics,
@@ -180,30 +179,12 @@ impl<S: ReadStorage, H: HistoryMode> LegacyVmInstance<S, H> {
     }
 }
 
-/// Fast VM shadowed by the latest legacy VM.
-pub type ShadowedFastVm<S, Tr, Val> = ShadowVm<
-    S,
-    vm_latest::Vm<StorageView<S>, HistoryEnabled>,
-    vm_fast::Vm<ImmutableStorageView<S>, Tr, Val>,
->;
-
 /// Fast VM variants.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum FastVmInstance<S: ReadStorage, Tr = (), Val = FastValidationTracer> {
     /// Fast VM running in isolation.
     Fast(vm_fast::Vm<ImmutableStorageView<S>, Tr, Val>),
-    /// Fast VM shadowed by the latest legacy VM.
-    Shadowed(ShadowedFastVm<S, Tr, Val>),
-}
-
-macro_rules! dispatch_fast_vm {
-    ($self:ident.$function:ident($($params:tt)*)) => {
-        match $self {
-            Self::Fast(vm) => vm.$function($($params)*),
-            Self::Shadowed(vm) => vm.$function($($params)*),
-        }
-    };
 }
 
 impl<S, Tr, Val> VmInterface for FastVmInstance<S, Tr, Val>
@@ -212,13 +193,12 @@ where
     Tr: Tracer + Default,
     Val: vm_fast::ValidationTracer,
 {
-    type TracerDispatcher = (
-        vm_latest::TracerDispatcher<StorageView<S>, HistoryEnabled>,
-        (Tr, Val),
-    );
+    type TracerDispatcher = (Tr, Val);
 
     fn push_transaction(&mut self, tx: Transaction) -> PushTransactionResult<'_> {
-        dispatch_fast_vm!(self.push_transaction(tx))
+        match self {
+            Self::Fast(vm) => vm.push_transaction(tx),
+        }
     }
 
     fn inspect(
@@ -227,13 +207,14 @@ where
         execution_mode: InspectExecutionMode,
     ) -> VmExecutionResultAndLogs {
         match self {
-            Self::Fast(vm) => vm.inspect(&mut tracer.1, execution_mode),
-            Self::Shadowed(vm) => vm.inspect(tracer, execution_mode),
+            Self::Fast(vm) => vm.inspect(tracer, execution_mode),
         }
     }
 
     fn start_new_l2_block(&mut self, l2_block_env: L2BlockEnv) {
-        dispatch_fast_vm!(self.start_new_l2_block(l2_block_env));
+        match self {
+            Self::Fast(vm) => vm.start_new_l2_block(l2_block_env),
+        }
     }
 
     fn inspect_transaction_with_bytecode_compression(
@@ -243,19 +224,16 @@ where
         with_compression: bool,
     ) -> (BytecodeCompressionResult<'_>, VmExecutionResultAndLogs) {
         match self {
-            Self::Fast(vm) => vm.inspect_transaction_with_bytecode_compression(
-                &mut tracer.1,
-                tx,
-                with_compression,
-            ),
-            Self::Shadowed(vm) => {
+            Self::Fast(vm) => {
                 vm.inspect_transaction_with_bytecode_compression(tracer, tx, with_compression)
             }
         }
     }
 
     fn finish_batch(&mut self, pubdata_builder: Rc<dyn PubdataBuilder>) -> FinishedL1Batch {
-        dispatch_fast_vm!(self.finish_batch(pubdata_builder))
+        match self {
+            Self::Fast(vm) => vm.finish_batch(pubdata_builder),
+        }
     }
 }
 
@@ -266,19 +244,27 @@ where
     Val: vm_fast::ValidationTracer,
 {
     fn make_snapshot(&mut self) {
-        dispatch_fast_vm!(self.make_snapshot());
+        match self {
+            Self::Fast(vm) => vm.make_snapshot(),
+        }
     }
 
     fn rollback_to_the_latest_snapshot(&mut self) {
-        dispatch_fast_vm!(self.rollback_to_the_latest_snapshot());
+        match self {
+            Self::Fast(vm) => vm.rollback_to_the_latest_snapshot(),
+        }
     }
 
     fn pop_snapshot_no_rollback(&mut self) {
-        dispatch_fast_vm!(self.pop_snapshot_no_rollback());
+        match self {
+            Self::Fast(vm) => vm.pop_snapshot_no_rollback(),
+        }
     }
 
     fn pop_front_snapshot_no_rollback(&mut self) {
-        dispatch_fast_vm!(self.pop_front_snapshot_no_rollback());
+        match self {
+            Self::Fast(vm) => vm.pop_front_snapshot_no_rollback(),
+        }
     }
 }
 
@@ -297,23 +283,9 @@ where
         Self::Fast(vm_fast::Vm::new(l1_batch_env, system_env, storage_view))
     }
 
-    /// Creates a shadowed fast VM.
-    pub fn shadowed(
-        l1_batch_env: L1BatchEnv,
-        system_env: SystemEnv,
-        storage_view: StoragePtr<StorageView<S>>,
-    ) -> Self {
-        Self::Shadowed(ShadowedFastVm::new(l1_batch_env, system_env, storage_view))
-    }
-
     pub fn skip_signature_verification(&mut self) {
         match self {
             Self::Fast(vm) => vm.skip_signature_verification(),
-            Self::Shadowed(vm) => {
-                if let Some(shadow_vm) = vm.shadow_mut() {
-                    shadow_vm.skip_signature_verification();
-                }
-            }
         }
     }
 }
