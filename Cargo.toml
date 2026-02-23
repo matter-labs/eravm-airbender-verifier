@@ -10,6 +10,20 @@ members = [
   "crates/tee_verifier",
   "crates/types",
   "crates/vm_interface",
+  "host",
+  "guest",
+]
+default-members = [
+  "crates/basic_types",
+  "crates/constants",
+  "crates/contracts",
+  "crates/crypto_primitives",
+  "crates/merkle_tree",
+  "crates/mini_merkle_tree",
+  "crates/multivm",
+  "crates/tee_verifier",
+  "crates/types",
+  "crates/vm_interface",
 ]
 resolver = "2"
 
@@ -59,6 +73,8 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 # Protocol and VM dependencies
+airbender = { package = "airbender-sdk", path = "../airbender-platform/crates/airbender-sdk" }
+airbender-host = { path = "../airbender-platform/crates/airbender-host" }
 airbender-crypto = { path = "../airbender-platform/crates/airbender-crypto" }
 circuit_sequencer_api = { path = "../vm_setup/zksync-protocol/crates/circuit_sequencer_api" }
 zk_evm_1_5_2 = { package = "zk_evm", path = "../vm_setup/zksync-protocol/crates/zk_evm" }
@@ -72,5 +88,19 @@ zksync_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/merk
 zksync_mini_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/mini_merkle_tree" }
 zksync_multivm = { version = "29.7.1-non-semver-compat", path = "crates/multivm" }
 zksync_system_constants = { version = "29.7.1-non-semver-compat", path = "crates/constants" }
+zksync_tee_verifier = { version = "29.7.1-non-semver-compat", path = "crates/tee_verifier" }
 zksync_types = { version = "29.7.1-non-semver-compat", path = "crates/types" }
 zksync_vm_interface = { version = "29.7.1-non-semver-compat", path = "crates/vm_interface" }
+
+# This is required to avoid having to specify `RUST_MIN_STACK` for compilation.
+# The reason why this is needed is because these packages are highly optimized, but the optimizations
+# make debug information generation more heavy and cause the default stack size to overflow.
+# This issue is expected to be resolved later.
+[profile.dev.package.keccak_special5]
+debug = 0
+[profile.dev.package.setups]
+debug = 0
+[profile.release.package.keccak_special5]
+debug = 0
+[profile.release.package.setups]
+debug = 0

@@ -9,4 +9,3 @@ pub mod utils;
 
 pub use struct_builder::*;
 pub use typed_structure::*;
-

@@ -36,7 +36,6 @@ use crate::{
     ProtocolVersionId, H256,
 };
 
-
 #[derive(Debug, Error)]
 pub enum CommitmentValidationError {
     #[error("State diff hash mismatch: expected {expected}, got {actual}")]

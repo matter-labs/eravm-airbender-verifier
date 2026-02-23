@@ -1,0 +1,8 @@
+[package]
+name = "eravm-prover-guest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+airbender = { workspace = true, features = ["std"] }
+zksync_tee_verifier.workspace = true

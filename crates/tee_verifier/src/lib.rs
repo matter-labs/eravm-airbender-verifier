@@ -13,11 +13,12 @@ use zksync_merkle_tree::{
 };
 use zksync_multivm::{
     interface::{
-        storage::{ReadStorage, StorageSnapshot, StorageView},
-        FinishedL1Batch, L2BlockEnv, VmInterface, VmInterfaceExt, VmInterfaceHistoryEnabled,
+        storage::{StorageSnapshot, StorageView},
+        FinishedL1Batch, L2BlockEnv, VmFactory, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
+    is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
-    FastVmInstance,
+    FastVmInstance, LegacyVmInstance,
 };
 use zksync_types::{
     block::L2BlockExecutionData, commitment::PubdataParams, u256_to_h256, L1BatchNumber,
@@ -37,6 +38,89 @@ pub struct VerificationResult {
 /// A trait for the computations that can be verified in TEE.
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
+
+    fn verify_legacy(self) -> anyhow::Result<VerificationResult>;
+}
+
+type VerifierStorage = StorageSnapshot;
+type VerifierStorageView = StorageView<VerifierStorage>;
+type FastVerifierVm = FastVmInstance<VerifierStorage>;
+type LegacyVerifierVm =
+    LegacyVmInstance<VerifierStorage, zksync_multivm::vm_latest::HistoryEnabled>;
+
+fn verify_with_vm<VM, F>(
+    input: V1TeeVerifierInput,
+    make_vm: F,
+) -> anyhow::Result<VerificationResult>
+where
+    VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
+    F: FnOnce(
+        zksync_vm_interface::L1BatchEnv,
+        zksync_vm_interface::SystemEnv,
+        zksync_vm_interface::storage::StoragePtr<VerifierStorageView>,
+    ) -> VM,
+{
+    let old_root_hash = input.l1_batch_env.previous_batch_hash.unwrap();
+    let enumeration_index = input.merkle_paths.next_enumeration_index();
+    let batch_number = input.l1_batch_env.number;
+
+    let read_storage_ops = input
+        .vm_run_data
+        .witness_block_state
+        .read_storage_key
+        .into_iter();
+
+    let initial_writes_ops = input
+        .vm_run_data
+        .witness_block_state
+        .is_write_initial
+        .into_iter();
+
+    // We need to define storage slots read during batch execution, and their initial state;
+    // hence, the use of both read_storage_ops and initial_writes_ops.
+    // StorageSnapshot also requires providing enumeration indices,
+    // but they only matter at the end of execution when creating pubdata for the batch,
+    // which is irrelevant in this case. Thus, enumeration indices are set to dummy values.
+    let storage =
+        read_storage_ops
+            .enumerate()
+            .map(|(i, (hash, bytes))| (hash.hashed_key(), Some((bytes, i as u64 + 1u64))))
+            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+                initial_write.then_some((key.hashed_key(), None))
+            }))
+            .collect();
+
+    let factory_deps = input
+        .vm_run_data
+        .used_bytecodes
+        .into_iter()
+        .map(|(hash, bytes)| (u256_to_h256(hash), bytes.into_flattened()))
+        .collect();
+
+    let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
+    let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
+    let vm = make_vm(input.l1_batch_env, input.system_env.clone(), storage_view);
+
+    let vm_out = execute_vm(
+        input.l2_blocks_execution_data,
+        vm,
+        input.pubdata_params,
+        input.system_env.version,
+    )?;
+
+    let block_output_with_proofs = get_bowp(input.merkle_paths)?;
+
+    let instructions: Vec<TreeInstruction> =
+        generate_tree_instructions(enumeration_index, &block_output_with_proofs, vm_out)?;
+
+    block_output_with_proofs
+        .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
+        .context("Failed to verify_proofs {l1_batch_number} correctly!")?;
+
+    Ok(VerificationResult {
+        value_hash: block_output_with_proofs.root_hash().unwrap(),
+        batch_number,
+    })
 }
 
 impl Verify for V1TeeVerifierInput {
@@ -49,65 +133,24 @@ impl Verify for V1TeeVerifierInput {
     /// Returns a verbose error of the failure, because any error is
     /// not actionable.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        let old_root_hash = self.l1_batch_env.previous_batch_hash.unwrap();
-        let enumeration_index = self.merkle_paths.next_enumeration_index();
-        let batch_number = self.l1_batch_env.number;
+        assert!(
+            is_supported_by_fast_vm(self.system_env.version),
+            "Protocol version {:?} is not supported by FastVM tee verifier",
+            self.system_env.version
+        );
 
-        let read_storage_ops = self
-            .vm_run_data
-            .witness_block_state
-            .read_storage_key
-            .into_iter();
+        verify_with_vm(self, |l1_batch_env, system_env, storage_view| {
+            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+        })
+    }
 
-        let initial_writes_ops = self
-            .vm_run_data
-            .witness_block_state
-            .is_write_initial
-            .into_iter();
-
-        // We need to define storage slots read during batch execution, and their initial state;
-        // hence, the use of both read_storage_ops and initial_writes_ops.
-        // StorageSnapshot also requires providing enumeration indices,
-        // but they only matter at the end of execution when creating pubdata for the batch,
-        // which is irrelevant in this case. Thus, enumeration indices are set to dummy values.
-        let storage = read_storage_ops
-            .enumerate()
-            .map(|(i, (hash, bytes))| (hash.hashed_key(), Some((bytes, i as u64 + 1u64))))
-            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-                initial_write.then_some((key.hashed_key(), None))
-            }))
-            .collect();
-
-        let factory_deps = self
-            .vm_run_data
-            .used_bytecodes
-            .into_iter()
-            .map(|(hash, bytes)| (u256_to_h256(hash), bytes.into_flattened()))
-            .collect();
-
-        let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
-        let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
-        let vm = FastVmInstance::fast(self.l1_batch_env, self.system_env.clone(), storage_view);
-
-        let vm_out = execute_vm(
-            self.l2_blocks_execution_data,
-            vm,
-            self.pubdata_params,
-            self.system_env.version,
-        )?;
-
-        let block_output_with_proofs = get_bowp(self.merkle_paths)?;
-
-        let instructions: Vec<TreeInstruction> =
-            generate_tree_instructions(enumeration_index, &block_output_with_proofs, vm_out)?;
-
-        block_output_with_proofs
-            .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
-            .context("Failed to verify_proofs {l1_batch_number} correctly!")?;
-
-        Ok(VerificationResult {
-            value_hash: block_output_with_proofs.root_hash().unwrap(),
-            batch_number,
+    fn verify_legacy(self) -> anyhow::Result<VerificationResult> {
+        verify_with_vm(self, |l1_batch_env, system_env, storage_view| {
+            <LegacyVerifierVm as VmFactory<VerifierStorageView>>::new(
+                l1_batch_env,
+                system_env,
+                storage_view,
+            )
         })
     }
 }
@@ -181,12 +224,15 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
 }
 
 /// Executes the VM and returns `FinishedL1Batch` on success.
-fn execute_vm<S: ReadStorage>(
+fn execute_vm<VM>(
     l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-    mut vm: FastVmInstance<S>,
+    mut vm: VM,
     pubdata_params: PubdataParams,
     protocol_version: ProtocolVersionId,
-) -> anyhow::Result<FinishedL1Batch> {
+) -> anyhow::Result<FinishedL1Batch>
+where
+    VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
+{
     let next_l2_blocks_data = l2_blocks_execution_data.iter().skip(1);
 
     let l2_blocks_data = l2_blocks_execution_data.iter().zip(next_l2_blocks_data);
@@ -269,16 +315,26 @@ fn generate_tree_instructions(
     bowp: &BlockOutputWithProofs,
     vm_out: FinishedL1Batch,
 ) -> anyhow::Result<Vec<TreeInstruction>> {
-    vm_out
-        .final_execution_state
-        .deduplicated_storage_logs
+    let vm_logs = vm_out.final_execution_state.deduplicated_storage_logs;
+    assert_eq!(
+        vm_logs.len(),
+        bowp.logs.len(),
+        "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
+        vm_logs.len(),
+        bowp.logs.len()
+    );
+
+    vm_logs
         .into_iter()
         .zip(bowp.logs.iter())
         .map(|(log_query, tree_log_entry)| map_log_tree(&log_query, &tree_log_entry.base, &mut idx))
         .collect::<Result<Vec<_>, _>>()
 }
 
-fn execute_tx<S: ReadStorage>(tx: &Transaction, vm: &mut FastVmInstance<S>) -> anyhow::Result<()> {
+fn execute_tx<VM>(tx: &Transaction, vm: &mut VM) -> anyhow::Result<()>
+where
+    VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
+{
     // Attempt to run VM with bytecode compression on.
     vm.make_snapshot();
     if vm
@@ -304,11 +360,64 @@ fn execute_tx<S: ReadStorage>(tx: &Transaction, vm: &mut FastVmInstance<S>) -> a
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::thread;
+
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
 
     use super::*;
     use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
+
+    fn check_batch_file(path: PathBuf) {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("JSON file must have a valid UTF-8 file name")
+            .to_owned();
+
+        let file_contents = fs::read_to_string(&path).expect("JSON file must be readable");
+        let input: TeeVerifierInput = serde_json::from_str(&file_contents)
+            .expect("JSON must deserialize into TeeVerifierInput");
+
+        let TeeVerifierInput::V1(input) = input else {
+            panic!("Input {file_name} must contain TeeVerifierInput::V1");
+        };
+
+        let fast_result = input.clone().verify();
+        let legacy_result = input.verify_legacy();
+
+        match (fast_result, legacy_result) {
+            (Ok(fast), Ok(legacy)) => {
+                assert_eq!(
+                    fast.value_hash, legacy.value_hash,
+                    "Root hash mismatch for {file_name}"
+                );
+                assert_eq!(
+                    fast.batch_number, legacy.batch_number,
+                    "Batch number mismatch for {file_name}"
+                );
+            }
+            (Err(fast_err), Ok(_)) => {
+                panic!(
+                    "Fast VM verification failed while legacy VM succeeded for {file_name}: {fast_err:#}"
+                );
+            }
+            (Ok(_), Err(legacy_err)) => {
+                panic!(
+                    "Legacy VM verification failed while fast VM succeeded for {file_name}: {legacy_err:#}"
+                );
+            }
+            (Err(fast_err), Err(legacy_err)) => {
+                panic!(
+                    "Both verifiers failed for {file_name}: fast={fast_err:#}, legacy={legacy_err:#}"
+                );
+            }
+        }
+
+        println!("{file_name} checked - OK");
+    }
 
     #[test]
     fn test_v1_serialization() {
@@ -369,5 +478,54 @@ mod tests {
             bincode::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
 
         assert_eq!(tvi, deserialized);
+    }
+
+    #[test]
+    #[ignore]
+    fn smoke_comparison() {
+        // TODO: Add real examples to this repository and make it an integration test
+        panic!("Add real examples to this repository and make it an integration test");
+        let batches_dir = "TODO";
+        let threads_count = 16;
+
+        assert!(threads_count > 0, "threads_count must be positive");
+
+        let mut json_files = fs::read_dir(batches_dir)
+            .expect("Batches directory must exist")
+            .map(|entry| entry.expect("Read directory entry must succeed").path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .collect::<Vec<_>>();
+        json_files.sort();
+
+        assert!(
+            !json_files.is_empty(),
+            "Batches directory must contain at least one .json file"
+        );
+
+        let mut jobs_by_thread = vec![Vec::new(); threads_count];
+        for (idx, path) in json_files.into_iter().enumerate() {
+            jobs_by_thread[idx % threads_count].push(path);
+        }
+
+        let handles: Vec<_> = jobs_by_thread
+            .into_iter()
+            .enumerate()
+            .map(|(idx, jobs)| {
+                thread::Builder::new()
+                    .name(format!("smoke-comparison-{idx}"))
+                    .spawn(move || {
+                        for path in jobs {
+                            check_batch_file(path);
+                        }
+                    })
+                    .expect("Worker thread must start")
+            })
+            .collect();
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("Worker thread must finish without panic");
+        }
     }
 }
