@@ -16,20 +16,29 @@ Build guest artifacts:
 cargo airbender build --project guest
 ```
 
+Build host:
+
+```sh
+cargo build --release
+```
+
+For running host, you'll need to have a directory with encoded input files.
+Each file should be named as `<batch_number>.bin`.
+
 Run host execution:
 
 ```sh
-cargo run -p eravm-prover-host -- --action run --batch-number <number>
+./target/release/eravm-prover-host -- --batches-dir <path/to/dir/with/batches> --action run --batch-number <number>
 ```
 
 Run host proving:
 
 ```sh
-cargo run -p eravm-prover-host -- --action prove --batch-number <number>
+./target/release/eravm-prover-host -- --batches-dir <path/to/dir/with/batches> --action prove --batch-number <number>
 ```
 
 Process all available batches:
 
 ```sh
-cargo run -p eravm-prover-host -- --action prove --all-batches
+./target/release/eravm-prover-host -- --batches-dir <path/to/dir/with/batches> --action prove --all-batches
 ```

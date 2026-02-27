@@ -12,5 +12,7 @@ fn main() -> u32 {
     };
 
     input.verify().unwrap();
+
+    // TODO: define the values we want to commit.
     1
 }

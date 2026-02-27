@@ -233,3 +233,21 @@ impl Ord for OrderedF64 {
         self.0.total_cmp(&other.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MedianTracker;
+
+    #[test]
+    fn median_tracker_reports_stable_medians() {
+        let mut tracker = MedianTracker::default();
+        tracker.add(30_u64);
+        tracker.add(10_u64);
+        tracker.add(20_u64);
+
+        assert_eq!(tracker.median_with(|value| value as f64), Some(20.0));
+
+        tracker.add(40_u64);
+        assert_eq!(tracker.median_with(|value| value as f64), Some(25.0));
+    }
+}
