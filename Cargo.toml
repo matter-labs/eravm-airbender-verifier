@@ -73,12 +73,12 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 # Protocol and VM dependencies
-airbender = { package = "airbender-sdk", path = "../airbender-platform/crates/airbender-sdk" }
-airbender-host = { path = "../airbender-platform/crates/airbender-host" }
-airbender-crypto = { path = "../airbender-platform/crates/airbender-crypto" }
-circuit_sequencer_api = { path = "../vm_setup/zksync-protocol/crates/circuit_sequencer_api" }
-zk_evm_1_5_2 = { package = "zk_evm", path = "../vm_setup/zksync-protocol/crates/zk_evm" }
-zksync_vm2 = { path = "../vm_setup/vm2/crates/vm2" }
+airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", branch = "main" }
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", branch = "main" }
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", branch = "main" }
+circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" }
+zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" }
+zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airbender-eravm", features = ["airbender-precompile-delegations"] }
 
 # Local dependencies in this workspace
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }

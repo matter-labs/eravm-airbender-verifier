@@ -11,9 +11,6 @@ use tracing::{info, warn};
 
 mod statistics;
 
-// use zksync_tee_verifier::types::TeeVerifierInput;
-
-const BATCHES_DIR_RELATIVE: &str = "../../storage/era_mainnet_batches/binary";
 const EXPECTED_OUTPUT: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -34,7 +31,7 @@ struct Cli {
     #[arg(long, value_enum)]
     action: Action,
 
-    #[arg(long, default_value = "../../storage/era_mainnet_batches/binary")]
+    #[arg(long)]
     batches_dir: String,
 
     #[arg(long)]
@@ -200,32 +197,6 @@ fn list_all_batch_numbers(batches_dir: &Path) -> Result<Vec<u64>> {
 fn load_and_decode_batch(batches_dir: &Path, batch_number: u64) -> Result<Vec<u32>> {
     let framed_words = load_batch_words(batches_dir, batch_number)
         .with_context(|| format!("while attempting to parse words for batch {batch_number}"))?;
-    // let payload = frame_words_to_bytes(&framed_words).with_context(|| {
-    //     format!("while attempting to decode framed payload for batch {batch_number}")
-    // })?;
-
-    // let (input, decoded_len): (TeeVerifierInput, usize) =
-    //     bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-    //         .with_context(|| format!("while attempting to bincode-decode batch {batch_number}"))?;
-    // if decoded_len != payload.len() {
-    //     bail!(
-    //         "batch {batch_number} bincode payload has trailing bytes (decoded {decoded_len} of {})",
-    //         payload.len()
-    //     );
-    // }
-
-    // let input_version = match input {
-    //     TeeVerifierInput::V1(_) => "v1",
-    //     TeeVerifierInput::V0 => "v0",
-    //     _ => "unknown",
-    // };
-    // info!(
-    //     batch_number,
-    //     input_version,
-    //     framed_words = framed_words.len(),
-    //     payload_bytes = payload.len(),
-    //     "Loaded and decoded batch input"
-    // );
 
     Ok(framed_words)
 }
@@ -271,27 +242,6 @@ fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
     Ok(words)
 }
 
-fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) = words
-        .split_first()
-        .context("while attempting to decode framed payload, frame has no length word")?;
-    let byte_len = byte_len_word as usize;
-    let expected_total_words = 1 + byte_len.div_ceil(4);
-    if words.len() != expected_total_words {
-        bail!(
-            "framed payload has {} words but expected {expected_total_words} from byte length {byte_len}",
-            words.len()
-        );
-    }
-
-    let mut bytes = Vec::with_capacity(byte_len);
-    for word in payload_words {
-        bytes.extend_from_slice(&word.to_be_bytes());
-    }
-    bytes.truncate(byte_len);
-    Ok(bytes)
-}
-
 fn run_batch(
     // runner: &airbender_host::TranspilerRunner,
     runner: &airbender_host::SimulatorRunner,
@@ -332,8 +282,7 @@ fn prove_batch(
         .prove(input_words)
         .with_context(|| format!("while attempting to generate proof for batch {batch_number}"))?;
     let proving_time = proving_started_at.elapsed();
-    let cycles = u64::try_from(prove_result.cycles)
-        .context("while attempting to convert proof cycle count to u64")?;
+    let cycles = prove_result.cycles;
     let output = prove_result.receipt.output[0];
 
     info!(
@@ -417,12 +366,6 @@ fn vk_cache_path(program: &Program) -> Result<PathBuf> {
 
 fn batch_file_path(batches_dir: &Path, batch_number: u64) -> PathBuf {
     batches_dir.join(format!("{batch_number}.bin"))
-}
-
-fn batches_dir() -> Result<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BATCHES_DIR_RELATIVE);
-    path.canonicalize()
-        .with_context(|| format!("while attempting to canonicalize {}", path.display()))
 }
 
 fn dist_dir() -> PathBuf {
