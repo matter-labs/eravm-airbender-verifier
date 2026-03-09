@@ -11,8 +11,6 @@ use tracing::{info, warn};
 
 mod statistics;
 
-// use zksync_tee_verifier::types::TeeVerifierInput;
-
 const BATCHES_DIR_RELATIVE: &str = "../../storage/era_mainnet_batches/binary";
 const EXPECTED_OUTPUT: u32 = 1;
 
@@ -49,8 +47,6 @@ fn main() -> Result<()> {
         bail!("--all-batches requires --action prove");
     }
 
-    let program = Program::load(dist_dir()).context("while attempting to load guest program")?;
-    // let batches_dir = batches_dir().context("while attempting to locate batches directory")?;
     let batches_dir = PathBuf::from(cli.batches_dir.clone())
         .canonicalize()
         .with_context(|| {
@@ -71,6 +67,8 @@ fn main() -> Result<()> {
 
     match cli.action {
         Action::Run => {
+            let program =
+                Program::load(dist_dir()).context("while attempting to load guest program")?;
             let runner = program
                 // .transpiler_runner()
                 .simulator_runner()
@@ -79,7 +77,7 @@ fn main() -> Result<()> {
                 .context("while attempting to build transpiler runner")?;
 
             for batch_number in batch_numbers {
-                let input_words = load_and_decode_batch(&batches_dir, batch_number)
+                let input_words = load_batch_words(&batches_dir, batch_number)
                     .with_context(|| format!("while attempting to load batch {batch_number}"))?;
                 run_batch(&runner, batch_number, &input_words).with_context(|| {
                     format!("while attempting to run batch {batch_number} in transpiler")
@@ -87,6 +85,8 @@ fn main() -> Result<()> {
             }
         }
         Action::Prove => {
+            let program =
+                Program::load(dist_dir()).context("while attempting to load guest program")?;
             let verifier = program
                 .real_verifier(ProverLevel::RecursionUnified)
                 .build()
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
             let mut statistics = StatisticsCollector::default();
 
             for batch_number in batch_numbers {
-                let input_words = load_and_decode_batch(&batches_dir, batch_number)
+                let input_words = load_batch_words(&batches_dir, batch_number)
                     .with_context(|| format!("while attempting to load batch {batch_number}"))?;
                 let proving_stats =
                     prove_batch(&prover, &verifier, &vk, batch_number, &input_words).with_context(
@@ -197,39 +197,6 @@ fn list_all_batch_numbers(batches_dir: &Path) -> Result<Vec<u64>> {
     Ok(batch_numbers)
 }
 
-fn load_and_decode_batch(batches_dir: &Path, batch_number: u64) -> Result<Vec<u32>> {
-    let framed_words = load_batch_words(batches_dir, batch_number)
-        .with_context(|| format!("while attempting to parse words for batch {batch_number}"))?;
-    // let payload = frame_words_to_bytes(&framed_words).with_context(|| {
-    //     format!("while attempting to decode framed payload for batch {batch_number}")
-    // })?;
-
-    // let (input, decoded_len): (TeeVerifierInput, usize) =
-    //     bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-    //         .with_context(|| format!("while attempting to bincode-decode batch {batch_number}"))?;
-    // if decoded_len != payload.len() {
-    //     bail!(
-    //         "batch {batch_number} bincode payload has trailing bytes (decoded {decoded_len} of {})",
-    //         payload.len()
-    //     );
-    // }
-
-    // let input_version = match input {
-    //     TeeVerifierInput::V1(_) => "v1",
-    //     TeeVerifierInput::V0 => "v0",
-    //     _ => "unknown",
-    // };
-    // info!(
-    //     batch_number,
-    //     input_version,
-    //     framed_words = framed_words.len(),
-    //     payload_bytes = payload.len(),
-    //     "Loaded and decoded batch input"
-    // );
-
-    Ok(framed_words)
-}
-
 fn load_batch_words(batches_dir: &Path, batch_number: u64) -> Result<Vec<u32>> {
     let batch_path = batch_file_path(batches_dir, batch_number);
     let raw = std::fs::read_to_string(&batch_path)
@@ -269,27 +236,6 @@ fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
     }
 
     Ok(words)
-}
-
-fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) = words
-        .split_first()
-        .context("while attempting to decode framed payload, frame has no length word")?;
-    let byte_len = byte_len_word as usize;
-    let expected_total_words = 1 + byte_len.div_ceil(4);
-    if words.len() != expected_total_words {
-        bail!(
-            "framed payload has {} words but expected {expected_total_words} from byte length {byte_len}",
-            words.len()
-        );
-    }
-
-    let mut bytes = Vec::with_capacity(byte_len);
-    for word in payload_words {
-        bytes.extend_from_slice(&word.to_be_bytes());
-    }
-    bytes.truncate(byte_len);
-    Ok(bytes)
 }
 
 fn run_batch(
