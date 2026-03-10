@@ -101,7 +101,7 @@ impl<DB: PruneDatabase> MerkleTreePruner<DB> {
         let this = Self {
             db,
             target_pruned_key_count: 500_000,
-            poll_interval: Duration::from_secs(60),
+            poll_interval: Duration::from_mins(1),
             aborted_receiver,
             target_retained_version,
         };

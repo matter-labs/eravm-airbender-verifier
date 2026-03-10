@@ -59,17 +59,14 @@ impl BlockOutputWithProofs {
             let prev_hash = hasher.fold_merkle_path(&op.merkle_path, prev_entry);
             ensure!(
                 prev_hash == root_hash,
-                "Condition failed: `prev_hash == root_hash` ({:?} vs {:?})",
-                prev_hash,
-                root_hash
+                "Condition failed: `prev_hash == root_hash` ({prev_hash:?} vs {root_hash:?})"
             );
             if let TreeInstruction::Write(new_entry) = instruction {
                 let next_hash = hasher.fold_merkle_path(&op.merkle_path, new_entry);
                 ensure!(
                     next_hash == op.root_hash,
-                    "Condition failed: `next_hash == op.root_hash` ({:?} vs {:?})",
-                    next_hash,
-                    op.root_hash
+                    "Condition failed: `next_hash == op.root_hash` ({next_hash:?} vs {root_hash:?})",
+                    root_hash = op.root_hash
                 );
             }
             root_hash = op.root_hash;

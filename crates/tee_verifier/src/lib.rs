@@ -360,64 +360,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-    use std::thread;
-
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
 
     use super::*;
     use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
-
-    fn check_batch_file(path: PathBuf) {
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .expect("JSON file must have a valid UTF-8 file name")
-            .to_owned();
-
-        let file_contents = fs::read_to_string(&path).expect("JSON file must be readable");
-        let input: TeeVerifierInput = serde_json::from_str(&file_contents)
-            .expect("JSON must deserialize into TeeVerifierInput");
-
-        let TeeVerifierInput::V1(input) = input else {
-            panic!("Input {file_name} must contain TeeVerifierInput::V1");
-        };
-
-        let fast_result = input.clone().verify();
-        let legacy_result = input.verify_legacy();
-
-        match (fast_result, legacy_result) {
-            (Ok(fast), Ok(legacy)) => {
-                assert_eq!(
-                    fast.value_hash, legacy.value_hash,
-                    "Root hash mismatch for {file_name}"
-                );
-                assert_eq!(
-                    fast.batch_number, legacy.batch_number,
-                    "Batch number mismatch for {file_name}"
-                );
-            }
-            (Err(fast_err), Ok(_)) => {
-                panic!(
-                    "Fast VM verification failed while legacy VM succeeded for {file_name}: {fast_err:#}"
-                );
-            }
-            (Ok(_), Err(legacy_err)) => {
-                panic!(
-                    "Legacy VM verification failed while fast VM succeeded for {file_name}: {legacy_err:#}"
-                );
-            }
-            (Err(fast_err), Err(legacy_err)) => {
-                panic!(
-                    "Both verifiers failed for {file_name}: fast={fast_err:#}, legacy={legacy_err:#}"
-                );
-            }
-        }
-
-        println!("{file_name} checked - OK");
-    }
 
     #[test]
     fn test_v1_serialization() {
@@ -478,54 +425,5 @@ mod tests {
             bincode::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
 
         assert_eq!(tvi, deserialized);
-    }
-
-    #[test]
-    #[ignore]
-    fn smoke_comparison() {
-        // TODO: Add real examples to this repository and make it an integration test
-        panic!("Add real examples to this repository and make it an integration test");
-        let batches_dir = "TODO";
-        let threads_count = 16;
-
-        assert!(threads_count > 0, "threads_count must be positive");
-
-        let mut json_files = fs::read_dir(batches_dir)
-            .expect("Batches directory must exist")
-            .map(|entry| entry.expect("Read directory entry must succeed").path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-            .collect::<Vec<_>>();
-        json_files.sort();
-
-        assert!(
-            !json_files.is_empty(),
-            "Batches directory must contain at least one .json file"
-        );
-
-        let mut jobs_by_thread = vec![Vec::new(); threads_count];
-        for (idx, path) in json_files.into_iter().enumerate() {
-            jobs_by_thread[idx % threads_count].push(path);
-        }
-
-        let handles: Vec<_> = jobs_by_thread
-            .into_iter()
-            .enumerate()
-            .map(|(idx, jobs)| {
-                thread::Builder::new()
-                    .name(format!("smoke-comparison-{idx}"))
-                    .spawn(move || {
-                        for path in jobs {
-                            check_batch_file(path);
-                        }
-                    })
-                    .expect("Worker thread must start")
-            })
-            .collect();
-
-        for handle in handles {
-            handle
-                .join()
-                .expect("Worker thread must finish without panic");
-        }
     }
 }

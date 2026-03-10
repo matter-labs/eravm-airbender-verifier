@@ -32,13 +32,16 @@ impl StorageLogMetadata {
         result
     }
 
-    /// Converts Merkle paths into a fixed-size array, panicking on length mismatch.
+    /// Converts Merkle paths into a fixed-size array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored Merkle path length differs from `PATH_LEN`.
     pub fn into_merkle_paths_array<const PATH_LEN: usize>(self) -> Box<[[u8; HASH_LEN]; PATH_LEN]> {
         let actual_len = self.merkle_paths.len();
         self.merkle_paths.try_into().unwrap_or_else(|_| {
             panic!(
-                "Unexpected length of Merkle paths in `StorageLogMetadata`: expected {}, got {}",
-                PATH_LEN, actual_len
+                "Unexpected length of Merkle paths in `StorageLogMetadata`: expected {PATH_LEN}, got {actual_len}"
             );
         })
     }
@@ -72,6 +75,10 @@ impl WitnessInputMerklePaths {
     }
 
     /// Pushes an additional Merkle path in compact form.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided path has a different Merkle path length from the first stored path.
     pub fn push_merkle_path(&mut self, mut path: StorageLogMetadata) {
         let Some(first_path) = self.merkle_paths.first() else {
             self.merkle_paths.push(path);
@@ -88,6 +95,10 @@ impl WitnessInputMerklePaths {
     }
 
     /// Expands compact Merkle paths and returns an iterator over all logs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored compact paths are malformed and a later path is longer than the first one.
     pub fn into_merkle_paths(self) -> impl ExactSizeIterator<Item = StorageLogMetadata> {
         let mut merkle_paths = self.merkle_paths;
         if let [first, rest @ ..] = merkle_paths.as_mut_slice() {
@@ -100,7 +111,7 @@ impl WitnessInputMerklePaths {
                 let spliced_len = first.merkle_paths.len() - path.merkle_paths.len();
                 let spliced_hashes = &first.merkle_paths[0..spliced_len];
                 path.merkle_paths
-                    .splice(0..0, spliced_hashes.iter().cloned());
+                    .splice(0..0, spliced_hashes.iter().copied());
                 debug_assert_eq!(path.merkle_paths.len(), first.merkle_paths.len());
             }
         }

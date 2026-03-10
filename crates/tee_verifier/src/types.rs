@@ -81,13 +81,13 @@ mod tests {
     #[test]
     fn witness_merkle_paths_roundtrip() {
         let zero_hash = [0_u8; HASH_LEN];
-        let logs = (0..10).map(|i| {
+        let logs = (0_u64..10).map(|i| {
             let mut merkle_paths = vec![zero_hash; 255];
             merkle_paths.push([i as u8; HASH_LEN]);
             StorageLogMetadata {
                 root_hash: zero_hash,
-                is_write: i % 2 == 0,
-                first_write: i % 3 == 0,
+                is_write: i.is_multiple_of(2),
+                first_write: i.is_multiple_of(3),
                 merkle_paths,
                 leaf_hashed_key: U256::from(i),
                 leaf_enumeration_index: i + 1,

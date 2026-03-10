@@ -32,7 +32,7 @@ struct Cli {
     #[arg(long, value_enum)]
     action: Action,
 
-    #[arg(long, default_value = "../../storage/era_mainnet_batches/binary")]
+    #[arg(long, default_value = BATCHES_DIR_RELATIVE)]
     batches_dir: String,
 
     #[arg(long)]
@@ -278,8 +278,7 @@ fn prove_batch(
         .prove(input_words)
         .with_context(|| format!("while attempting to generate proof for batch {batch_number}"))?;
     let proving_time = proving_started_at.elapsed();
-    let cycles = u64::try_from(prove_result.cycles)
-        .context("while attempting to convert proof cycle count to u64")?;
+    let cycles = prove_result.cycles;
     let output = prove_result.receipt.output[0];
 
     info!(
@@ -363,12 +362,6 @@ fn vk_cache_path(program: &Program) -> Result<PathBuf> {
 
 fn batch_file_path(batches_dir: &Path, batch_number: u64) -> PathBuf {
     batches_dir.join(format!("{batch_number}.bin"))
-}
-
-fn batches_dir() -> Result<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BATCHES_DIR_RELATIVE);
-    path.canonicalize()
-        .with_context(|| format!("while attempting to canonicalize {}", path.display()))
 }
 
 fn dist_dir() -> PathBuf {

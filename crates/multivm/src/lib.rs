@@ -1,4 +1,7 @@
 #![warn(unused_imports)]
+// This reduced verifier port intentionally keeps upstream VM surfaces that are not all exercised
+// by the current verifier-only build.
+#![allow(dead_code)]
 
 pub use zksync_types::vm::VmVersion;
 pub use zksync_vm_interface as interface;

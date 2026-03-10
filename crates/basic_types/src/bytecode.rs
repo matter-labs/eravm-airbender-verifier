@@ -49,13 +49,13 @@ pub fn validate_bytecode(code: &[u8]) -> Result<(), InvalidBytecodeError> {
         ));
     }
 
-    if bytecode_len % 32 != 0 {
+    if !bytecode_len.is_multiple_of(32) {
         return Err(InvalidBytecodeError::BytecodeLengthIsNotDivisibleBy32);
     }
 
     let bytecode_len_words = bytecode_len / 32;
 
-    if bytecode_len_words % 2 == 0 {
+    if bytecode_len_words.is_multiple_of(2) {
         return Err(InvalidBytecodeError::BytecodeLengthInWordsIsEven);
     }
 
@@ -100,7 +100,7 @@ impl BytecodeHash {
         let result = hasher.finalize();
 
         let mut output = [0u8; 32];
-        output[..].copy_from_slice(result.as_slice());
+        output.copy_from_slice(&result);
         output[0] = kind as u8;
         output[1] = 0;
         output[2..4].copy_from_slice(&len.to_be_bytes());
@@ -222,13 +222,13 @@ pub fn pad_evm_bytecode(deployed_bytecode: &[u8]) -> Vec<u8> {
     padded.extend_from_slice(deployed_bytecode);
 
     // Pad to the 32-byte word boundary.
-    if padded.len() % 32 != 0 {
+    if !padded.len().is_multiple_of(32) {
         padded.extend(iter::repeat_n(0, 32 - padded.len() % 32));
     }
     assert_eq!(padded.len() % 32, 0);
 
     // Pad to contain the odd number of words.
-    if (padded.len() / 32) % 2 != 1 {
+    if (padded.len() / 32).is_multiple_of(2) {
         padded.extend_from_slice(&[0; 32]);
     }
     assert_eq!((padded.len() / 32) % 2, 1);

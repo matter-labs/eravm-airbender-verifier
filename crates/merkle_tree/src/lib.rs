@@ -40,6 +40,9 @@
 // Linter settings.
 #![warn(missing_debug_implementations, missing_docs, bare_trait_objects)]
 #![warn(clippy::all, clippy::pedantic)]
+// This reduced verifier port intentionally retains upstream helper/storage code that is not all
+// exercised until the full storage wiring is restored.
+#![allow(dead_code, unused_imports, unused_mut, unused_variables)]
 #![allow(
     clippy::must_use_candidate,
     clippy::module_name_repetitions,

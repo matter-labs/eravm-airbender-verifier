@@ -226,7 +226,7 @@ impl Nibbles {
         let mut child = self;
         child.nibble_count += 1;
         let last_byte_idx = self.nibble_count / 2;
-        if child.nibble_count % 2 == 0 {
+        if child.nibble_count.is_multiple_of(2) {
             // The new `nibble` is 4 lower bits
             child.bytes[last_byte_idx] += nibble;
         } else {
@@ -263,7 +263,7 @@ impl fmt::Display for Nibbles {
         for &byte in full_bytes {
             write!(formatter, "{byte:02x}")?;
         }
-        if self.nibble_count % 2 == 1 {
+        if !self.nibble_count.is_multiple_of(2) {
             let last_byte = self.bytes[self.nibble_count / 2];
             let last_nibble = last_byte >> 4;
             write!(formatter, "{last_nibble:x}")?;
@@ -293,7 +293,7 @@ impl FromStr for Nibbles {
             };
 
             assert!(nibble < 16);
-            if i % 2 == 0 {
+            if i.is_multiple_of(2) {
                 bytes[i / 2] = nibble * 16;
             } else {
                 bytes[i / 2] += nibble;

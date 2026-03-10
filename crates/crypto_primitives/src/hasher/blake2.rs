@@ -12,13 +12,13 @@ impl Hasher for Blake2Hasher {
     fn hash_bytes(&self, value: &[u8]) -> H256 {
         let mut hasher = Blake2s256::new();
         hasher.update(value);
-        H256(hasher.finalize().into())
+        H256(hasher.finalize())
     }
 
     fn compress(&self, lhs: &H256, rhs: &H256) -> H256 {
         let mut hasher = Blake2s256::new();
         hasher.update(lhs.as_ref());
         hasher.update(rhs.as_ref());
-        H256(hasher.finalize().into())
+        H256(hasher.finalize())
     }
 }

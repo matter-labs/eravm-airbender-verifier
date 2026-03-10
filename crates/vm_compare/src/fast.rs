@@ -166,7 +166,7 @@ where
         return (
             false,
             MemorySummary {
-                total_length: total_length,
+                total_length,
                 head: Vec::new(),
                 tail: Vec::new(),
             },
