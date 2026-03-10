@@ -33,8 +33,9 @@ jobs:
       - name: Rustfmt
         run: cargo fmt --all --check
 
+      # The Airbender guest is built via `cargo-airbender`, not plain Cargo targets.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude eravm-prover-guest --locked -- -D warnings
 
   tests:
     name: tests
@@ -49,8 +50,44 @@ jobs:
         with:
           inherit-toolchain: true
 
+      # The Airbender guest is built via `cargo-airbender`, not plain Cargo targets.
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude eravm-prover-guest --locked
+
+  guest-build:
+    name: guest-build
+    runs-on: ubuntu-latest
+    env:
+      ZKSYNC_USE_CUDA_STUBS: true
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
+          ref: 3cb7a8033b5c56cf5eb8daab3b72650f94a9ca52
+          path: airbender-platform
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        run: cargo airbender build --project guest
+
+      - name: Check guest artifacts
+        run: test -f guest/dist/app/app.bin && test -f guest/dist/app/manifest.toml
 
   pr-checks:
     runs-on: ubuntu-latest
@@ -58,6 +95,7 @@ jobs:
     needs:
       - lints
       - tests
+      - guest-build
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
