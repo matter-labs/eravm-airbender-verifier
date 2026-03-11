@@ -166,7 +166,7 @@ impl<S: WriteStorage, H: HistoryMode> Debug for DefaultExecutionTracer<S, H> {
 /// This macro is used to reduce the boilerplate.
 ///
 /// Usage:
-/// ```
+/// ```text
 /// dispatch_tracers!(
 ///   self.after_decoding(state, data, memory)
 /// );
