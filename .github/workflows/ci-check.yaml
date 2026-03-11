@@ -84,7 +84,8 @@ jobs:
         run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
 
       - name: Build guest
-        run: cargo airbender build --project guest
+        working-directory: ./guest
+        run: cargo airbender build
 
       - name: Check guest artifacts
         run: test -f guest/dist/app/app.bin && test -f guest/dist/app/manifest.toml
