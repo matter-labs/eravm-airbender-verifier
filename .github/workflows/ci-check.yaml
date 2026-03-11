@@ -120,7 +120,7 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             SUDO=sudo
           fi
-          ${SUDO} apt update && ${SUDO} apt install -y git-lfs
+          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
 
       - name: Install Git LFS
         run: git lfs install --local
