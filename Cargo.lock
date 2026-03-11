@@ -1484,6 +1484,7 @@ dependencies = [
  "clap 4.5.57",
  "tracing",
  "tracing-subscriber",
+ "zksync_cli_utils",
 ]
 
 [[package]]
@@ -4722,6 +4723,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zksync_cli_utils"
+version = "29.7.1-non-semver-compat"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "tracing",
+]
+
+[[package]]
 name = "zksync_contracts"
 version = "29.7.1-non-semver-compat"
 dependencies = [
@@ -4928,6 +4938,7 @@ dependencies = [
  "bincode 2.0.1",
  "clap 4.5.57",
  "zk_evm",
+ "zksync_cli_utils",
  "zksync_multivm",
  "zksync_tee_verifier",
  "zksync_types",

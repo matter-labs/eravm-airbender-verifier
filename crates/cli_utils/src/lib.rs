@@ -1,0 +1,218 @@
+// TODO: This file is messy, to be refactored
+
+use anyhow::{Context, Result};
+use flate2::read::GzDecoder;
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Shared representation of a repository-owned batch input file.
+///
+/// We keep both the logical batch number and the exact file path so CLI tools can
+/// select inputs once and then process concrete files without repeating path
+/// probing logic.
+#[derive(Debug, Clone)]
+pub struct BatchInputFile {
+    pub number: u64,
+    pub path: PathBuf,
+}
+
+/// Resolve the batch files requested by a CLI into concrete filesystem paths.
+///
+/// The repository stores one input per file, and the CLI now accepts that
+/// concrete filename directly. Centralizing the resolution logic keeps the
+/// different binaries aligned on supported extensions, preserves the caller's
+/// explicit ordering for curated lists, and keeps the Git LFS friendly error
+/// messages in one place.
+pub fn resolve_batch_inputs(
+    batches_dir: &Path,
+    batch_files: Option<&[PathBuf]>,
+    all_batches: bool,
+) -> Result<Vec<BatchInputFile>> {
+    if all_batches {
+        return list_all_batch_inputs(batches_dir);
+    }
+
+    let batch_files = batch_files.context(
+        "while attempting to select input batches, pass either --batch-files <a.bin[.gz],b.bin[.gz]> or --all-batches",
+    )?;
+
+    batch_files
+        .iter()
+        .map(|batch_file| resolve_batch_input(batches_dir, batch_file))
+        .collect()
+}
+
+/// Load the framed hex words expected by the existing host and compare tooling.
+///
+/// The inputs may live as plain `.bin` files or as compressed `.bin.gz` files
+/// tracked in Git LFS. The CLI callers care about the logical words, not the
+/// storage format, so this helper hides the file-format details.
+pub fn load_batch_words(batch_input: &BatchInputFile) -> Result<Vec<u32>> {
+    let raw = read_batch_text(&batch_input.path)
+        .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
+    parse_hex_words(&raw).with_context(|| {
+        format!(
+            "while attempting to parse hex words for batch {} from {}",
+            batch_input.number,
+            batch_input.path.display()
+        )
+    })
+}
+
+fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
+    let entries = std::fs::read_dir(batches_dir)
+        .with_context(|| format!("while attempting to read {}", batches_dir.display()))?;
+
+    let mut batch_inputs = BTreeMap::<u64, PathBuf>::new();
+    for entry in entries {
+        let entry = entry.context("while attempting to read directory entry")?;
+        let path = entry.path();
+        match parse_batch_number_from_path(&path) {
+            Some(number) => {
+                if let Some(previous_path) = batch_inputs.insert(number, path.clone()) {
+                    anyhow::bail!(
+                        "found multiple files for batch {number}: {} and {}",
+                        previous_path.display(),
+                        path.display()
+                    );
+                }
+            }
+            None if is_supported_batch_path(&path) => {
+                tracing::warn!(path = %path.display(), "Skipping batch file with unsupported name");
+            }
+            None => {}
+        }
+    }
+
+    if batch_inputs.is_empty() {
+        anyhow::bail!("no batch files were found in {}", batches_dir.display());
+    }
+
+    Ok(batch_inputs
+        .into_iter()
+        .map(|(number, path)| BatchInputFile { number, path })
+        .collect())
+}
+
+fn resolve_batch_input(batches_dir: &Path, batch_file: &Path) -> Result<BatchInputFile> {
+    // We accept the CLI argument as a concrete filename so callers do not need
+    // to understand our fallback rules. Relative paths resolve within the batch
+    // corpus directory; absolute paths are respected as-is for local experiments.
+    let batch_path = if batch_file.is_absolute() {
+        batch_file.to_path_buf()
+    } else {
+        batches_dir.join(batch_file)
+    };
+
+    if !batch_path.is_file() {
+        anyhow::bail!(
+            "batch input {} does not exist; expected a file named <number>.bin or <number>.bin.gz",
+            batch_path.display()
+        );
+    }
+
+    let number = parse_batch_number_from_path(&batch_path).with_context(|| {
+        format!(
+            "while attempting to parse batch number from {}, expected <number>.bin or <number>.bin.gz",
+            batch_path.display()
+        )
+    })?;
+
+    Ok(BatchInputFile {
+        number,
+        path: batch_path,
+    })
+}
+
+fn parse_batch_number_from_path(path: &Path) -> Option<u64> {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("bin") {
+        return path
+            .file_stem()
+            .and_then(|stem| stem.to_str())?
+            .parse()
+            .ok();
+    }
+
+    if path.extension().and_then(|ext| ext.to_str()) == Some("gz") {
+        let compressed_stem = path.file_stem().and_then(|stem| stem.to_str())?;
+        let nested = Path::new(compressed_stem);
+        if nested.extension().and_then(|ext| ext.to_str()) != Some("bin") {
+            return None;
+        }
+        return nested
+            .file_stem()
+            .and_then(|stem| stem.to_str())?
+            .parse()
+            .ok();
+    }
+
+    None
+}
+
+fn is_supported_batch_path(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("bin")
+        || path.extension().and_then(|ext| ext.to_str()) == Some("gz")
+}
+
+fn read_batch_text(batch_path: &Path) -> Result<String> {
+    match batch_path.extension().and_then(|ext| ext.to_str()) {
+        Some("bin") => std::fs::read_to_string(batch_path)
+            .with_context(|| format!("while attempting to read {}", batch_path.display())),
+        Some("gz") => read_gzip_batch_text(batch_path),
+        _ => anyhow::bail!(
+            "unsupported batch input path {}, expected a .bin or .bin.gz file",
+            batch_path.display()
+        ),
+    }
+}
+
+fn read_gzip_batch_text(batch_path: &Path) -> Result<String> {
+    let compressed_bytes = std::fs::read(batch_path)
+        .with_context(|| format!("while attempting to read {}", batch_path.display()))?;
+
+    const GIT_LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
+    if compressed_bytes.starts_with(GIT_LFS_POINTER_PREFIX.as_bytes()) {
+        anyhow::bail!(
+            "{} is still a Git LFS pointer; pull the matching LFS object before retrying",
+            batch_path.display()
+        );
+    }
+
+    let mut decoder = GzDecoder::new(compressed_bytes.as_slice());
+    let mut raw = String::new();
+    decoder.read_to_string(&mut raw).with_context(|| {
+        format!(
+            "while attempting to decompress UTF-8 text from {}",
+            batch_path.display()
+        )
+    })?;
+    Ok(raw)
+}
+
+fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
+    let mut compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if let Some(stripped) = compact.strip_prefix("0x") {
+        compact = stripped.to_owned();
+    }
+
+    if compact.is_empty() {
+        anyhow::bail!("batch payload is empty");
+    }
+    if !compact.len().is_multiple_of(8) {
+        anyhow::bail!(
+            "batch payload length must be a multiple of 8 hex characters (got {})",
+            compact.len()
+        );
+    }
+
+    let mut words = Vec::with_capacity(compact.len() / 8);
+    for chunk in compact.as_bytes().chunks(8) {
+        let chunk_str =
+            std::str::from_utf8(chunk).context("while attempting to decode hex chunk as UTF-8")?;
+        let word = u32::from_str_radix(chunk_str, 16)
+            .with_context(|| format!("while attempting to parse hex word `{chunk_str}`"))?;
+        words.push(word);
+    }
+    Ok(words)
+}

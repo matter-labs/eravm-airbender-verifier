@@ -13,6 +13,9 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CI_BATCHES: 506093.bin.gz,506155.bin.gz,506169.bin.gz
+
 jobs:
   lints:
     name: lints
@@ -90,6 +93,77 @@ jobs:
       - name: Check guest artifacts
         run: test -f guest/dist/app/app.bin && test -f guest/dist/app/manifest.toml
 
+  vm-compare-batches:
+    name: vm-compare-batches
+    runs-on: ubuntu-latest
+    env:
+      ZKSYNC_USE_CUDA_STUBS: true
+      BATCHES_DIR: testdata/era_mainnet_batches/binary
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Git LFS
+        run: git lfs install --local
+
+      - name: Pull CI mainnet batches
+        run: ./scripts/fetch_lfs_batches.sh "$CI_BATCHES"
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Compare CI batches
+        run: cargo run --release -p zksync_vm_compare --locked --bin vm_compare -- \
+          --batches-dir "$BATCHES_DIR" \
+          --batch-files "$CI_BATCHES"
+
+  host-run-batches:
+    name: host-run-batches
+    runs-on: ubuntu-latest
+    env:
+      ZKSYNC_USE_CUDA_STUBS: true
+      BATCHES_DIR: testdata/era_mainnet_batches/binary
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
+          ref: 3cb7a8033b5c56cf5eb8daab3b72650f94a9ca52
+          path: airbender-platform
+
+      - name: Install Git LFS
+        run: git lfs install --local
+
+      - name: Pull CI mainnet batches
+        run: ./scripts/fetch_lfs_batches.sh "$CI_BATCHES"
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Run host execution for CI batches
+        run: cargo run --release -p eravm-prover-host --locked -- \
+          --action run \
+          --batches-dir "$BATCHES_DIR" \
+          --batch-files "$CI_BATCHES"
+
   pr-checks:
     runs-on: ubuntu-latest
     if: always()
@@ -97,6 +171,8 @@ jobs:
       - lints
       - tests
       - guest-build
+      - vm-compare-batches
+      - host-run-batches
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2

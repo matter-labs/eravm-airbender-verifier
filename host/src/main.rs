@@ -2,16 +2,16 @@ use airbender_host::{
     GpuProver, Program, Prover, ProverLevel, RealVerifier, Runner, VerificationKey,
     VerificationRequest, Verifier,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use statistics::StatisticsCollector;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::info;
+use zksync_cli_utils::{load_batch_words, resolve_batch_inputs};
 
 mod statistics;
 
-const BATCHES_DIR_RELATIVE: &str = "../../storage/era_mainnet_batches/binary";
 const EXPECTED_OUTPUT: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -23,17 +23,17 @@ enum Action {
 #[derive(Debug, Parser)]
 #[command(version, about = "Run or prove Era mainnet batches")]
 struct Cli {
-    #[arg(long, conflicts_with = "all_batches")]
-    batch_number: Option<u64>,
+    #[arg(long, value_delimiter = ',', conflicts_with = "all_batches")]
+    batch_files: Option<Vec<PathBuf>>,
 
-    #[arg(long, conflicts_with = "batch_number")]
+    #[arg(long, conflicts_with = "batch_files")]
     all_batches: bool,
 
     #[arg(long, value_enum)]
     action: Action,
 
-    #[arg(long, default_value = BATCHES_DIR_RELATIVE)]
-    batches_dir: String,
+    #[arg(long, default_value = "testdata/era_mainnet_batches/binary")]
+    batches_dir: PathBuf,
 
     #[arg(long)]
     worker_threads: Option<usize>,
@@ -44,24 +44,23 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     if cli.all_batches && cli.action != Action::Prove {
-        bail!("--all-batches requires --action prove");
+        anyhow::bail!("--all-batches requires --action prove");
     }
 
-    let batches_dir = PathBuf::from(cli.batches_dir.clone())
-        .canonicalize()
-        .with_context(|| {
-            format!(
-                "while attempting to canonicalize batches directory path {}",
-                cli.batches_dir
-            )
-        })?;
-    let batch_numbers = resolve_batch_numbers(&cli, &batches_dir)
-        .context("while attempting to resolve requested batches")?;
+    let batches_dir = cli.batches_dir.canonicalize().with_context(|| {
+        format!(
+            "while attempting to canonicalize batches directory path {}",
+            cli.batches_dir.display()
+        )
+    })?;
+    let batch_inputs =
+        resolve_batch_inputs(&batches_dir, cli.batch_files.as_deref(), cli.all_batches)
+            .context("while attempting to resolve requested batches")?;
 
     info!(
         action = ?cli.action,
         all_batches = cli.all_batches,
-        batch_count = batch_numbers.len(),
+        batch_count = batch_inputs.len(),
         "Starting batch processing"
     );
 
@@ -76,11 +75,20 @@ fn main() -> Result<()> {
                 .build()
                 .context("while attempting to build transpiler runner")?;
 
-            for batch_number in batch_numbers {
-                let input_words = load_batch_words(&batches_dir, batch_number)
-                    .with_context(|| format!("while attempting to load batch {batch_number}"))?;
-                run_batch(&runner, batch_number, &input_words).with_context(|| {
-                    format!("while attempting to run batch {batch_number} in transpiler")
+            for batch_input in batch_inputs {
+                let input_words = load_batch_words(&batch_input).with_context(|| {
+                    format!(
+                        "while attempting to load batch {} from {}",
+                        batch_input.number,
+                        batch_input.path.display()
+                    )
+                })?;
+                run_batch(&runner, batch_input.number, &input_words).with_context(|| {
+                    format!(
+                        "while attempting to run batch {} from {} in transpiler",
+                        batch_input.number,
+                        batch_input.path.display()
+                    )
                 })?;
             }
         }
@@ -114,19 +122,33 @@ fn main() -> Result<()> {
                 .context("while attempting to build GPU prover")?;
 
             let mut batches_proven = 0;
-            let total_batches = batch_numbers.len();
+            let total_batches = batch_inputs.len();
             let mut statistics = StatisticsCollector::default();
 
-            for batch_number in batch_numbers {
-                let input_words = load_batch_words(&batches_dir, batch_number)
-                    .with_context(|| format!("while attempting to load batch {batch_number}"))?;
+            for batch_input in batch_inputs {
+                let input_words = load_batch_words(&batch_input).with_context(|| {
+                    format!(
+                        "while attempting to load batch {} from {}",
+                        batch_input.number,
+                        batch_input.path.display()
+                    )
+                })?;
                 let proving_stats =
-                    prove_batch(&prover, &verifier, &vk, batch_number, &input_words).with_context(
-                        || format!("while attempting to prove batch {batch_number}"),
-                    )?;
+                    prove_batch(&prover, &verifier, &vk, batch_input.number, &input_words)
+                        .with_context(|| {
+                            format!(
+                                "while attempting to prove batch {} from {}",
+                                batch_input.number,
+                                batch_input.path.display()
+                            )
+                        })?;
                 statistics.add_sample(proving_stats.proving_time, proving_stats.cycles);
 
-                info!(batch_number, "Successfully proved batch");
+                info!(
+                    batch_number = batch_input.number,
+                    batch_file = %batch_input.path.display(),
+                    "Successfully proved batch"
+                );
                 batches_proven += 1;
                 info!("Batches proven: {batches_proven}/{total_batches}");
                 statistics.print_stats();
@@ -150,94 +172,6 @@ fn init_tracing() -> Result<()> {
     Ok(())
 }
 
-fn resolve_batch_numbers(cli: &Cli, batches_dir: &Path) -> Result<Vec<u64>> {
-    if cli.all_batches {
-        return list_all_batch_numbers(batches_dir)
-            .context("while attempting to enumerate all batch files");
-    }
-
-    let batch_number = cli.batch_number.context(
-        "while attempting to select input batch, pass either --batch-number <number> or --all-batches",
-    )?;
-    Ok(vec![batch_number])
-}
-
-fn list_all_batch_numbers(batches_dir: &Path) -> Result<Vec<u64>> {
-    let entries = std::fs::read_dir(batches_dir)
-        .with_context(|| format!("while attempting to read {}", batches_dir.display()))?;
-
-    let mut batch_numbers = Vec::new();
-    for entry in entries {
-        let entry = entry.context("while attempting to read directory entry")?;
-        let path = entry.path();
-
-        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
-            continue;
-        };
-        if extension != "bin" {
-            continue;
-        }
-
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            warn!(path = %path.display(), "Skipping non-UTF8 batch file name");
-            continue;
-        };
-
-        match stem.parse::<u64>() {
-            Ok(number) => batch_numbers.push(number),
-            Err(_) => warn!(path = %path.display(), "Skipping .bin file with non-numeric name"),
-        }
-    }
-
-    if batch_numbers.is_empty() {
-        bail!("no batch files were found in {}", batches_dir.display());
-    }
-
-    batch_numbers.sort_unstable();
-    Ok(batch_numbers)
-}
-
-fn load_batch_words(batches_dir: &Path, batch_number: u64) -> Result<Vec<u32>> {
-    let batch_path = batch_file_path(batches_dir, batch_number);
-    let raw = std::fs::read_to_string(&batch_path)
-        .with_context(|| format!("while attempting to read {}", batch_path.display()))?;
-    parse_hex_words(&raw).with_context(|| {
-        format!(
-            "while attempting to parse hex words in {}",
-            batch_path.display()
-        )
-    })
-}
-
-fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
-    let mut compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
-    if let Some(stripped) = compact.strip_prefix("0x") {
-        compact = stripped.to_string();
-    }
-
-    if compact.is_empty() {
-        bail!("batch payload is empty");
-    }
-
-    if !compact.len().is_multiple_of(8) {
-        bail!(
-            "batch payload length must be a multiple of 8 hex characters (got {})",
-            compact.len()
-        );
-    }
-
-    let mut words = Vec::with_capacity(compact.len() / 8);
-    for chunk in compact.as_bytes().chunks(8) {
-        let chunk_str =
-            std::str::from_utf8(chunk).context("while attempting to decode hex chunk as UTF-8")?;
-        let word = u32::from_str_radix(chunk_str, 16)
-            .with_context(|| format!("while attempting to parse hex word `{chunk_str}`"))?;
-        words.push(word);
-    }
-
-    Ok(words)
-}
-
 fn run_batch(
     // runner: &airbender_host::TranspilerRunner,
     runner: &airbender_host::SimulatorRunner,
@@ -258,7 +192,7 @@ fn run_batch(
     );
 
     if output != EXPECTED_OUTPUT {
-        bail!(
+        anyhow::bail!(
             "batch {batch_number} returned unexpected output {output}, expected {EXPECTED_OUTPUT}"
         );
     }
@@ -290,7 +224,7 @@ fn prove_batch(
     );
 
     if output != EXPECTED_OUTPUT {
-        bail!(
+        anyhow::bail!(
             "batch {batch_number} proof output {output} does not match expected {EXPECTED_OUTPUT}"
         );
     }
@@ -329,7 +263,7 @@ fn load_or_generate_vk(verifier: &RealVerifier, cache_path: &Path) -> Result<Ver
                 },
             )?;
         if decoded_len != bytes.len() {
-            bail!(
+            anyhow::bail!(
                 "verification key cache {} has trailing bytes",
                 cache_path.display()
             );
@@ -354,14 +288,12 @@ fn load_or_generate_vk(verifier: &RealVerifier, cache_path: &Path) -> Result<Ver
 fn vk_cache_path(program: &Program) -> Result<PathBuf> {
     let manifest_sha256 = program.manifest().bin.sha256.trim();
     if manifest_sha256.is_empty() {
-        bail!("guest manifest has empty bin_sha256, cannot derive verification key cache path");
+        anyhow::bail!(
+            "guest manifest has empty bin_sha256, cannot derive verification key cache path"
+        );
     }
 
     Ok(PathBuf::from(format!("vk-{manifest_sha256}.bin")))
-}
-
-fn batch_file_path(batches_dir: &Path, batch_number: u64) -> PathBuf {
-    batches_dir.join(format!("{batch_number}.bin"))
 }
 
 fn dist_dir() -> PathBuf {

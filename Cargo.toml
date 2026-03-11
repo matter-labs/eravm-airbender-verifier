@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/basic_types",
+  "crates/cli_utils",
   "crates/constants",
   "crates/contracts",
   "crates/crypto_primitives",
@@ -16,6 +17,7 @@ members = [
 ]
 default-members = [
   "crates/basic_types",
+  "crates/cli_utils",
   "crates/constants",
   "crates/contracts",
   "crates/crypto_primitives",
@@ -51,6 +53,7 @@ clap = "4.2.2"
 const-decoder = "0.4.0"
 criterion = "0.4.0"
 ethabi = { version = "18.0.0", default-features = false, features = ["std", "rlp", "serde"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 hex = "0.4"
 insta = "1.29.0"
 itertools = "0.13.0"
@@ -84,6 +87,7 @@ zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airb
 
 # Local dependencies in this workspace
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }
+zksync_cli_utils = { version = "29.7.1-non-semver-compat", path = "crates/cli_utils" }
 zksync_contracts = { version = "29.7.1-non-semver-compat", path = "crates/contracts" }
 zksync_crypto_primitives = { version = "29.7.1-non-semver-compat", path = "crates/crypto_primitives" }
 zksync_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/merkle_tree", default-features = false }
