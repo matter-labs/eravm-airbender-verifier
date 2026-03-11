@@ -114,9 +114,10 @@ jobs:
           inherit-toolchain: true
 
       - name: Compare CI batches
-        run: cargo run --release -p zksync_vm_compare --locked --bin vm_compare -- \
-          --batches-dir "$BATCHES_DIR" \
-          --batch-files "$CI_BATCHES"
+        run: |
+          cargo run --release -p zksync_vm_compare --locked --bin vm_compare -- \
+            --batches-dir "$BATCHES_DIR" \
+            --batch-files "$CI_BATCHES"
 
   host-run-batches:
     name: host-run-batches
@@ -159,10 +160,11 @@ jobs:
         run: cargo airbender build
 
       - name: Run host execution for CI batches
-        run: cargo run --release -p eravm-prover-host --locked -- \
-          --action run \
-          --batches-dir "$BATCHES_DIR" \
-          --batch-files "$CI_BATCHES"
+        run: |
+          cargo run --release -p eravm-prover-host --locked -- \
+            --action run \
+            --batches-dir "$BATCHES_DIR" \
+            --batch-files "$CI_BATCHES"
 
   pr-checks:
     runs-on: ubuntu-latest
