@@ -66,6 +66,17 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: Install linux packages
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          fi
+          ${SUDO} apt update && ${SUDO} apt install -y git-lfs
+
       - name: Install Git LFS
         run: git lfs install --local
 
@@ -99,6 +110,17 @@ jobs:
           # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
           ref: 3cb7a8033b5c56cf5eb8daab3b72650f94a9ca52
           path: airbender-platform
+
+      - name: Install linux packages
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          fi
+          ${SUDO} apt update && ${SUDO} apt install -y git-lfs
 
       - name: Install Git LFS
         run: git lfs install --local
