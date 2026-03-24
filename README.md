@@ -59,11 +59,58 @@ Run host proving:
 cargo run --release -p eravm-prover-host -- --action prove --batch-files <number>.bin.gz
 ```
 
+Run host proving and export the final Airbender proof JSON that `zkos-wrapper` consumes:
+
+```sh
+cargo run --release -p eravm-prover-host -- \
+  --action prove \
+  --batch-files <number>.bin.gz \
+  --proof-output-dir /tmp/airbender-proofs
+```
+
 Process all available batches:
 
 ```sh
 cargo run --release -p eravm-prover-host -- --action prove --all-batches
 ```
+
+## SNARK Wrapping
+
+`eravm-airbender-verifier` now has a thin bridge binary that forwards a final Airbender proof
+into the sibling `zkos-wrapper` repository.
+
+The current integration is intentionally file-based:
+
+- `eravm-prover-host` exports a wrapper-compatible `UnrolledProgramProof` JSON file.
+- `snark_wrap` shells out to `zkos-wrapper`'s existing `prove-all` CLI flow.
+- By default, `snark_wrap` uses this repository's verifier guest `app.bin` and `app.text`
+  when computing the wrapper's binary commitment.
+- This keeps the integration small while `airbender_host` still keeps the final proof payload
+  behind its outer `Proof::Real` wrapper and the wrapper carries its own dependency graph.
+
+Export a raw final proof for a batch:
+
+```sh
+cargo run --release -p eravm-prover-host -- \
+  --action prove \
+  --batch-files 506093.bin.gz \
+  --proof-output-dir /tmp/airbender-proofs
+```
+
+Wrap that proof into the sibling wrapper SNARK pipeline:
+
+```sh
+cargo run --release -p eravm-prover-host --bin snark_wrap -- \
+  --proof /tmp/airbender-proofs/506093.json \
+  --output-dir /tmp/snark-output \
+  --trusted-setup /path/to/setup.key
+```
+
+Use `--save-intermediates` to keep the RISC-wrapper and compression outputs, and `--use-zk` to
+enable the wrapper's zero-knowledge padding path. If you need to wrap proofs for a different
+guest binary, override the default commitment inputs with `--bin ... --text ...`. If
+`--trusted-setup` is omitted, the wrapper falls back to its fake testing CRS, which is not
+suitable for production.
 
 ## Mainnet Batch Corpus
 

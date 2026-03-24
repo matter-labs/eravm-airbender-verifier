@@ -1482,6 +1482,8 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "zksync_cli_utils",
