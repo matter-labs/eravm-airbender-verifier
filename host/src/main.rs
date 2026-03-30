@@ -69,8 +69,7 @@ fn main() -> Result<()> {
             let program =
                 Program::load(dist_dir()).context("while attempting to load guest program")?;
             let runner = program
-                // .transpiler_runner()
-                .simulator_runner()
+                .transpiler_runner()
                 .with_cycles(usize::MAX)
                 .build()
                 .context("while attempting to build transpiler runner")?;
@@ -173,8 +172,7 @@ fn init_tracing() -> Result<()> {
 }
 
 fn run_batch(
-    // runner: &airbender_host::TranspilerRunner,
-    runner: &airbender_host::SimulatorRunner,
+    runner: &airbender_host::TranspilerRunner,
     batch_number: u64,
     input_words: &[u32],
 ) -> Result<()> {
