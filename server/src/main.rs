@@ -1,6 +1,7 @@
 use airbender_host::{GpuProver, Program, Prover, ProverLevel};
 use anyhow::{Context, Result};
 use clap::Parser;
+use core::time;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -207,6 +208,7 @@ fn submit_result_with_retries(
                 last_err = err;
             }
         }
+        std::thread::sleep(time::Duration::from_millis(100));
     }
     Err(last_err)
 }
