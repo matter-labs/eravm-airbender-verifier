@@ -3,13 +3,18 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use core::time;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 use zksync_tee_verifier::types::TeeVerifierInput;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Prover server: polls for jobs and submits prove results")]
+#[command(
+    version,
+    about = "Prover server: polls for jobs and submits prove results"
+)]
 struct Cli {
     /// Base URL of the job server (e.g. http://localhost:8080)
     #[arg(long, env = "PROVER_SERVER_URL")]
@@ -60,7 +65,9 @@ fn main() -> Result<()> {
     if let Some(threads) = cli.worker_threads {
         prover_builder = prover_builder.with_worker_threads(threads);
     }
-    let prover = prover_builder.build().context("while building GPU prover")?;
+    let prover = prover_builder
+        .build()
+        .context("while building GPU prover")?;
 
     let client = reqwest::blocking::Client::new();
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
@@ -69,6 +76,16 @@ fn main() -> Result<()> {
     let (job_tx, job_rx) = mpsc::sync_channel::<Job>(1);
     // Channel capacity 1: the prover sends one result at a time.
     let (result_tx, result_rx) = mpsc::sync_channel::<CompletedProof>(1);
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    ctrlc::set_handler({
+        let shutdown = Arc::clone(&shutdown);
+        move || {
+            info!("Shutdown signal received, stopping after current job...");
+            shutdown.store(true, Ordering::Relaxed);
+        }
+    })
+    .context("while setting Ctrl-C handler")?;
 
     info!(server_url = %cli.server_url, "Starting prover server");
 
@@ -83,8 +100,10 @@ fn main() -> Result<()> {
         cli.server_url,
         poll_interval,
         cli.submit_attempts,
+        shutdown,
     );
 
+    info!("Waiting for prover to finish current job...");
     prover_handle.join().expect("prover thread panicked");
     Ok(())
 }
@@ -98,22 +117,26 @@ fn prover_worker(prover: GpuProver, job_rx: Receiver<Job>, result_tx: SyncSender
         info!(batch_number = job.batch_number, "Starting proof...");
         match prover.prove(&job.input_words) {
             Err(err) => {
-                error!(batch_number = job.batch_number, ?err, "Failed to prove batch");
+                error!(
+                    batch_number = job.batch_number,
+                    ?err,
+                    "Failed to prove batch"
+                );
             }
             Ok(prove_result) => {
-                let proof_bytes =
-                    match bincode::serialize(&prove_result.proof).context("while serializing proof")
-                    {
-                        Ok(b) => b,
-                        Err(err) => {
-                            error!(
-                                batch_number = job.batch_number,
-                                ?err,
-                                "Failed to serialize proof"
-                            );
-                            continue;
-                        }
-                    };
+                let proof_bytes = match bincode::serialize(&prove_result.proof)
+                    .context("while serializing proof")
+                {
+                    Ok(b) => b,
+                    Err(err) => {
+                        error!(
+                            batch_number = job.batch_number,
+                            ?err,
+                            "Failed to serialize proof"
+                        );
+                        continue;
+                    }
+                };
                 info!(
                     batch_number = job.batch_number,
                     cycles = prove_result.cycles,
@@ -144,23 +167,27 @@ fn network_worker(
     server_url: String,
     poll_interval: Duration,
     submit_attempts: usize,
+    shutdown: Arc<AtomicBool>,
 ) {
     let mut pending_job: Option<Job> = None;
 
     loop {
+        let shutting_down = shutdown.load(Ordering::Relaxed);
         let mut did_work = false;
 
         // Forward a pending job to the prover if it has capacity.
-        if let Some(job) = pending_job.take() {
-            match job_tx.try_send(job) {
-                Ok(()) => {
-                    did_work = true;
+        if !shutting_down {
+            if let Some(job) = pending_job.take() {
+                match job_tx.try_send(job) {
+                    Ok(()) => {
+                        did_work = true;
+                    }
+                    Err(TrySendError::Full(job)) => {
+                        // Prover is still busy; hold the job and retry next iteration.
+                        pending_job = Some(job);
+                    }
+                    Err(TrySendError::Disconnected(_)) => break,
                 }
-                Err(TrySendError::Full(job)) => {
-                    // Prover is still busy; hold the job and retry next iteration.
-                    pending_job = Some(job);
-                }
-                Err(TrySendError::Disconnected(_)) => break,
             }
         }
 
@@ -194,6 +221,10 @@ fn network_worker(
             Err(TryRecvError::Disconnected) => break,
         }
 
+        // On shutdown: stop after submitting any proof that was already ready.
+        if shutting_down {
+            break;
+        }
 
         // Fetch a new job from the server if we have no pending job buffered.
         if pending_job.is_none() {
@@ -292,7 +323,13 @@ fn submit_result_with_retries(
         match submit_result(client, base_url, batch_number, proof_bytes) {
             Ok(()) => return Ok(()),
             Err(err) => {
-                warn!(batch_number, attempt, attempts, ?err, "Submit attempt failed");
+                warn!(
+                    batch_number,
+                    attempt,
+                    attempts,
+                    ?err,
+                    "Submit attempt failed"
+                );
                 last_err = err;
             }
         }
