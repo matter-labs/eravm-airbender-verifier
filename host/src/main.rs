@@ -37,6 +37,9 @@ struct Cli {
 
     #[arg(long)]
     worker_threads: Option<usize>,
+
+    #[arg(long)]
+    jit: bool,
 }
 
 fn main() -> Result<()> {
@@ -68,9 +71,13 @@ fn main() -> Result<()> {
         Action::Run => {
             let program =
                 Program::load(dist_dir()).context("while attempting to load guest program")?;
-            let runner = program
-                .transpiler_runner()
-                .with_cycles(usize::MAX)
+            let mut runner_builder = program.transpiler_runner().with_cycles(usize::MAX);
+
+            if cli.jit {
+                runner_builder = runner_builder.with_jit();
+            }
+
+            let runner = runner_builder
                 .build()
                 .context("while attempting to build transpiler runner")?;
 
