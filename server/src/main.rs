@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use core::time;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::time::Duration;
 use tracing::{error, info, warn};
 use zksync_tee_verifier::types::TeeVerifierInput;
@@ -33,6 +34,12 @@ struct Job {
     input_words: Vec<u32>,
 }
 
+/// A completed proof ready to be submitted.
+struct CompletedProof {
+    batch_number: u32,
+    proof_bytes: Vec<u8>,
+}
+
 /// Mirrors `SubmitAirbenderProofRequest` from zksync-era.
 /// The `proof` bytes are hex-encoded in JSON, matching the `#[serde_as(as = "Hex")]` annotation.
 #[serde_with::serde_as]
@@ -58,74 +65,155 @@ fn main() -> Result<()> {
     let client = reqwest::blocking::Client::new();
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
 
-    info!(server_url = %cli.server_url, "Starting prover server loop");
+    // Channel capacity 1: the network worker can buffer one job ahead while the prover is busy.
+    let (job_tx, job_rx) = mpsc::sync_channel::<Job>(1);
+    // Channel capacity 1: the prover sends one result at a time.
+    let (result_tx, result_rx) = mpsc::sync_channel::<CompletedProof>(1);
 
-    run_loop(&prover, &client, &cli.server_url, poll_interval, cli.submit_attempts)
+    info!(server_url = %cli.server_url, "Starting prover server");
+
+    let prover_handle = std::thread::spawn(move || {
+        prover_worker(prover, job_rx, result_tx);
+    });
+
+    network_worker(
+        job_tx,
+        result_rx,
+        client,
+        cli.server_url,
+        poll_interval,
+        cli.submit_attempts,
+    );
+
+    prover_handle.join().expect("prover thread panicked");
+    Ok(())
 }
 
-fn run_loop(
-    prover: &GpuProver,
-    client: &reqwest::blocking::Client,
-    server_url: &str,
-    poll_interval: Duration,
-    submit_attempts: usize,
-) -> Result<()> {
-    loop {
-        match fetch_job(client, server_url) {
+/// Receives jobs, proves them, and sends completed proofs back to the network worker.
+///
+/// Runs independently so the network worker can submit the previous proof and pre-fetch
+/// the next job while this thread is busy proving.
+fn prover_worker(prover: GpuProver, job_rx: Receiver<Job>, result_tx: SyncSender<CompletedProof>) {
+    for job in job_rx {
+        info!(batch_number = job.batch_number, "Starting proof...");
+        match prover.prove(&job.input_words) {
             Err(err) => {
-                warn!(?err, "Failed to fetch job, retrying after poll interval");
-                std::thread::sleep(poll_interval);
+                error!(batch_number = job.batch_number, ?err, "Failed to prove batch");
             }
-            Ok(None) => {
-                info!("No jobs available, waiting...");
-                std::thread::sleep(poll_interval);
-            }
-            Ok(Some(job)) => {
-                info!(batch_number = job.batch_number, "Received job, proving...");
-                match prover.prove(&job.input_words) {
-                    Err(err) => {
-                        error!(batch_number = job.batch_number, ?err, "Failed to prove batch");
-                    }
-                    Ok(prove_result) => {
-                        let proof_bytes = match bincode::serialize(&prove_result.proof)
-                            .context("while serializing proof")
-                        {
-                            Ok(b) => b,
-                            Err(err) => {
-                                error!(
-                                    batch_number = job.batch_number,
-                                    ?err,
-                                    "Failed to serialize proof"
-                                );
-                                continue;
-                            }
-                        };
-
-                        match submit_result_with_retries(
-                            client,
-                            server_url,
-                            job.batch_number,
-                            &proof_bytes,
-                            submit_attempts,
-                        ) {
-                            Err(err) => {
-                                error!(
-                                    batch_number = job.batch_number,
-                                    ?err,
-                                    "Failed to submit result after {submit_attempts} attempt(s)"
-                                );
-                            }
-                            Ok(()) => {
-                                info!(
-                                    batch_number = job.batch_number,
-                                    cycles = prove_result.cycles,
-                                    "Successfully proved and submitted batch"
-                                );
-                            }
+            Ok(prove_result) => {
+                let proof_bytes =
+                    match bincode::serialize(&prove_result.proof).context("while serializing proof")
+                    {
+                        Ok(b) => b,
+                        Err(err) => {
+                            error!(
+                                batch_number = job.batch_number,
+                                ?err,
+                                "Failed to serialize proof"
+                            );
+                            continue;
                         }
-                    }
+                    };
+                info!(
+                    batch_number = job.batch_number,
+                    cycles = prove_result.cycles,
+                    "Proof complete, forwarding to network worker"
+                );
+                if result_tx
+                    .send(CompletedProof {
+                        batch_number: job.batch_number,
+                        proof_bytes,
+                    })
+                    .is_err()
+                {
+                    break;
                 }
             }
+        }
+    }
+}
+
+/// Fetches jobs from the server, forwards them to the prover, and submits completed proofs.
+///
+/// Uses a one-slot pending buffer so a job can be pre-fetched while the prover is busy,
+/// and proof submission does not block the next fetch cycle.
+fn network_worker(
+    job_tx: SyncSender<Job>,
+    result_rx: Receiver<CompletedProof>,
+    client: reqwest::blocking::Client,
+    server_url: String,
+    poll_interval: Duration,
+    submit_attempts: usize,
+) {
+    let mut pending_job: Option<Job> = None;
+
+    loop {
+        let mut did_work = false;
+
+        // Forward a pending job to the prover if it has capacity.
+        if let Some(job) = pending_job.take() {
+            match job_tx.try_send(job) {
+                Ok(()) => {
+                    did_work = true;
+                }
+                Err(TrySendError::Full(job)) => {
+                    // Prover is still busy; hold the job and retry next iteration.
+                    pending_job = Some(job);
+                }
+                Err(TrySendError::Disconnected(_)) => break,
+            }
+        }
+
+        // Submit any completed proof that the prover has finished.
+        match result_rx.try_recv() {
+            Ok(result) => {
+                match submit_result_with_retries(
+                    &client,
+                    &server_url,
+                    result.batch_number,
+                    &result.proof_bytes,
+                    submit_attempts,
+                ) {
+                    Err(err) => {
+                        error!(
+                            batch_number = result.batch_number,
+                            ?err,
+                            "Failed to submit proof after {submit_attempts} attempt(s)"
+                        );
+                    }
+                    Ok(()) => {
+                        info!(
+                            batch_number = result.batch_number,
+                            "Successfully submitted proof"
+                        );
+                    }
+                }
+                did_work = true;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => break,
+        }
+
+
+        // Fetch a new job from the server if we have no pending job buffered.
+        if pending_job.is_none() {
+            match fetch_job(&client, &server_url) {
+                Ok(Some(job)) => {
+                    info!(batch_number = job.batch_number, "Received job");
+                    pending_job = Some(job);
+                    did_work = true;
+                }
+                Ok(None) => {
+                    info!("No jobs available, waiting...");
+                }
+                Err(err) => {
+                    warn!(?err, "Failed to fetch job, retrying after poll interval");
+                }
+            }
+        }
+
+        if !did_work {
+            std::thread::sleep(poll_interval);
         }
     }
 }
