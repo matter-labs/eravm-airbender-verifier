@@ -41,7 +41,7 @@ fn prove_job(prover: &GpuProver, job: &Job) -> Option<CompletedProof> {
         }
         Ok(prove_result) => {
             record_metrics(job, ProofStatus::Success, started_at.elapsed());
-            match bincode::serialize(&prove_result.proof) {
+            match bincode::serde::encode_to_vec(&prove_result.proof, bincode::config::standard()) {
                 Err(err) => {
                     error!(
                         batch_number = job.batch_number,

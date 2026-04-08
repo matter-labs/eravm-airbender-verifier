@@ -153,7 +153,8 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
 /// bincode-serialized data packed into big-endian u32 words (last word zero-padded if needed).
 /// This matches `encode_to_words` from the `airbender_prover_interface` crate in zksync-era.
 fn input_to_words(input: &AirbenderVerifierInput) -> Result<Vec<u32>> {
-    let bytes = bincode::serialize(input).context("while serializing AirbenderVerifierInput")?;
+    let bytes = bincode::serde::encode_to_vec(input, bincode::config::standard())
+        .context("while serializing AirbenderVerifierInput")?;
     let byte_len = u32::try_from(bytes.len()).context("serialized input exceeds 4 GiB")?;
     let mut words = Vec::with_capacity(1 + bytes.len().div_ceil(4));
     words.push(byte_len);
