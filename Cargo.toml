@@ -12,6 +12,7 @@ members = [
   "crates/tee_verifier",
   "crates/types",
   "crates/vm_interface",
+  "crates/prover_metrics",
   "host",
   "server",
   "guest",
@@ -77,8 +78,11 @@ tempfile = "3.0.2"
 test-casing = "0.1.2"
 thiserror = "2.0.12"
 thread_local = "1.1"
+tokio = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+vise = "0.3.2"
+vise-exporter = "0.3.2"
 
 # Cryptographic curve arithmetic (already transitive deps via airbender-crypto)
 ark-ff = { version = "0.5", default-features = false }
@@ -95,6 +99,7 @@ zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airb
 
 # Local dependencies in this workspace
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }
+zksync_prover_metrics = { version = "29.7.1-non-semver-compat", path = "crates/prover_metrics" }
 zksync_cli_utils = { version = "29.7.1-non-semver-compat", path = "crates/cli_utils" }
 zksync_contracts = { version = "29.7.1-non-semver-compat", path = "crates/contracts" }
 zksync_crypto_primitives = { version = "29.7.1-non-semver-compat", path = "crates/crypto_primitives" }

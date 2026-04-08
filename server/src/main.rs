@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
+use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
 use zksync_tee_verifier::types::AirbenderVerifierInput;
 
 #[derive(Debug, Parser)]
@@ -31,11 +32,16 @@ struct Cli {
     /// Number of attempts to submit a prove result before giving up
     #[arg(long, env = "PROVER_SUBMIT_ATTEMPTS", default_value = "3")]
     submit_attempts: usize,
+
+    /// Port to expose Prometheus metrics on (disabled if not set)
+    #[arg(long, env = "PROVER_METRICS_PORT")]
+    metrics_port: Option<u16>,
 }
 
 /// A proving job received from the server.
 struct Job {
     batch_number: u32,
+    protocol_version: u16,
     input_words: Vec<u32>,
 }
 
@@ -57,6 +63,11 @@ struct SubmitProofRequest {
 fn main() -> Result<()> {
     init_tracing()?;
     let cli = Cli::parse();
+
+    if let Some(port) = cli.metrics_port {
+        zksync_prover_metrics::start_metrics_server(port);
+        info!(port, "Metrics server started");
+    }
 
     let program = Program::load(dist_dir()).context("while loading guest program")?;
     let mut prover_builder = program
@@ -115,8 +126,17 @@ fn main() -> Result<()> {
 fn prover_worker(prover: GpuProver, job_rx: Receiver<Job>, result_tx: SyncSender<CompletedProof>) {
     for job in job_rx {
         info!(batch_number = job.batch_number, "Starting proof...");
+        let started_at = Instant::now();
         match prover.prove(&job.input_words) {
             Err(err) => {
+                let elapsed = started_at.elapsed();
+                let labels = ProofLabels {
+                    batch_number: job.batch_number,
+                    protocol_version: job.protocol_version,
+                    status: ProofStatus::Failure,
+                };
+                METRICS.proof_duration[&labels].observe(elapsed);
+                METRICS.proof_count[&labels].inc();
                 error!(
                     batch_number = job.batch_number,
                     ?err,
@@ -124,6 +144,15 @@ fn prover_worker(prover: GpuProver, job_rx: Receiver<Job>, result_tx: SyncSender
                 );
             }
             Ok(prove_result) => {
+                let elapsed = started_at.elapsed();
+                let labels = ProofLabels {
+                    batch_number: job.batch_number,
+                    protocol_version: job.protocol_version,
+                    status: ProofStatus::Success,
+                };
+                METRICS.proof_duration[&labels].observe(elapsed);
+                METRICS.proof_count[&labels].inc();
+
                 let proof_bytes = match bincode::serialize(&prove_result.proof)
                     .context("while serializing proof")
                 {
@@ -215,6 +244,7 @@ fn network_worker(
                         );
                     }
                 }
+                METRICS.pending_jobs.dec();
                 did_work = true;
             }
             Err(TryRecvError::Empty) => {}
@@ -231,6 +261,7 @@ fn network_worker(
             match fetch_job(&client, &server_url) {
                 Ok(Some(job)) => {
                     info!(batch_number = job.batch_number, "Received job");
+                    METRICS.pending_jobs.inc();
                     pending_job = Some(job);
                     did_work = true;
                 }
@@ -267,9 +298,11 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
                 .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
             let batch_number = batch_number_from_input(&input)?;
+            let protocol_version = protocol_version_from_input(&input)?;
             let input_words = input_to_words(&input)?;
             Ok(Some(Job {
                 batch_number,
+                protocol_version,
                 input_words,
             }))
         }
@@ -287,6 +320,14 @@ fn batch_number_from_input(input: &AirbenderVerifierInput) -> Result<u32> {
         anyhow::bail!("expected AirbenderVerifierInput::V1, got V0");
     };
     Ok(v1.vm_run_data.l1_batch_number.0)
+}
+
+/// Extracts the protocol version from the verifier input.
+fn protocol_version_from_input(input: &AirbenderVerifierInput) -> Result<u16> {
+    let AirbenderVerifierInput::V1(v1) = input else {
+        anyhow::bail!("expected AirbenderVerifierInput::V1, got V0");
+    };
+    Ok(v1.vm_run_data.protocol_version as u16)
 }
 
 /// Serializes `AirbenderVerifierInput` to the `Vec<u32>` word stream expected by the prover.
