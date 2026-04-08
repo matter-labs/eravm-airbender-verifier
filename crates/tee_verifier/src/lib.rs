@@ -305,9 +305,11 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
 
     block_output_with_proofs
         .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
-        .context("Failed to verify_proofs {l1_batch_number} correctly!")?;
+        .with_context(|| format!("Failed to verify_proofs {batch_number} correctly!"))?;
 
-    let new_root_hash = block_output_with_proofs.root_hash().unwrap();
+    let new_root_hash = block_output_with_proofs
+        .root_hash()
+        .context("root_hash unavailable after verify_proofs")?;
     // The new enumeration index is the old index + number of newly inserted leaves.
     // Only TreeLogEntry::Inserted entries increment the index — Updated entries reuse
     // their existing leaf_index and don't allocate a new slot.
@@ -517,9 +519,6 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                 let base: TreeLogEntry = match (is_write, first_write, leaf_enumeration_index) {
                     (false, _, 0) => TreeLogEntry::ReadMissingKey,
                     (false, false, _) => {
-                        // This is a special U256 here, which needs `to_little_endian`
-                        let mut hashed_key = [0_u8; 32];
-                        leaf_storage_key.to_little_endian(&mut hashed_key);
                         tracing::trace!(
                             "TreeLogEntry::Read {leaf_storage_key:x} = {:x}",
                             StorageValue::from(value_read)
@@ -535,9 +534,6 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                     }
                     (true, true, _) => TreeLogEntry::Inserted,
                     (true, false, _) => {
-                        // This is a special U256 here, which needs `to_little_endian`
-                        let mut hashed_key = [0_u8; 32];
-                        leaf_storage_key.to_little_endian(&mut hashed_key);
                         tracing::trace!(
                             "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
                             StorageValue::from(value_read)

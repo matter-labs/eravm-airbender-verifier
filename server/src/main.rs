@@ -338,7 +338,8 @@ fn protocol_version_from_input(input: &AirbenderVerifierInput) -> Result<u16> {
 fn input_to_words(input: &AirbenderVerifierInput) -> Result<Vec<u32>> {
     let bytes = bincode::serialize(input).context("while serializing AirbenderVerifierInput")?;
     let mut words = Vec::with_capacity(1 + bytes.len().div_ceil(4));
-    words.push(bytes.len() as u32);
+    let byte_len = u32::try_from(bytes.len()).context("serialized input exceeds 4 GiB")?;
+    words.push(byte_len);
     for chunk in bytes.chunks(4) {
         let mut buf = [0u8; 4];
         buf[..chunk.len()].copy_from_slice(chunk);
