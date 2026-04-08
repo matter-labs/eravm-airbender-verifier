@@ -373,6 +373,26 @@ mod tests {
         assert_eq!(result[0], 0xFF000000);
     }
 
+    fn make_test_commitment_data() -> CommitmentData {
+        CommitmentData {
+            new_state_root: H256([0xAB; 32]),
+            new_enumeration_index: 42,
+            zk_porter_available: false,
+            bootloader_code_hash: H256([0x11; 32]),
+            default_aa_code_hash: H256([0x22; 32]),
+            evm_emulator_code_hash: H256([0x33; 32]),
+            system_logs: vec![],
+            state_diff_hash: H256([0x44; 32]),
+            bootloader_initial_heap: vec![0u8; 64], // 2 words of zeros
+            commitment_input: CommitmentInput {
+                prev_batch_commitment: H256([0x55; 32]),
+                blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+                blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+                blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+            },
+        }
+    }
+
     #[test]
     fn test_pass_through_data_hash_encoding() {
         // Verify the encoding matches abi.encodePacked(uint64, bytes32, uint64, bytes32)
@@ -397,5 +417,80 @@ mod tests {
         expected_input.extend_from_slice(&0u64.to_be_bytes());
         expected_input.extend_from_slice(&[0u8; 32]);
         assert_eq!(hash, H256(keccak256(&expected_input)));
+    }
+
+    #[test]
+    fn test_metadata_hash_encoding() {
+        let data = make_test_commitment_data();
+        let hash = data.compute_metadata_hash();
+        // abi.encodePacked(bool, bytes32, bytes32, bytes32)
+        let mut expected = Vec::new();
+        expected.push(0u8); // zkPorterAvailable = false
+        expected.extend_from_slice(&[0x11; 32]); // bootloader
+        expected.extend_from_slice(&[0x22; 32]); // default AA
+        expected.extend_from_slice(&[0x33; 32]); // EVM emulator
+        assert_eq!(hash, H256(keccak256(&expected)));
+    }
+
+    #[test]
+    fn test_full_commitment_deterministic() {
+        // Two identical CommitmentData must produce identical outputs.
+        let data1 = make_test_commitment_data();
+        let data2 = make_test_commitment_data();
+        let out1 = data1.compute().unwrap();
+        let out2 = data2.compute().unwrap();
+        assert_eq!(out1.commitment, out2.commitment);
+        assert_eq!(out1.proof_public_input, out2.proof_public_input);
+    }
+
+    #[test]
+    fn test_commitment_changes_with_state_root() {
+        let mut data1 = make_test_commitment_data();
+        let mut data2 = make_test_commitment_data();
+        data2.new_state_root = H256([0xCD; 32]);
+        let out1 = data1.compute().unwrap();
+        let out2 = data2.compute().unwrap();
+        assert_ne!(out1.commitment, out2.commitment);
+    }
+
+    #[test]
+    fn test_commitment_changes_with_bootloader_heap() {
+        let mut data1 = make_test_commitment_data();
+        let mut data2 = make_test_commitment_data();
+        data2.bootloader_initial_heap = vec![0xFF; 64];
+        let out1 = data1.compute().unwrap();
+        let out2 = data2.compute().unwrap();
+        assert_ne!(out1.commitment, out2.commitment);
+    }
+
+    #[test]
+    fn test_proof_public_input_depends_on_prev_commitment() {
+        let mut data1 = make_test_commitment_data();
+        let mut data2 = make_test_commitment_data();
+        data2.commitment_input.prev_batch_commitment = H256([0xEE; 32]);
+        let out1 = data1.compute().unwrap();
+        let out2 = data2.compute().unwrap();
+        // Same current commitment, different prev → different proof public input.
+        assert_eq!(out1.commitment, out2.commitment);
+        assert_ne!(out1.proof_public_input, out2.proof_public_input);
+    }
+
+    #[test]
+    fn test_proof_public_input_encoding() {
+        let data = make_test_commitment_data();
+        let out = data.compute().unwrap();
+        // Manually compute: keccak256(prev || commitment)
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(&[0x55; 32]); // prev_batch_commitment
+        preimage[32..].copy_from_slice(out.commitment.as_bytes());
+        let expected = keccak256(&preimage);
+        assert_eq!(out.proof_public_input, bytes32_to_u32x8(expected));
+    }
+
+    #[test]
+    #[should_panic(expected = "bootloader heap entry at offset")]
+    fn test_expand_bootloader_heap_out_of_range() {
+        let content = vec![(1000, U256::from(1))]; // offset 1000 * 32 = 32000 > 128
+        expand_bootloader_heap(&content, 128);
     }
 }

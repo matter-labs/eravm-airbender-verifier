@@ -631,6 +631,19 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_bytecode_hash_unknown_marker() {
+        let bytecode = vec![0u8; 32];
+        // Construct a hash with marker = 0xFF (unknown).
+        let mut fake_hash = [0u8; 32];
+        fake_hash[0] = 0xFF;
+        let err = verify_bytecode_hash(U256::from_big_endian(&fake_hash), &bytecode).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown bytecode marker"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_verify_blob_hashes_valid() {
         // One blob worth of pubdata.
         let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
