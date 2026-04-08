@@ -42,10 +42,12 @@ pub struct CommitmentInput {
     pub prev_batch_commitment: H256,
     /// EIP-4844 blob linear hashes for the auxiliary output.
     /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are `H256::zero()`.
-    /// Verified by the L1 DA validator, not by the guest.
     pub blob_linear_hashes: Vec<H256>,
-    /// KZG opening commitments corresponding to `blob_linear_hashes`.
-    /// Same length and ordering requirements.
+    /// EIP-4844 versioned hashes for each blob (from the L1 blob transaction).
+    /// Used to verify blob opening commitments.
+    pub blob_versioned_hashes: Vec<H256>,
+    /// Blob opening commitment hashes: `keccak256(versioned_hash || opening_point || opening_value)`.
+    /// Verified by evaluating the blob polynomial at the opening point.
     pub blob_opening_commitments: Vec<H256>,
 }
 
@@ -54,6 +56,7 @@ impl Default for CommitmentInput {
         Self {
             prev_batch_commitment: H256::zero(),
             blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+            blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
             blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
         }
     }

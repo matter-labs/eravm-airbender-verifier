@@ -18,6 +18,8 @@ zksync_types.workspace = true
 zksync_vm_interface.workspace = true
 
 anyhow.workspace = true
+ark-ff.workspace = true
+ark-bls12-381.workspace = true
 serde.workspace = true
 tracing.workspace = true
 

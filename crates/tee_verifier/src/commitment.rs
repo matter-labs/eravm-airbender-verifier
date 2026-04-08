@@ -194,6 +194,124 @@ impl CommitmentData {
     }
 }
 
+/// Size of a single blob chunk in ZKsync's encoding (31 bytes per field element).
+const BLOB_CHUNK_SIZE: usize = 31;
+
+/// Number of field elements per EIP-4844 blob.
+const ELEMENTS_PER_4844_BLOCK: usize = 4096;
+
+/// Total blob data size: 31 * 4096 = 126976 bytes.
+pub const ZK_SYNC_BYTES_PER_BLOB: usize = BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK;
+
+/// Verify blob opening commitments by evaluating the blob polynomial.
+///
+/// For each blob with non-zero `linear_hash`:
+/// 1. Parse the blob chunk into BLS12-381 scalar field elements (polynomial in monomial form)
+/// 2. Compute `evaluation_point = keccak256(linear_hash || versioned_hash)[16..]`
+/// 3. Evaluate the polynomial at `evaluation_point` using Horner's rule
+/// 4. Verify `output_hash == keccak256(versioned_hash || evaluation_point || opening_value)`
+///
+/// This matches the `EIP4844Repack` sub-circuit in Boojum
+/// (`zkevm_circuits/src/eip_4844/mod.rs`).
+pub fn verify_blob_opening_commitments(
+    pubdata: &[u8],
+    versioned_hashes: &[H256],
+    claimed_linear_hashes: &[H256],
+    claimed_output_hashes: &[H256],
+) {
+    use ark_bls12_381::Fr as Bls12_381Fr;
+    use ark_ff::{BigInteger, Field, PrimeField, Zero};
+
+    let num_blobs = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
+
+    for i in 0..claimed_output_hashes.len() {
+        if claimed_linear_hashes[i] == H256::zero() {
+            // No blob data for this slot — output hash must also be zero.
+            assert_eq!(
+                claimed_output_hashes[i],
+                H256::zero(),
+                "blob {i}: linear hash is zero but output hash is non-zero"
+            );
+            continue;
+        }
+
+        // Get the blob data (pad to full blob size if last chunk is short).
+        let blob_data = if i < num_blobs {
+            let start = i * ZK_SYNC_BYTES_PER_BLOB;
+            let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
+            let chunk = &pubdata[start..end];
+            if chunk.len() == ZK_SYNC_BYTES_PER_BLOB {
+                chunk.to_vec()
+            } else {
+                let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
+                padded[..chunk.len()].copy_from_slice(chunk);
+                padded
+            }
+        } else {
+            vec![0u8; ZK_SYNC_BYTES_PER_BLOB]
+        };
+
+        // Step 1: Parse blob data into polynomial coefficients (monomial form).
+        // Chunks are read in reverse order (highest-degree coefficient first).
+        // Each 31-byte chunk is interpreted as a little-endian BLS12-381 scalar.
+        let poly: Vec<Bls12_381Fr> = blob_data
+            .chunks(BLOB_CHUNK_SIZE)
+            .rev()
+            .map(|chunk| {
+                let mut buf = [0u8; 32];
+                buf[..BLOB_CHUNK_SIZE].copy_from_slice(chunk);
+                // 31 bytes LE is always below the BLS12-381 modulus.
+                Bls12_381Fr::from_le_bytes_mod_order(&buf)
+            })
+            .collect();
+
+        // Step 2: Compute evaluation point = keccak256(linear_hash || versioned_hash)[16..32]
+        let evaluation_point_bytes = {
+            let mut preimage = Vec::with_capacity(64);
+            preimage.extend_from_slice(claimed_linear_hashes[i].as_bytes());
+            preimage.extend_from_slice(versioned_hashes[i].as_bytes());
+            let hash = keccak256(&preimage);
+            let mut buf = [0u8; 32];
+            buf[16..32].copy_from_slice(&hash[16..32]);
+            buf
+        };
+        let evaluation_point = Bls12_381Fr::from_be_bytes_mod_order(&evaluation_point_bytes);
+
+        // Step 3: Evaluate polynomial using Horner's rule.
+        // poly[0] is the lowest-degree coefficient (built from the last blob chunk).
+        // Horner: result = p[n-1] + x*(p[n-2] + x*(p[n-3] + ... + x*p[0]))
+        // But our poly is already in order [a_0, a_1, ..., a_{n-1}],
+        // so we iterate in reverse: start from a_{n-1} and work down.
+        let mut opening_value = Bls12_381Fr::zero();
+        for coeff in poly.iter().rev() {
+            opening_value *= evaluation_point;
+            opening_value += coeff;
+        }
+
+        // Step 4: Serialize opening value as 32-byte big-endian.
+        let opening_value_bytes: [u8; 32] = {
+            let be_vec = opening_value.into_bigint().to_bytes_be();
+            // BLS12-381 Fr uses BigInteger256 → exactly 32 bytes.
+            be_vec.try_into().expect("BLS12-381 Fr should be 32 bytes BE")
+        };
+
+        // Step 5: Compute expected output_hash = keccak256(versioned_hash || evaluation_point || opening_value)
+        let expected_output_hash = {
+            let mut preimage = Vec::with_capacity(32 + 16 + 32);
+            preimage.extend_from_slice(versioned_hashes[i].as_bytes());
+            preimage.extend_from_slice(&evaluation_point_bytes[16..32]); // only the 16-byte truncated point
+            preimage.extend_from_slice(&opening_value_bytes);
+            H256(keccak256(&preimage))
+        };
+
+        assert_eq!(
+            expected_output_hash, claimed_output_hashes[i],
+            "blob {i} opening commitment mismatch: computed {expected_output_hash:?}, claimed {:?}",
+            claimed_output_hashes[i]
+        );
+    }
+}
+
 /// Expand sparse bootloader heap content to a full byte buffer.
 /// Mirrors `expand_memory_contents` in `commitment_generator/utils.rs`.
 pub fn expand_bootloader_heap(
