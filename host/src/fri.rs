@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
+use zksync_cli_utils::load_batch_words;
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
 /// We no longer check against a fixed expected output; any non-zero output
@@ -144,7 +145,26 @@ pub(crate) fn run_batch(
     runner: &TranspilerRunner,
     batch_number: u64,
     input_words: &[u32],
+    batch_path: &Path,
 ) -> Result<()> {
+    // Run native verification + commitment as ground truth.
+    let native_result = run_native_verification(batch_path)
+        .with_context(|| format!("native verification failed for batch {batch_number}"))?;
+
+    info!(
+        batch_number,
+        ?native_result.commitment,
+        ?native_result.proof_public_input,
+        "Native verification + commitment succeeded"
+    );
+
+    // Cross-check commitment sub-hashes against sequencer code.
+    crosscheck_commitment(&native_result, batch_path)
+        .with_context(|| format!("commitment cross-check failed for batch {batch_number}"))?;
+
+    info!(batch_number, "Commitment cross-check passed");
+
+    // Run transpiler execution.
     let execution = runner
         .run(input_words)
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
@@ -163,6 +183,177 @@ pub(crate) fn run_batch(
             "batch {batch_number} returned zero output — verification or commitment failed"
         );
     }
+
+    Ok(())
+}
+
+/// Run native (non-transpiler) verification and commitment computation.
+fn run_native_verification(
+    batch_path: &Path,
+) -> Result<zksync_tee_verifier::VerificationResult> {
+    use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput};
+
+    let input = load_verifier_input(batch_path)?;
+    let TeeVerifierInput::V1(input) = input else {
+        anyhow::bail!("expected TeeVerifierInput::V1");
+    };
+
+    zksync_tee_verifier::verify_and_commit(input, CommitmentInput::default())
+        .context("verify_and_commit failed")
+}
+
+/// Load and deserialize a TeeVerifierInput from a batch file.
+fn load_verifier_input(batch_path: &Path) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+    let framed_words = load_batch_words(
+        &zksync_cli_utils::resolve_batch_inputs(
+            batch_path.parent().unwrap(),
+            Some(&[batch_path.to_path_buf()]),
+            false,
+        )?[0],
+    )?;
+
+    let payload = frame_words_to_bytes(&framed_words)?;
+    let (input, decoded_len): (zksync_tee_verifier::types::TeeVerifierInput, usize) =
+        bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+            .context("bincode decode failed")?;
+    if decoded_len != payload.len() {
+        anyhow::bail!("trailing bytes: decoded {decoded_len} of {}", payload.len());
+    }
+    Ok(input)
+}
+
+fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
+    let (&byte_len_word, payload_words) = words
+        .split_first()
+        .context("frame has no length word")?;
+    let byte_len = byte_len_word as usize;
+
+    let mut bytes = Vec::with_capacity(byte_len);
+    for word in payload_words {
+        bytes.extend_from_slice(&word.to_be_bytes());
+    }
+    bytes.truncate(byte_len);
+    Ok(bytes)
+}
+
+/// Cross-check commitment sub-hashes against independent computation.
+fn crosscheck_commitment(
+    result: &zksync_tee_verifier::VerificationResult,
+    batch_path: &Path,
+) -> Result<()> {
+    use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
+    use zksync_crypto_primitives::hasher::Hasher;
+    use zksync_multivm::utils::get_used_bootloader_memory_bytes;
+    use zksync_tee_verifier::commitment::expand_bootloader_heap;
+    use zksync_tee_verifier::types::TOTAL_BLOBS_IN_COMMITMENT;
+    use zksync_types::{
+        commitment::{
+            serialize_commitments, AuxCommitments, BlobHash, CommitmentCommonInput,
+            CommitmentInput as SequencerCommitmentInput, L1BatchCommitment,
+        },
+        u256_to_h256,
+        web3::keccak256,
+        H256,
+    };
+
+    let input = load_verifier_input(batch_path)?;
+    let zksync_tee_verifier::types::TeeVerifierInput::V1(input) = input else {
+        anyhow::bail!("expected V1");
+    };
+
+    let protocol_version = input.system_env.version;
+    let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
+    let default_aa_code_hash = u256_to_h256(input.vm_run_data.default_account_code_hash);
+    let evm_emulator_code_hash = input.vm_run_data.evm_emulator_code_hash.map(u256_to_h256);
+    let initial_heap_content = &input.vm_run_data.initial_heap_content;
+
+    // passThroughDataHash + metadataHash via sequencer code.
+    let sequencer_input = SequencerCommitmentInput::PostBoojum {
+        common: CommitmentCommonInput {
+            l2_to_l1_logs: vec![],
+            rollup_last_leaf_index: result.new_enumeration_index,
+            rollup_root_hash: result.value_hash,
+            bootloader_code_hash,
+            default_aa_code_hash,
+            evm_emulator_code_hash,
+            protocol_version,
+        },
+        system_logs: vec![],
+        state_diffs: vec![],
+        aux_commitments: AuxCommitments {
+            events_queue_commitment: H256::zero(),
+            bootloader_initial_content_commitment: H256::zero(),
+        },
+        blob_hashes: vec![
+            BlobHash { linear_hash: H256::zero(), commitment: H256::zero() };
+            TOTAL_BLOBS_IN_COMMITMENT
+        ],
+        aggregation_root: H256::zero(),
+    };
+    let seq_hashes = L1BatchCommitment::new(sequencer_input, true)?.hash()?;
+
+    anyhow::ensure!(
+        result.pass_through_data_hash == seq_hashes.pass_through_data,
+        "passThroughDataHash mismatch: guest {:?} vs sequencer {:?}",
+        result.pass_through_data_hash, seq_hashes.pass_through_data
+    );
+    anyhow::ensure!(
+        result.metadata_hash == seq_hashes.meta_parameters,
+        "metadataHash mismatch: guest {:?} vs sequencer {:?}",
+        result.metadata_hash, seq_hashes.meta_parameters
+    );
+
+    // system_logs_hash + state_diff_hash independently.
+    let ind_logs_hash = H256(keccak256(&serialize_commitments(&result.system_logs)));
+    anyhow::ensure!(
+        result.system_logs_hash == ind_logs_hash,
+        "system_logs_hash mismatch"
+    );
+
+    let ind_diff_hash = H256(keccak256(&serialize_commitments(&result.state_diffs)));
+    anyhow::ensure!(
+        result.state_diff_hash == ind_diff_hash,
+        "state_diff_hash mismatch"
+    );
+
+    // bootloader_heap_hash independently.
+    let memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
+    let ind_heap_hash = Blake2Hasher.hash_bytes(&expand_bootloader_heap(initial_heap_content, memory_size));
+    anyhow::ensure!(
+        result.bootloader_heap_hash == ind_heap_hash,
+        "bootloader_heap_hash mismatch"
+    );
+
+    // Reconstruct full commitment from independent sub-hashes.
+    let ind_aux = {
+        let mut data = Vec::new();
+        data.extend_from_slice(ind_logs_hash.as_bytes());
+        data.extend_from_slice(ind_diff_hash.as_bytes());
+        data.extend_from_slice(ind_heap_hash.as_bytes());
+        data.extend_from_slice(&[0u8; 32]);
+        for _ in 0..TOTAL_BLOBS_IN_COMMITMENT {
+            data.extend_from_slice(&[0u8; 64]);
+        }
+        H256(keccak256(&data))
+    };
+    anyhow::ensure!(
+        result.auxiliary_output_hash == ind_aux,
+        "auxiliaryOutputHash mismatch"
+    );
+
+    let ind_commitment = H256(keccak256(
+        &[
+            seq_hashes.pass_through_data.as_bytes(),
+            seq_hashes.meta_parameters.as_bytes(),
+            ind_aux.as_bytes(),
+        ]
+        .concat(),
+    ));
+    anyhow::ensure!(
+        result.commitment == ind_commitment,
+        "full commitment mismatch: guest {:?} vs independent {:?}",
+        result.commitment, ind_commitment
+    );
 
     Ok(())
 }

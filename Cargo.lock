@@ -1652,6 +1652,10 @@ dependencies = [
  "tracing-subscriber",
  "zkos-wrapper",
  "zksync_cli_utils",
+ "zksync_crypto_primitives",
+ "zksync_multivm",
+ "zksync_tee_verifier",
+ "zksync_types",
 ]
 
 [[package]]
