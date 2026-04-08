@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
-use zksync_tee_verifier::types::TeeVerifierInput;
+use zksync_tee_verifier::types::AirbenderVerifierInput;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -253,7 +253,7 @@ fn network_worker(
 ///
 /// Returns `None` on 204 No Content (no jobs available).
 /// The response body mirrors `AirbenderProofGenerationDataResponse(Box<AirbenderVerifierInput>)`
-/// from zksync-era, which serializes as JSON-encoded `TeeVerifierInput`.
+/// from zksync-era, serialized as JSON.
 fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Option<Job>> {
     let url = format!("{base_url}/airbender/proof_inputs");
     let response = client
@@ -264,7 +264,7 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
     match response.status() {
         reqwest::StatusCode::OK => {
             let input = response
-                .json::<TeeVerifierInput>()
+                .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
             let batch_number = batch_number_from_input(&input)?;
             let input_words = input_to_words(&input)?;
@@ -282,33 +282,28 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
 }
 
 /// Extracts the L1 batch number from the verifier input.
-fn batch_number_from_input(input: &TeeVerifierInput) -> Result<u32> {
-    let TeeVerifierInput::V1(v1) = input else {
-        anyhow::bail!("expected TeeVerifierInput::V1, got V0");
+fn batch_number_from_input(input: &AirbenderVerifierInput) -> Result<u32> {
+    let AirbenderVerifierInput::V1(v1) = input else {
+        anyhow::bail!("expected AirbenderVerifierInput::V1, got V0");
     };
     Ok(v1.vm_run_data.l1_batch_number.0)
 }
 
-/// Serializes `TeeVerifierInput` to the `Vec<u32>` word stream expected by the prover.
+/// Serializes `AirbenderVerifierInput` to the `Vec<u32>` word stream expected by the prover.
 ///
-/// The guest program deserializes its input by reading words from the virtual UART,
-/// so the input must be bincode-serialized and then split into big-endian u32 words
-/// (matching the format used in the test batch `.bin` files).
-fn input_to_words(input: &TeeVerifierInput) -> Result<Vec<u32>> {
-    let bytes = bincode::serialize(input).context("while serializing TeeVerifierInput")?;
-    // Pad to a multiple of 4 bytes.
-    let rem = bytes.len() % 4;
-    let padded = if rem == 0 {
-        bytes
-    } else {
-        let mut v = bytes;
-        v.resize(v.len() + (4 - rem), 0);
-        v
-    };
-    Ok(padded
-        .chunks_exact(4)
-        .map(|c| u32::from_be_bytes(c.try_into().unwrap()))
-        .collect())
+/// Format: the first word is the byte length of the serialized input, followed by the
+/// bincode-serialized data packed into big-endian u32 words (last word zero-padded if needed).
+/// This matches `encode_to_words` from the `airbender_prover_interface` crate in zksync-era.
+fn input_to_words(input: &AirbenderVerifierInput) -> Result<Vec<u32>> {
+    let bytes = bincode::serialize(input).context("while serializing AirbenderVerifierInput")?;
+    let mut words = Vec::with_capacity(1 + bytes.len().div_ceil(4));
+    words.push(bytes.len() as u32);
+    for chunk in bytes.chunks(4) {
+        let mut buf = [0u8; 4];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        words.push(u32::from_be_bytes(buf));
+    }
+    Ok(words)
 }
 
 fn submit_result_with_retries(
