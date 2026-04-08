@@ -177,6 +177,7 @@ fn frame_bytes(bytes: &[u8]) -> Result<Vec<u32>> {
 }
 
 /// Inverts `frame_bytes`: strips the length word and returns the original bytes.
+#[cfg(test)]
 fn unframe_words(words: &[u32]) -> Result<Vec<u8>> {
     let (&byte_len_word, payload) = words
         .split_first()
