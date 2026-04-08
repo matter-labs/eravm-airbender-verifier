@@ -3,13 +3,17 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use zksync_types::{
     block::L2BlockExecutionData, commitment::PubdataParams,
-    witness_block_state::WitnessStorageState, L1BatchNumber, ProtocolVersionId, U256,
+    witness_block_state::WitnessStorageState, L1BatchNumber, ProtocolVersionId, H256, U256,
 };
 use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
 const HASH_LEN: usize = 32;
+
+/// Number of blob hash/commitment pairs in the auxiliary output, must match
+/// `TOTAL_BLOBS_IN_COMMITMENT` in `IExecutor.sol`.
+pub const TOTAL_BLOBS_IN_COMMITMENT: usize = 16;
 
 /// VM execution witness used by verifier input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -25,6 +29,34 @@ pub struct VMRunWitnessInputData {
     pub storage_refunds: Vec<u32>,
     pub pubdata_costs: Vec<i32>,
     pub witness_block_state: WitnessStorageState,
+}
+
+/// Data required for L1 batch commitment computation that is not produced by
+/// VM execution and must be provided externally.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommitmentInput {
+    /// The `storedBatchInfo.commitment` of the previous batch (stored on L1).
+    /// Used to construct the proof public input: `keccak256(prev || curr) >> 32`.
+    /// If the operator provides the wrong value, the proof will not match L1's
+    /// reconstruction and will be rejected.
+    pub prev_batch_commitment: H256,
+    /// EIP-4844 blob linear hashes for the auxiliary output.
+    /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are `H256::zero()`.
+    /// Verified by the L1 DA validator, not by the guest.
+    pub blob_linear_hashes: Vec<H256>,
+    /// KZG opening commitments corresponding to `blob_linear_hashes`.
+    /// Same length and ordering requirements.
+    pub blob_opening_commitments: Vec<H256>,
+}
+
+impl Default for CommitmentInput {
+    fn default() -> Self {
+        Self {
+            prev_batch_commitment: H256::zero(),
+            blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+            blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+        }
+    }
 }
 
 /// Version 1 of the data used as input for the TEE verifier.
@@ -56,6 +88,7 @@ impl V1TeeVerifierInput {
             pubdata_params,
         }
     }
+
 }
 
 /// Data used as input for the TEE verifier.

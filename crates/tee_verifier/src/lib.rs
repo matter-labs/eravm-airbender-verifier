@@ -3,7 +3,11 @@
 //! Verifies that a L1Batch has the expected root hash after
 //! executing the VM and verifying all the accessed memory slots by their
 //! merkle path.
+//!
+//! When used with Airbender, the verifier also computes the Era VM batch
+//! commitment and returns a proof public input hash for L1 settlement.
 
+pub mod commitment;
 pub mod types;
 
 use anyhow::{bail, Context, Result};
@@ -18,13 +22,16 @@ use zksync_multivm::{
     },
     is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
+    utils::get_used_bootloader_memory_bytes,
     FastVmInstance, LegacyVmInstance,
 };
 use zksync_types::{
-    block::L2BlockExecutionData, commitment::PubdataParams, u256_to_h256, L1BatchNumber,
-    ProtocolVersionId, StorageLog, StorageValue, Transaction, H256,
+    block::L2BlockExecutionData, bytecode::BytecodeHash, commitment::PubdataParams, u256_to_h256,
+    writes::StateDiffRecord, L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue,
+    Transaction, H256, U256,
 };
 
+use crate::commitment::{expand_bootloader_heap, CommitmentData};
 use crate::types::{StorageLogMetadata, V1TeeVerifierInput, WitnessInputMerklePaths};
 
 /// A structure to hold the result of verification.
@@ -33,6 +40,11 @@ pub struct VerificationResult {
     pub value_hash: ValueHash,
     /// The batch number that was verified.
     pub batch_number: L1BatchNumber,
+    /// The proof public input hash for L1 settlement: `keccak256(prev || curr)`.
+    /// L1 applies `>> 32` before verifying against the proof.
+    pub proof_public_input: [u32; 8],
+    /// The computed batch commitment.
+    pub commitment: H256,
 }
 
 /// A trait for the computations that can be verified in TEE.
@@ -40,6 +52,26 @@ pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 
     fn verify_legacy(self) -> anyhow::Result<VerificationResult>;
+}
+
+use crate::types::CommitmentInput;
+
+/// Verify execution and compute the batch commitment.
+/// `commitment_input` is provided separately from `V1TeeVerifierInput` because the
+/// latter's bincode layout is frozen (old test batches must still deserialize).
+pub fn verify_and_commit(
+    input: V1TeeVerifierInput,
+    commitment_input: CommitmentInput,
+) -> anyhow::Result<VerificationResult> {
+    assert!(
+        is_supported_by_fast_vm(input.system_env.version),
+        "Protocol version {:?} is not supported by FastVM tee verifier",
+        input.system_env.version
+    );
+
+    verify_with_vm(input, commitment_input, |l1_batch_env, system_env, storage_view| {
+        FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+    })
 }
 
 type VerifierStorage = StorageSnapshot;
@@ -50,6 +82,7 @@ type LegacyVerifierVm =
 
 fn verify_with_vm<VM, F>(
     input: V1TeeVerifierInput,
+    commitment_input: CommitmentInput,
     make_vm: F,
 ) -> anyhow::Result<VerificationResult>
 where
@@ -63,6 +96,33 @@ where
     let old_root_hash = input.l1_batch_env.previous_batch_hash.unwrap();
     let enumeration_index = input.merkle_paths.next_enumeration_index();
     let batch_number = input.l1_batch_env.number;
+    let initial_heap_content = input.vm_run_data.initial_heap_content.clone();
+    let protocol_version = input.system_env.version;
+    let zk_porter_available = input.system_env.zk_porter_available;
+    let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
+    let default_aa_code_hash = u256_to_h256(input.vm_run_data.default_account_code_hash);
+    let evm_emulator_code_hash = input
+        .vm_run_data
+        .evm_emulator_code_hash
+        .map(u256_to_h256)
+        .unwrap_or_default();
+
+    // Build a mapping from hashed storage key → real enumeration index from the
+    // Merkle proof witness. This is needed so that FinishedL1Batch.state_diffs
+    // contains correct enumeration indices for state diff hash computation.
+    // The leaf_hashed_key in StorageLogMetadata is a U256 (little-endian convention),
+    // which we convert to H256 to match the StorageSnapshot key format.
+    let enum_index_map: std::collections::HashMap<H256, u64> = input
+        .merkle_paths
+        .merkle_paths
+        .iter()
+        .filter(|log| log.leaf_enumeration_index > 0)
+        .map(|log| {
+            let mut key_bytes = [0u8; 32];
+            log.leaf_hashed_key.to_little_endian(&mut key_bytes);
+            (H256(key_bytes), log.leaf_enumeration_index)
+        })
+        .collect();
 
     let read_storage_ops = input
         .vm_run_data
@@ -76,25 +136,57 @@ where
         .is_write_initial
         .into_iter();
 
-    // We need to define storage slots read during batch execution, and their initial state;
-    // hence, the use of both read_storage_ops and initial_writes_ops.
-    // StorageSnapshot also requires providing enumeration indices,
-    // but they only matter at the end of execution when creating pubdata for the batch,
-    // which is irrelevant in this case. Thus, enumeration indices are set to dummy values.
-    let storage =
-        read_storage_ops
-            .enumerate()
-            .map(|(i, (hash, bytes))| (hash.hashed_key(), Some((bytes, i as u64 + 1u64))))
-            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-                initial_write.then_some((key.hashed_key(), None))
-            }))
-            .collect();
+    // Build the storage snapshot with real enumeration indices from the Merkle witness.
+    // Slots with a known enumeration index get Some((value, index)); slots that are
+    // initial writes (no prior index) get None.
+    let storage = read_storage_ops
+        .map(|(key, value)| {
+            let hashed = key.hashed_key();
+            let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
+            if enum_idx > 0 {
+                (hashed, Some((value, enum_idx)))
+            } else {
+                // Key exists in reads but has no enumeration index — treat as
+                // a slot without a prior write (value is the default or was
+                // never indexed).
+                (hashed, Some((value, 0)))
+            }
+        })
+        .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+            initial_write.then_some((key.hashed_key(), None))
+        }))
+        .collect();
 
+    // Verify the bootloader bytecode matches its claimed hash.
+    // The bootloader is loaded separately from used_bytecodes and orchestrates
+    // all transaction execution — a tampered bootloader would compromise everything.
+    {
+        let bootloader_flat: Vec<u8> = input
+            .vm_run_data
+            .bootloader_code
+            .iter()
+            .flat_map(|word| word.as_slice())
+            .copied()
+            .collect();
+        let computed = BytecodeHash::for_bytecode(&bootloader_flat);
+        assert_eq!(
+            u256_to_h256(computed.value_u256()),
+            bootloader_code_hash,
+            "bootloader bytecode hash mismatch: claimed {bootloader_code_hash:?}, computed {:?}",
+            u256_to_h256(computed.value_u256()),
+        );
+    }
+
+    // Verify all other bytecode hashes and build factory deps in a single pass.
     let factory_deps = input
         .vm_run_data
         .used_bytecodes
         .into_iter()
-        .map(|(hash, bytes)| (u256_to_h256(hash), bytes.into_flattened()))
+        .map(|(claimed_hash, words)| {
+            let flat_bytes = words.into_flattened();
+            verify_bytecode_hash(claimed_hash, &flat_bytes);
+            (u256_to_h256(claimed_hash), flat_bytes)
+        })
         .collect();
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
@@ -108,6 +200,11 @@ where
         input.system_env.version,
     )?;
 
+    // Extract system logs and state diffs before consuming vm_out for tree instructions.
+    let system_logs = vm_out.final_execution_state.system_logs.clone();
+    let state_diffs = vm_out.state_diffs.clone().unwrap_or_default();
+    let state_diff_hash = compute_state_diff_hash(&state_diffs);
+
     let block_output_with_proofs = get_bowp(input.merkle_paths)?;
 
     let instructions: Vec<TreeInstruction> =
@@ -117,10 +214,92 @@ where
         .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
         .context("Failed to verify_proofs {l1_batch_number} correctly!")?;
 
+    let new_root_hash = block_output_with_proofs.root_hash().unwrap();
+    // The new enumeration index is the old index + number of newly inserted leaves.
+    // Only TreeLogEntry::Inserted entries increment the index — Updated entries reuse
+    // their existing leaf_index and don't allocate a new slot.
+    let num_insertions = block_output_with_proofs
+        .logs
+        .iter()
+        .filter(|log| matches!(log.base, TreeLogEntry::Inserted))
+        .count() as u64;
+    let new_enumeration_index = enumeration_index + num_insertions;
+
+    // Expand bootloader heap and compute the batch commitment.
+    let bootloader_memory_size =
+        get_used_bootloader_memory_bytes(protocol_version.into());
+    let expanded_heap = expand_bootloader_heap(&initial_heap_content, bootloader_memory_size);
+
+    let commitment_data = CommitmentData {
+        new_state_root: new_root_hash,
+        new_enumeration_index,
+        zk_porter_available,
+        bootloader_code_hash,
+        default_aa_code_hash,
+        evm_emulator_code_hash,
+        system_logs,
+        state_diff_hash,
+        bootloader_initial_heap: expanded_heap,
+        commitment_input,
+    };
+
+    let commitment_output = commitment_data.compute()?;
+
     Ok(VerificationResult {
-        value_hash: block_output_with_proofs.root_hash().unwrap(),
+        value_hash: new_root_hash,
         batch_number,
+        proof_public_input: commitment_output.proof_public_input,
+        commitment: commitment_output.commitment,
     })
+}
+
+/// Compute the state diff hash: `keccak256` of padded-encoded state diff records.
+///
+/// Each `StateDiffRecord` is serialized to 272 bytes (156 bytes of data, zero-padded
+/// to `PADDED_ENCODED_STORAGE_DIFF_LEN_BYTES` for keccak round alignment).
+/// All records are concatenated and hashed.
+///
+/// The storage snapshot must be set up with real enumeration indices (from the Merkle
+/// witness) so that `FinishedL1Batch.state_diffs` contains correct values.
+///
+/// Matches `zksync-era/core/lib/types/src/commitment/mod.rs:424-425`.
+fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
+    use zksync_types::{commitment::serialize_commitments, web3::keccak256};
+    let packed = serialize_commitments(state_diffs);
+    H256(keccak256(&packed))
+}
+
+/// Verify that a bytecode's content matches its claimed hash.
+///
+/// EraVM bytecode hashes are SHA256 with the first 4 bytes overwritten:
+/// `[marker, 0, len_hi, len_lo, sha256[4..]]`.
+/// We use `BytecodeHash::for_bytecode` for EraVM bytecodes and
+/// `BytecodeHash::for_evm_bytecode` for EVM bytecodes (marker-based dispatch).
+fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) {
+    let claimed_h256 = u256_to_h256(claimed_hash);
+    let marker = claimed_h256.as_bytes()[0];
+
+    let computed = match marker {
+        1 => BytecodeHash::for_bytecode(flat_bytecode),
+        2 => {
+            // EVM bytecode: the length field encodes the raw (unpadded) length.
+            let raw_len = u16::from_be_bytes([
+                claimed_h256.as_bytes()[2],
+                claimed_h256.as_bytes()[3],
+            ]) as usize;
+            BytecodeHash::for_evm_bytecode(raw_len, flat_bytecode)
+        }
+        _ => panic!(
+            "unknown bytecode marker {marker} in hash {claimed_h256:?}"
+        ),
+    };
+
+    assert_eq!(
+        computed.value_u256(),
+        claimed_hash,
+        "bytecode hash mismatch: claimed {claimed_h256:?}, computed {:?}",
+        u256_to_h256(computed.value_u256()),
+    );
 }
 
 impl Verify for V1TeeVerifierInput {
@@ -139,13 +318,13 @@ impl Verify for V1TeeVerifierInput {
             self.system_env.version
         );
 
-        verify_with_vm(self, |l1_batch_env, system_env, storage_view| {
+        verify_with_vm(self, CommitmentInput::default(), |l1_batch_env, system_env, storage_view| {
             FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
         })
     }
 
     fn verify_legacy(self) -> anyhow::Result<VerificationResult> {
-        verify_with_vm(self, |l1_batch_env, system_env, storage_view| {
+        verify_with_vm(self, CommitmentInput::default(), |l1_batch_env, system_env, storage_view| {
             <LegacyVerifierVm as VmFactory<VerifierStorageView>>::new(
                 l1_batch_env,
                 system_env,
@@ -367,6 +546,27 @@ mod tests {
     use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
 
     #[test]
+    fn test_verify_bytecode_hash_valid() {
+        // Construct a minimal valid EraVM bytecode (must be 32-byte aligned, odd word count).
+        // 1 word = 32 bytes is odd, so that's valid.
+        let bytecode = vec![0u8; 32];
+        let hash = BytecodeHash::for_bytecode(&bytecode);
+        // Should not panic.
+        verify_bytecode_hash(hash.value_u256(), &bytecode);
+    }
+
+    #[test]
+    #[should_panic(expected = "bytecode hash mismatch")]
+    fn test_verify_bytecode_hash_tampered() {
+        let bytecode = vec![0u8; 32];
+        let hash = BytecodeHash::for_bytecode(&bytecode);
+        // Tamper: change one byte.
+        let mut tampered = bytecode.clone();
+        tampered[0] = 0xFF;
+        verify_bytecode_hash(hash.value_u256(), &tampered);
+    }
+
+    #[test]
     fn test_v1_serialization() {
         let tvi = V1TeeVerifierInput::new(
             VMRunWitnessInputData {
@@ -420,9 +620,10 @@ mod tests {
             Default::default(),
         );
         let tvi = TeeVerifierInput::new(tvi);
-        let serialized = bincode::serialize(&tvi).expect("Failed to serialize TeeVerifierInput.");
+        let serialized =
+            bincode_v1::serialize(&tvi).expect("Failed to serialize TeeVerifierInput.");
         let deserialized: TeeVerifierInput =
-            bincode::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
+            bincode_v1::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
 
         assert_eq!(tvi, deserialized);
     }
