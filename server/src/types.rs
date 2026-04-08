@@ -16,6 +16,8 @@ pub struct CompletedProof {
 #[serde_with::serde_as]
 #[derive(serde::Serialize)]
 pub struct SubmitProofRequest<'a> {
+    pub l1_batch_number: u32,
+    pub prover_id: String,
     #[serde_as(as = "serde_with::hex::Hex")]
     pub proof: &'a [u8],
 }

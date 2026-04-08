@@ -35,6 +35,11 @@ struct Cli {
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
+    /// Identifier for this prover instance, included in proof submissions.
+    /// Defaults to the HOSTNAME environment variable (i.e. the Kubernetes pod name).
+    #[arg(long, env = "PROVER_ID", default_value_t = default_prover_id())]
+    prover_id: String,
+
     /// Number of attempts to submit a prove result before giving up
     #[arg(long, env = "PROVER_SUBMIT_ATTEMPTS", default_value = "3")]
     submit_attempts: usize,
@@ -99,6 +104,7 @@ fn main() -> Result<()> {
         result_rx,
         client,
         server_url: cli.server_url,
+        prover_id: cli.prover_id,
         poll_interval,
         submit_attempts: cli.submit_attempts,
         shutdown,
@@ -119,6 +125,10 @@ fn init_tracing() -> Result<()> {
         // `try_init` returns a `SetGlobalDefaultError` which does not implement
         // `std::error::Error`, so `.context()` is unavailable here.
         .map_err(|err| anyhow::anyhow!("failed to initialize tracing: {err}"))
+}
+
+fn default_prover_id() -> String {
+    std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_owned())
 }
 
 /// Compile-time fallback path to the guest program.

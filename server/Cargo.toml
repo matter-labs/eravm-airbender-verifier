@@ -18,6 +18,10 @@ zksync_airbender_verifier.workspace = true
 zksync_prover_metrics.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
+hex.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+zksync_cli_utils.workspace = true
 zksync_contracts.workspace = true
 zksync_multivm.workspace = true
 zksync_types.workspace = true

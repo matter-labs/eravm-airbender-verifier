@@ -15,6 +15,7 @@ pub struct NetworkWorkerConfig {
     pub result_rx: Receiver<CompletedProof>,
     pub client: reqwest::blocking::Client,
     pub server_url: String,
+    pub prover_id: String,
     pub poll_interval: Duration,
     pub submit_attempts: usize,
     pub shutdown: Arc<AtomicBool>,
@@ -91,6 +92,7 @@ fn submit_proof(cfg: &NetworkWorkerConfig, result: &CompletedProof) {
     match submit_result_with_retries(
         &cfg.client,
         &cfg.server_url,
+        &cfg.prover_id,
         result.batch_number,
         &result.proof_bytes,
         cfg.submit_attempts,
@@ -320,13 +322,14 @@ mod tests {
 fn submit_result_with_retries(
     client: &reqwest::blocking::Client,
     base_url: &str,
+    prover_id: &str,
     batch_number: u32,
     proof_bytes: &[u8],
     attempts: usize,
 ) -> Result<()> {
     let mut last_err = anyhow::anyhow!("no attempts made");
     for attempt in 1..=attempts {
-        match submit_result(client, base_url, batch_number, proof_bytes) {
+        match submit_result(client, base_url, prover_id, batch_number, proof_bytes) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 warn!(
@@ -346,18 +349,23 @@ fn submit_result_with_retries(
     Err(last_err)
 }
 
-/// Submits a proof to `POST /airbender/submit_proofs/{l1_batch_number}`.
+/// Submits a proof to `POST /airbender/submit_proofs`.
 ///
 /// The body mirrors `SubmitAirbenderProofRequest` from zksync-era:
-/// `{ "proof": "<hex-encoded bytes>" }`.
+/// `{ "l1_batch_number": <u32>, "prover_id": "<string>", "proof": "<hex-encoded bytes>" }`.
 fn submit_result(
     client: &reqwest::blocking::Client,
     base_url: &str,
+    prover_id: &str,
     batch_number: u32,
     proof_bytes: &[u8],
 ) -> Result<()> {
-    let url = format!("{base_url}/airbender/submit_proofs/{batch_number}");
-    let payload = SubmitProofRequest { proof: proof_bytes };
+    let url = format!("{base_url}/airbender/submit_proofs");
+    let payload = SubmitProofRequest {
+        l1_batch_number: batch_number,
+        prover_id: prover_id.to_owned(),
+        proof: proof_bytes,
+    };
     let response = client
         .post(&url)
         .json(&payload)

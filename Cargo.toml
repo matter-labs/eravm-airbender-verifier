@@ -46,6 +46,7 @@ categories = ["cryptography"]
 [workspace.dependencies]
 # External dependencies
 anyhow = "1"
+axum = "0.7"
 ctrlc = "3"
 assert_matches = "1.5"
 async-trait = "0.1"
