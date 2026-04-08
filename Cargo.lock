@@ -1520,7 +1520,7 @@ name = "eravm-prover-guest"
 version = "0.1.0"
 dependencies = [
  "airbender-sdk",
- "zksync_tee_verifier",
+ "zksync_airbender_verifier",
 ]
 
 [[package]]
@@ -1555,8 +1555,8 @@ dependencies = [
  "serde_with",
  "tracing",
  "tracing-subscriber",
+ "zksync_airbender_verifier",
  "zksync_prover_metrics",
- "zksync_tee_verifier",
 ]
 
 [[package]]
@@ -5401,6 +5401,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "zksync_airbender_verifier"
+version = "29.7.1-non-semver-compat"
+dependencies = [
+ "anyhow",
+ "ark-bls12-381",
+ "ark-ff 0.5.0",
+ "bincode 1.3.3",
+ "serde",
+ "serde_json",
+ "tracing",
+ "zksync_cli_utils",
+ "zksync_contracts",
+ "zksync_crypto_primitives",
+ "zksync_merkle_tree",
+ "zksync_multivm",
+ "zksync_system_constants",
+ "zksync_types",
+ "zksync_vm_interface",
+]
+
+[[package]]
 name = "zksync_basic_types"
 version = "29.7.1-non-semver-compat"
 dependencies = [
@@ -5605,26 +5626,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zksync_tee_verifier"
-version = "29.7.1-non-semver-compat"
-dependencies = [
- "anyhow",
- "ark-bls12-381",
- "ark-ff 0.5.0",
- "bincode 1.3.3",
- "serde",
- "tracing",
- "zksync_cli_utils",
- "zksync_contracts",
- "zksync_crypto_primitives",
- "zksync_merkle_tree",
- "zksync_multivm",
- "zksync_system_constants",
- "zksync_types",
- "zksync_vm_interface",
-]
-
-[[package]]
 name = "zksync_types"
 version = "29.7.1-non-semver-compat"
 dependencies = [
@@ -5673,9 +5674,9 @@ dependencies = [
  "anyhow",
  "clap 4.5.57",
  "zk_evm",
+ "zksync_airbender_verifier",
  "zksync_cli_utils",
  "zksync_multivm",
- "zksync_tee_verifier",
  "zksync_types",
  "zksync_vm2",
  "zksync_vm_interface",

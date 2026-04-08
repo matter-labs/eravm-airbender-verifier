@@ -15,5 +15,5 @@ serde_json.workspace = true
 serde_with = {workspace = true, features = ["hex"]}
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-zksync_tee_verifier.workspace = true
+zksync_airbender_verifier.workspace = true
 zksync_prover_metrics.workspace = true

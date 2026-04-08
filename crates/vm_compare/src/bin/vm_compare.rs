@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use zksync_cli_utils::{load_batch_words, resolve_batch_inputs, BatchInputFile};
-use zksync_tee_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
 #[derive(Debug, Parser)]

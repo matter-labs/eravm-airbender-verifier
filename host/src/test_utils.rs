@@ -10,20 +10,20 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zksync_tee_verifier::types::{TeeVerifierInput, V2TeeVerifierInput};
+use zksync_airbender_verifier::types::{AirbenderVerifierInput, V2AirbenderVerifierInput};
 
 use crate::fri::load_verifier_input;
 
 /// Load a V1 batch from disk and lift it to V2 using a **synthetic**
 /// `CommitmentInput` (real blob linear hashes from pubdata, fabricated
 /// versioned hashes / opening commitments, zero prev_meta/prev_aux).
-/// See `zksync_tee_verifier::test_utils` module docs.
-pub(crate) fn load_with_synthetic_commitment(batch_path: &Path) -> Result<V2TeeVerifierInput> {
+/// See `zksync_airbender_verifier::test_utils` module docs.
+pub(crate) fn load_with_synthetic_commitment(batch_path: &Path) -> Result<V2AirbenderVerifierInput> {
     let v1_input = load_verifier_input(batch_path)?;
-    let TeeVerifierInput::V1(v1) = v1_input else {
-        anyhow::bail!("expected TeeVerifierInput::V1");
+    let AirbenderVerifierInput::V1(v1) = v1_input else {
+        anyhow::bail!("expected AirbenderVerifierInput::V1");
     };
 
-    zksync_tee_verifier::test_utils::augment_with_synthetic_commitment(v1)
+    zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment(v1)
         .context("failed to build synthetic commitment input")
 }

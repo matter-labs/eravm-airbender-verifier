@@ -9,7 +9,7 @@ members = [
   "crates/mini_merkle_tree",
   "crates/multivm",
   "crates/vm_compare",
-  "crates/tee_verifier",
+  "crates/airbender_verifier",
   "crates/types",
   "crates/vm_interface",
   "crates/prover_metrics",
@@ -27,7 +27,7 @@ default-members = [
   "crates/mini_merkle_tree",
   "crates/multivm",
   "crates/vm_compare",
-  "crates/tee_verifier",
+  "crates/airbender_verifier",
   "crates/types",
   "crates/vm_interface",
 ]
@@ -107,7 +107,7 @@ zksync_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/merk
 zksync_mini_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/mini_merkle_tree" }
 zksync_multivm = { version = "29.7.1-non-semver-compat", path = "crates/multivm" }
 zksync_system_constants = { version = "29.7.1-non-semver-compat", path = "crates/constants" }
-zksync_tee_verifier = { version = "29.7.1-non-semver-compat", path = "crates/tee_verifier" }
+zksync_airbender_verifier = { version = "29.7.1-non-semver-compat", path = "crates/airbender_verifier" }
 zksync_types = { version = "29.7.1-non-semver-compat", path = "crates/types" }
 zksync_vm_compare = { version = "29.7.1-non-semver-compat", path = "crates/vm_compare" }
 zksync_vm_interface = { version = "29.7.1-non-semver-compat", path = "crates/vm_interface" }

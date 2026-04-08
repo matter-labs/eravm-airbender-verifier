@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
-use zksync_tee_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
 #[derive(Debug, Parser)]
 #[command(

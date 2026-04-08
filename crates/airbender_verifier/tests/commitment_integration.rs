@@ -6,9 +6,9 @@
 use std::path::Path;
 
 use zksync_cli_utils::{load_batch, BatchInputFile};
-use zksync_tee_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
-use zksync_tee_verifier::types::TeeVerifierInput;
-use zksync_tee_verifier::Verify;
+use zksync_airbender_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::Verify;
 
 #[test]
 fn test_batch_506093_commitment() {
@@ -34,8 +34,8 @@ fn test_batch_506093_commitment() {
         path: batch_path.clone(),
     })
     .expect("failed to load batch");
-    let TeeVerifierInput::V1(input) = input else {
-        panic!("expected TeeVerifierInput::V1");
+    let AirbenderVerifierInput::V1(input) = input else {
+        panic!("expected AirbenderVerifierInput::V1");
     };
 
     println!(

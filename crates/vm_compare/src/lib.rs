@@ -19,7 +19,7 @@ use zksync_multivm::{
     vm_latest::HistoryEnabled,
     FastVmInstance, LegacyVmInstance, MultiVmTracer,
 };
-use zksync_tee_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_types::{u256_to_h256, Transaction, H256};
 
 use crate::types::TransactionTrace;

@@ -43,7 +43,7 @@ pub fn resolve_batch_inputs(
         .collect()
 }
 
-/// Load and deserialize a `TeeVerifierInput` from a batch file.
+/// Load and deserialize a `AirbenderVerifierInput` from a batch file.
 ///
 /// Inputs are stored as hex-encoded framed bytes — first 4 bytes (big-endian
 /// `u32`) are the bincode payload length, followed by the payload itself
@@ -52,7 +52,7 @@ pub fn resolve_batch_inputs(
 /// from callers.
 pub fn load_batch(
     batch_input: &BatchInputFile,
-) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
     let mut bytes = parse_hex_bytes(&raw).with_context(|| {

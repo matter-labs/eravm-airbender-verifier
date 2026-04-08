@@ -584,7 +584,7 @@ where
         for tx in &l2_block_data.txs {
             tracing::trace!("Started execution of tx: {tx:?}");
             execute_tx(tx, &mut vm)
-                .context("failed to execute transaction in TeeVerifierInputProducer")?;
+                .context("failed to execute transaction in AirbenderVerifierInputProducer")?;
             tracing::trace!("Finished execution of tx: {tx:?}");
         }
 

@@ -1,8 +1,8 @@
 #![no_main]
 
 use airbender::guest::read;
-use zksync_tee_verifier::types::AirbenderVerifierInput;
-use zksync_tee_verifier::Verify;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::Verify;
 
 #[airbender::main]
 fn main() -> [u32; 8] {
