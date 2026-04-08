@@ -677,7 +677,7 @@ mod tests {
         let expected_hash = H256(keccak256(&pubdata));
         let mut claimed = vec![H256::zero(); 16];
         claimed[0] = expected_hash;
-        verify_blob_linear_hashes(&pubdata, &claimed);
+        verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
     }
 
     #[test]
@@ -689,7 +689,7 @@ mod tests {
         let expected_hash = H256(keccak256(&padded));
         let mut claimed = vec![H256::zero(); 16];
         claimed[0] = expected_hash;
-        verify_blob_linear_hashes(&pubdata, &claimed);
+        verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
     }
 
     #[test]
@@ -796,7 +796,8 @@ mod tests {
             &versioned_hashes,
             &linear_hashes,
             &output_hashes,
-        );
+        )
+        .unwrap();
     }
 
     #[test]

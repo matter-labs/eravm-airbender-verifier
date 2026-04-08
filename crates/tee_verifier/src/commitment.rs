@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_commitment_changes_with_state_root() {
-        let mut data1 = make_test_commitment_data();
+        let data1 = make_test_commitment_data();
         let mut data2 = make_test_commitment_data();
         data2.new_state_root = H256([0xCD; 32]);
         let out1 = data1.compute().unwrap();
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_commitment_changes_with_bootloader_heap() {
-        let mut data1 = make_test_commitment_data();
+        let data1 = make_test_commitment_data();
         let mut data2 = make_test_commitment_data();
         data2.bootloader_initial_heap = vec![0xFF; 64];
         let out1 = data1.compute().unwrap();
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_proof_public_input_depends_on_prev_commitment() {
-        let mut data1 = make_test_commitment_data();
+        let data1 = make_test_commitment_data();
         let mut data2 = make_test_commitment_data();
         data2.commitment_input.prev_batch_commitment = H256([0xEE; 32]);
         let out1 = data1.compute().unwrap();
