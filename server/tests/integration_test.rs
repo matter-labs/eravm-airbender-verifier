@@ -9,7 +9,7 @@ use std::time::Duration;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use tokio::sync::oneshot;
 
-use airbender_host::{Proof, Program, ProverLevel, VerificationKey, VerificationRequest, Verifier};
+use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch_words, BatchInputFile};
 
@@ -158,7 +158,9 @@ async fn prover_server_proves_one_batch() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind test HTTP server");
-    let server_addr = listener.local_addr().expect("failed to get test server address");
+    let server_addr = listener
+        .local_addr()
+        .expect("failed to get test server address");
 
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -195,7 +197,10 @@ async fn prover_server_proves_one_batch() {
         .expect("failed to build RealVerifier");
 
     let manifest_sha256 = program.manifest().bin.sha256.trim().to_owned();
-    assert!(!manifest_sha256.is_empty(), "guest manifest has empty sha256");
+    assert!(
+        !manifest_sha256.is_empty(),
+        "guest manifest has empty sha256"
+    );
     let vk_cache = PathBuf::from(format!("vk-{manifest_sha256}.bin"));
     let vk = load_or_generate_vk(&verifier, &vk_cache);
 

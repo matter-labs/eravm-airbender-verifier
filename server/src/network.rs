@@ -191,6 +191,68 @@ fn unframe_words(words: &[u32]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn submit_result_with_retries(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    prover_id: &str,
+    batch_number: u32,
+    proof_bytes: &[u8],
+    attempts: usize,
+) -> Result<()> {
+    let mut last_err = anyhow::anyhow!("no attempts made");
+    for attempt in 1..=attempts {
+        match submit_result(client, base_url, prover_id, batch_number, proof_bytes) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                warn!(
+                    batch_number,
+                    attempt,
+                    attempts,
+                    ?err,
+                    "Submit attempt failed"
+                );
+                last_err = err;
+                if attempt < attempts {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// Submits a proof to `POST /airbender/submit_proofs`.
+///
+/// The body mirrors `SubmitAirbenderProofRequest` from zksync-era:
+/// `{ "l1_batch_number": <u32>, "prover_id": "<string>", "proof": "<hex-encoded bytes>" }`.
+fn submit_result(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    prover_id: &str,
+    batch_number: u32,
+    proof_bytes: &[u8],
+) -> Result<()> {
+    let url = format!("{base_url}/airbender/submit_proofs");
+    let payload = SubmitProofRequest {
+        l1_batch_number: batch_number,
+        prover_id: prover_id.to_owned(),
+        proof: proof_bytes,
+    };
+    let response = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .with_context(|| format!("while submitting proof to {url}"))?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "server returned {} when submitting proof for batch {batch_number}",
+            response.status()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use zksync_airbender_verifier::types::{
@@ -317,66 +379,4 @@ mod tests {
         );
         AirbenderVerifierInput::new(v1)
     }
-}
-
-fn submit_result_with_retries(
-    client: &reqwest::blocking::Client,
-    base_url: &str,
-    prover_id: &str,
-    batch_number: u32,
-    proof_bytes: &[u8],
-    attempts: usize,
-) -> Result<()> {
-    let mut last_err = anyhow::anyhow!("no attempts made");
-    for attempt in 1..=attempts {
-        match submit_result(client, base_url, prover_id, batch_number, proof_bytes) {
-            Ok(()) => return Ok(()),
-            Err(err) => {
-                warn!(
-                    batch_number,
-                    attempt,
-                    attempts,
-                    ?err,
-                    "Submit attempt failed"
-                );
-                last_err = err;
-                if attempt < attempts {
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            }
-        }
-    }
-    Err(last_err)
-}
-
-/// Submits a proof to `POST /airbender/submit_proofs`.
-///
-/// The body mirrors `SubmitAirbenderProofRequest` from zksync-era:
-/// `{ "l1_batch_number": <u32>, "prover_id": "<string>", "proof": "<hex-encoded bytes>" }`.
-fn submit_result(
-    client: &reqwest::blocking::Client,
-    base_url: &str,
-    prover_id: &str,
-    batch_number: u32,
-    proof_bytes: &[u8],
-) -> Result<()> {
-    let url = format!("{base_url}/airbender/submit_proofs");
-    let payload = SubmitProofRequest {
-        l1_batch_number: batch_number,
-        prover_id: prover_id.to_owned(),
-        proof: proof_bytes,
-    };
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .send()
-        .with_context(|| format!("while submitting proof to {url}"))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "server returned {} when submitting proof for batch {batch_number}",
-            response.status()
-        );
-    }
-    Ok(())
 }
