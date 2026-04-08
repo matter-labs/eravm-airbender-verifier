@@ -1551,7 +1551,6 @@ dependencies = [
  "ctrlc",
  "reqwest",
  "serde",
- "serde_json",
  "serde_with",
  "tracing",
  "tracing-subscriber",
@@ -5612,6 +5611,7 @@ dependencies = [
 name = "zksync_prover_metrics"
 version = "29.7.1-non-semver-compat"
 dependencies = [
+ "anyhow",
  "tokio",
  "vise",
  "vise-exporter",

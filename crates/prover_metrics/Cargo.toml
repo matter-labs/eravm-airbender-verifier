@@ -8,6 +8,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "net"] }
 vise.workspace = true
 vise-exporter.workspace = true

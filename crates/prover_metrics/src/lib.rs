@@ -40,11 +40,10 @@ pub static METRICS: vise::Global<ProverMetrics> = vise::Global::new();
 /// Starts the Prometheus metrics scrape endpoint on the given port.
 ///
 /// Spawns a background thread with its own single-threaded tokio runtime.
-/// Panics if the server cannot bind to the address.
-pub fn start_metrics_server(port: u16) {
-    let addr: SocketAddr = format!("0.0.0.0:{port}")
-        .parse()
-        .expect("invalid metrics address");
+/// Returns an error if the thread cannot be spawned. Panics inside the thread
+/// if the HTTP server fails to bind or exits unexpectedly.
+pub fn start_metrics_server(port: u16) -> anyhow::Result<()> {
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     std::thread::Builder::new()
         .name("metrics-server".into())
         .spawn(move || {
@@ -59,5 +58,6 @@ pub fn start_metrics_server(port: u16) {
                     .expect("metrics server error");
             });
         })
-        .expect("failed to spawn metrics server thread");
+        .map(|_| ())
+        .map_err(|err| anyhow::anyhow!("failed to spawn metrics server thread: {err}"))
 }
