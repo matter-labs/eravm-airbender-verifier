@@ -155,6 +155,14 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
 fn input_to_words(input: &AirbenderVerifierInput) -> Result<Vec<u32>> {
     let bytes = bincode::serde::encode_to_vec(input, bincode::config::standard())
         .context("while serializing AirbenderVerifierInput")?;
+    frame_bytes(&bytes)
+}
+
+/// Frames a byte slice into the packed u32 word format expected by the guest.
+///
+/// Layout: `[byte_len as u32] ++ [bytes packed into big-endian u32 words, last zero-padded]`.
+/// Matches `encode_to_words` from the `airbender_prover_interface` crate in zksync-era.
+fn frame_bytes(bytes: &[u8]) -> Result<Vec<u32>> {
     let byte_len = u32::try_from(bytes.len()).context("serialized input exceeds 4 GiB")?;
     let mut words = Vec::with_capacity(1 + bytes.len().div_ceil(4));
     words.push(byte_len);
@@ -164,6 +172,149 @@ fn input_to_words(input: &AirbenderVerifierInput) -> Result<Vec<u32>> {
         words.push(u32::from_be_bytes(buf));
     }
     Ok(words)
+}
+
+/// Inverts `frame_bytes`: strips the length word and returns the original bytes.
+fn unframe_words(words: &[u32]) -> Result<Vec<u8>> {
+    let (&byte_len_word, payload) = words
+        .split_first()
+        .context("framed payload has no length word")?;
+    let byte_len = byte_len_word as usize;
+    let available = payload.len() * 4;
+    if byte_len > available {
+        anyhow::bail!("declared length {byte_len} exceeds available bytes {available}");
+    }
+    let mut bytes: Vec<u8> = payload.iter().flat_map(|w| w.to_be_bytes()).collect();
+    bytes.truncate(byte_len);
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use zksync_airbender_verifier::types::{
+        AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData,
+        WitnessInputMerklePaths,
+    };
+    use zksync_contracts::{BaseSystemContracts, SystemContractCode};
+    use zksync_multivm::interface::{L1BatchEnv, L2BlockEnv, SystemEnv, TxExecutionMode};
+    use zksync_types::H256;
+
+    use super::{frame_bytes, input_to_words, unframe_words};
+
+    // --- framing unit tests (mirror the reference implementation's test suite) ---
+
+    #[test]
+    fn frame_with_padding() {
+        let input = [0x01u8, 0x02, 0x03, 0x04, 0x05];
+        let words = frame_bytes(&input).unwrap();
+        assert_eq!(words[0], 5);
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[1], 0x01020304);
+        assert_eq!(words[2], 0x05000000);
+        assert_eq!(unframe_words(&words).unwrap(), input);
+    }
+
+    #[test]
+    fn frame_exact_multiple_of_four() {
+        let input = [0xAAu8, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44];
+        let words = frame_bytes(&input).unwrap();
+        assert_eq!(words[0], 8);
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[1], 0xAABBCCDD);
+        assert_eq!(words[2], 0x11223344);
+        assert_eq!(unframe_words(&words).unwrap(), input);
+    }
+
+    #[test]
+    fn frame_empty() {
+        let words = frame_bytes(&[]).unwrap();
+        assert_eq!(words, vec![0]);
+        assert!(unframe_words(&words).unwrap().is_empty());
+    }
+
+    #[test]
+    fn frame_single_byte() {
+        let input = [0xABu8];
+        let words = frame_bytes(&input).unwrap();
+        assert_eq!(words[0], 1);
+        assert_eq!(words[1], 0xAB000000);
+        assert_eq!(unframe_words(&words).unwrap(), input);
+    }
+
+    // --- integration: input_to_words round-trips through bincode ---
+
+    #[test]
+    fn input_to_words_roundtrip() {
+        let input = make_test_input();
+        let words = input_to_words(&input).unwrap();
+
+        // First word is the byte length.
+        let byte_len = words[0] as usize;
+        assert!(byte_len > 0, "serialized input should be non-empty");
+
+        // Unframe and deserialize back.
+        let bytes = unframe_words(&words).unwrap();
+        assert_eq!(bytes.len(), byte_len);
+        let (decoded, n): (AirbenderVerifierInput, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(n, bytes.len(), "no trailing bytes after deserialization");
+        assert_eq!(decoded, input);
+    }
+
+    fn make_test_input() -> AirbenderVerifierInput {
+        let v1 = V1AirbenderVerifierInput::new(
+            VMRunWitnessInputData {
+                l1_batch_number: Default::default(),
+                used_bytecodes: Default::default(),
+                initial_heap_content: vec![],
+                protocol_version: Default::default(),
+                bootloader_code: vec![],
+                default_account_code_hash: Default::default(),
+                evm_emulator_code_hash: Some(Default::default()),
+                storage_refunds: vec![],
+                pubdata_costs: vec![],
+                witness_block_state: Default::default(),
+            },
+            WitnessInputMerklePaths::new(0),
+            vec![],
+            L1BatchEnv {
+                previous_batch_hash: Some(H256([1; 32])),
+                number: Default::default(),
+                timestamp: 0,
+                fee_input: Default::default(),
+                fee_account: Default::default(),
+                enforced_base_fee: None,
+                first_l2_block: L2BlockEnv {
+                    number: 0,
+                    timestamp: 0,
+                    prev_block_hash: H256([1; 32]),
+                    max_virtual_blocks_to_create: 0,
+                    interop_roots: vec![],
+                },
+            },
+            SystemEnv {
+                zk_porter_available: false,
+                version: Default::default(),
+                base_system_smart_contracts: BaseSystemContracts {
+                    bootloader: SystemContractCode {
+                        code: vec![1; 32],
+                        hash: H256([1; 32]),
+                    },
+                    default_aa: SystemContractCode {
+                        code: vec![1; 32],
+                        hash: H256([1; 32]),
+                    },
+                    evm_emulator: None,
+                },
+                bootloader_gas_limit: 0,
+                execution_mode: TxExecutionMode::VerifyExecute,
+                default_validation_computational_gas_limit: 0,
+                chain_id: Default::default(),
+            },
+            Default::default(),
+        );
+        AirbenderVerifierInput::new(v1)
+    }
 }
 
 fn submit_result_with_retries(

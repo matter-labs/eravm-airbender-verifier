@@ -1546,7 +1546,7 @@ version = "0.1.0"
 dependencies = [
  "airbender-host",
  "anyhow",
- "bincode 1.3.3",
+ "bincode 2.0.1",
  "clap 4.5.57",
  "ctrlc",
  "reqwest",
@@ -1555,7 +1555,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zksync_airbender_verifier",
+ "zksync_contracts",
+ "zksync_multivm",
  "zksync_prover_metrics",
+ "zksync_types",
 ]
 
 [[package]]
@@ -5426,7 +5429,7 @@ version = "29.7.1-non-semver-compat"
 dependencies = [
  "airbender-crypto",
  "anyhow",
- "bincode 1.3.3",
+ "bincode 2.0.1",
  "const-decoder",
  "ethabi",
  "hex",
@@ -5479,7 +5482,7 @@ dependencies = [
 name = "zksync_contracts"
 version = "29.7.1-non-semver-compat"
 dependencies = [
- "bincode 1.3.3",
+ "bincode 2.0.1",
  "serde",
  "serde_json",
  "zksync_basic_types",

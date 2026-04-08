@@ -21,3 +21,4 @@ zksync_vm_interface.workspace = true
 
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+bincode.workspace = true

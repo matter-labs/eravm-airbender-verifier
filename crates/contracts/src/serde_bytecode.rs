@@ -100,13 +100,17 @@ mod tests {
     #[test]
     fn serializing_system_contract_code_using_bincode() {
         let system_contract_code = test_code();
-        let bytes = bincode::serialize(&system_contract_code).unwrap();
-        let restored: SystemContractCode = bincode::deserialize(&bytes).unwrap();
+        let bytes =
+            bincode::serde::encode_to_vec(&system_contract_code, bincode::config::standard())
+                .unwrap();
+        let (restored, _): (SystemContractCode, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(restored.code, system_contract_code.code);
         assert_eq!(restored.hash, system_contract_code.hash);
 
         let legacy_code = LegacySystemContractCode::from(&system_contract_code);
-        let legacy_bytes = bincode::serialize(&legacy_code).unwrap();
+        let legacy_bytes =
+            bincode::serde::encode_to_vec(&legacy_code, bincode::config::standard()).unwrap();
         assert_eq!(legacy_bytes, bytes);
     }
 }

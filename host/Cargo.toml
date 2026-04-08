@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 airbender-host = { workspace = true, features = ["gpu-prover"] }
 anyhow.workspace = true
-bincode = { version = "2", features = ["serde"] }
+bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
