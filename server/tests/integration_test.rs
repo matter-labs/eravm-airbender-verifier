@@ -128,6 +128,10 @@ impl Drop for ChildGuard {
 /// 3. Start `eravm-prover-server` pointed at the local server.
 /// 4. Wait up to 1 hour for the server to submit the proof.
 /// 5. Verify the submitted proof with `RealVerifier`.
+///
+/// Ignored by default: requires a GPU, the built guest binary, and LFS batch 506093.bin.gz.
+/// Run with `cargo test --test integration_test --release -- --ignored`.
+#[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_proves_one_batch() {
     // --- 1. Load batch and build verifier input ---
