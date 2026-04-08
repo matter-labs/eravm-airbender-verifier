@@ -5458,6 +5458,8 @@ version = "29.7.1-non-semver-compat"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
+ "bincode 2.0.1",
+ "flate2",
  "serde",
  "serde_json",
  "tracing",
