@@ -166,7 +166,7 @@ jobs:
         with:
           repository: matter-labs/airbender-platform
           # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 3cb7a8033b5c56cf5eb8daab3b72650f94a9ca52
+          ref: 39e91e658a5ed36c7097d483696b704e2d4058f7
           path: airbender-platform
 
       - name: Install linux packages
@@ -178,7 +178,7 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             SUDO=sudo
           fi
-          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+          ${SUDO} apt update && ${SUDO} apt install -y cmake libclang-dev clang git-lfs
 
       - name: Install Git LFS
         run: git lfs install --local
