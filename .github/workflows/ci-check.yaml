@@ -154,7 +154,7 @@ jobs:
 
   server-integration-test:
     name: server-integration-test
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: matterlabs-ci-gpu-runner
     timeout-minutes: 120
     env:
       BATCHES_DIR: testdata/era_mainnet_batches/binary
