@@ -33,6 +33,13 @@ pub struct BatchCommitmentOutput {
     /// The proof public input: `keccak256(prevCommitment || currentCommitment)`.
     /// L1 applies `>> 32` before verifying; the guest returns the full 256-bit hash.
     pub proof_public_input: [u32; 8],
+    /// Sub-hashes for debugging / cross-checking.
+    pub pass_through_data_hash: H256,
+    pub metadata_hash: H256,
+    pub auxiliary_output_hash: H256,
+    pub system_logs_hash: H256,
+    pub state_diff_hash: H256,
+    pub bootloader_heap_hash: H256,
 }
 
 /// All data needed to compute the batch commitment, collected after verification.
@@ -60,6 +67,9 @@ impl CommitmentData {
     pub fn compute(self) -> anyhow::Result<BatchCommitmentOutput> {
         let pass_through_data_hash = self.compute_pass_through_data_hash();
         let metadata_hash = self.compute_metadata_hash();
+        let system_logs_hash = self.compute_system_logs_hash();
+        let bootloader_heap_hash = self.compute_bootloader_heap_hash();
+        let state_diff_hash = self.state_diff_hash;
         let auxiliary_output_hash = self.compute_auxiliary_output_hash()?;
 
         // Committer.sol:749 — uses abi.encode (equivalent to abi.encodePacked for bytes32 types)
@@ -84,6 +94,12 @@ impl CommitmentData {
         Ok(BatchCommitmentOutput {
             commitment,
             proof_public_input,
+            pass_through_data_hash,
+            metadata_hash,
+            auxiliary_output_hash,
+            system_logs_hash,
+            state_diff_hash,
+            bootloader_heap_hash,
         })
     }
 

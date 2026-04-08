@@ -45,6 +45,19 @@ pub struct VerificationResult {
     pub proof_public_input: [u32; 8],
     /// The computed batch commitment.
     pub commitment: H256,
+    /// The new Merkle tree enumeration index after all insertions.
+    pub new_enumeration_index: u64,
+    /// Sub-hashes for debugging / cross-checking against the sequencer.
+    pub pass_through_data_hash: H256,
+    pub metadata_hash: H256,
+    pub auxiliary_output_hash: H256,
+    /// Intermediate hashes for cross-checking.
+    pub system_logs_hash: H256,
+    pub state_diff_hash: H256,
+    pub bootloader_heap_hash: H256,
+    /// Raw data for independent cross-checking by tests.
+    pub system_logs: Vec<zksync_types::l2_to_l1_log::SystemL2ToL1Log>,
+    pub state_diffs: Vec<zksync_types::writes::StateDiffRecord>,
 }
 
 /// A trait for the computations that can be verified in TEE.
@@ -259,7 +272,7 @@ where
         bootloader_code_hash,
         default_aa_code_hash,
         evm_emulator_code_hash,
-        system_logs,
+        system_logs: system_logs.clone(),
         state_diff_hash,
         bootloader_initial_heap: expanded_heap,
         commitment_input,
@@ -272,6 +285,15 @@ where
         batch_number,
         proof_public_input: commitment_output.proof_public_input,
         commitment: commitment_output.commitment,
+        new_enumeration_index,
+        pass_through_data_hash: commitment_output.pass_through_data_hash,
+        metadata_hash: commitment_output.metadata_hash,
+        auxiliary_output_hash: commitment_output.auxiliary_output_hash,
+        system_logs_hash: commitment_output.system_logs_hash,
+        state_diff_hash: commitment_output.state_diff_hash,
+        bootloader_heap_hash: commitment_output.bootloader_heap_hash,
+        system_logs,
+        state_diffs,
     })
 }
 
