@@ -244,7 +244,7 @@ fn network_worker(
                         );
                     }
                 }
-                METRICS.pending_jobs.dec();
+                METRICS.pending_jobs.dec_by(1);
                 did_work = true;
             }
             Err(TryRecvError::Empty) => {}
@@ -261,7 +261,7 @@ fn network_worker(
             match fetch_job(&client, &server_url) {
                 Ok(Some(job)) => {
                     info!(batch_number = job.batch_number, "Received job");
-                    METRICS.pending_jobs.inc();
+                    METRICS.pending_jobs.inc_by(1);
                     pending_job = Some(job);
                     did_work = true;
                 }

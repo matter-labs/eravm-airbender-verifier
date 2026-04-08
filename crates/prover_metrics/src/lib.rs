@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use vise::{Buckets, Counter, EncodeLabelSet, EncodeLabelValue, Family, Gauge, Histogram, Metrics, Unit};
+use vise::{
+    Buckets, Counter, EncodeLabelSet, EncodeLabelValue, Family, Gauge, Histogram, Metrics, Unit,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelValue)]
 #[metrics(rename_all = "snake_case")]
@@ -40,7 +42,9 @@ pub static METRICS: vise::Global<ProverMetrics> = vise::Global::new();
 /// Spawns a background thread with its own single-threaded tokio runtime.
 /// Panics if the server cannot bind to the address.
 pub fn start_metrics_server(port: u16) {
-    let addr: SocketAddr = format!("0.0.0.0:{port}").parse().expect("invalid metrics address");
+    let addr: SocketAddr = format!("0.0.0.0:{port}")
+        .parse()
+        .expect("invalid metrics address");
     std::thread::Builder::new()
         .name("metrics-server".into())
         .spawn(move || {
@@ -49,11 +53,10 @@ pub fn start_metrics_server(port: u16) {
                 .build()
                 .expect("failed to build tokio runtime for metrics server");
             rt.block_on(async move {
-                vise_exporter::PrometheusExporter::builder()
-                    .with_bind_address(addr)
-                    .install()
-                    .expect("failed to install Prometheus exporter")
-                    .await;
+                vise_exporter::MetricsExporter::default()
+                    .start(addr)
+                    .await
+                    .expect("metrics server error");
             });
         })
         .expect("failed to spawn metrics server thread");
