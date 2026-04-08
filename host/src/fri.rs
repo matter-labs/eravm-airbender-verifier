@@ -164,9 +164,34 @@ pub(crate) fn run_batch(
 
     info!(batch_number, "Commitment cross-check passed");
 
-    // Run transpiler execution.
+    // Build transpiler input: original batch frame + CommitmentInput frame.
+    // The guest reads two values: TeeVerifierInput then CommitmentInput.
+    let transpiler_input = {
+        use zksync_tee_verifier::types::CommitmentInput;
+
+        let commitment_input = CommitmentInput::default();
+        let encoded = bincode::serde::encode_to_vec(&commitment_input, bincode::config::standard())
+            .context("failed to encode CommitmentInput")?;
+
+        // Frame the encoded bytes: [byte_len_word, payload_words...]
+        let byte_len = encoded.len() as u32;
+        let mut commitment_words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
+        commitment_words.push(byte_len);
+        for chunk in encoded.chunks(4) {
+            let mut padded = [0u8; 4];
+            padded[..chunk.len()].copy_from_slice(chunk);
+            commitment_words.push(u32::from_be_bytes(padded));
+        }
+
+        // Concatenate: batch frame + commitment frame
+        let mut combined = input_words.to_vec();
+        combined.extend_from_slice(&commitment_words);
+        combined
+    };
+
+    // Run transpiler execution with both frames.
     let execution = runner
-        .run(input_words)
+        .run(&transpiler_input)
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
     let output = execution.receipt.output;
 
@@ -178,11 +203,17 @@ pub(crate) fn run_batch(
         "Finished transpiler run"
     );
 
-    if output == [0u32; 8] {
-        anyhow::bail!(
-            "batch {batch_number} returned zero output — verification or commitment failed"
-        );
-    }
+    // Verify transpiler output matches native verification.
+    anyhow::ensure!(
+        output == native_result.proof_public_input,
+        "batch {batch_number}: transpiler output {output:?} doesn't match native {0:?}",
+        native_result.proof_public_input
+    );
+
+    info!(
+        batch_number,
+        "Transpiler output matches native verification"
+    );
 
     Ok(())
 }

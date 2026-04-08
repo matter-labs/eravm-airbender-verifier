@@ -396,7 +396,7 @@ impl Verify for V1TeeVerifierInput {
     /// Returns a verbose error of the failure, because any error is
     /// not actionable.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        assert!(
+        anyhow::ensure!(
             is_supported_by_fast_vm(self.system_env.version),
             "Protocol version {:?} is not supported by FastVM tee verifier",
             self.system_env.version
