@@ -322,9 +322,11 @@ pub fn expand_bootloader_heap(
     for &(offset, value) in initial_heap_content {
         let start = offset * 32;
         let end = start + 32;
-        if end <= memory_size_bytes {
-            value.to_big_endian(&mut result[start..end]);
-        }
+        assert!(
+            end <= memory_size_bytes,
+            "bootloader heap entry at offset {offset} (byte {start}..{end}) exceeds memory size {memory_size_bytes}"
+        );
+        value.to_big_endian(&mut result[start..end]);
     }
     result
 }

@@ -169,9 +169,8 @@ where
             .copied()
             .collect();
         let computed = BytecodeHash::for_bytecode(&bootloader_flat);
-        assert_eq!(
-            u256_to_h256(computed.value_u256()),
-            bootloader_code_hash,
+        anyhow::ensure!(
+            u256_to_h256(computed.value_u256()) == bootloader_code_hash,
             "bootloader bytecode hash mismatch: claimed {bootloader_code_hash:?}, computed {:?}",
             u256_to_h256(computed.value_u256()),
         );
@@ -184,10 +183,10 @@ where
         .into_iter()
         .map(|(claimed_hash, words)| {
             let flat_bytes = words.into_flattened();
-            verify_bytecode_hash(claimed_hash, &flat_bytes);
-            (u256_to_h256(claimed_hash), flat_bytes)
+            verify_bytecode_hash(claimed_hash, &flat_bytes)?;
+            Ok((u256_to_h256(claimed_hash), flat_bytes))
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
@@ -202,7 +201,10 @@ where
 
     // Extract system logs and state diffs before consuming vm_out for tree instructions.
     let system_logs = vm_out.final_execution_state.system_logs.clone();
-    let state_diffs = vm_out.state_diffs.clone().unwrap_or_default();
+    let state_diffs = vm_out
+        .state_diffs
+        .clone()
+        .context("state_diffs missing from VM output — required for commitment")?;
     let state_diff_hash = compute_state_diff_hash(&state_diffs);
 
     // Verify blob hashes against pubdata produced by execution.
@@ -338,7 +340,7 @@ fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) {
 /// `[marker, 0, len_hi, len_lo, sha256[4..]]`.
 /// We use `BytecodeHash::for_bytecode` for EraVM bytecodes and
 /// `BytecodeHash::for_evm_bytecode` for EVM bytecodes (marker-based dispatch).
-fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) {
+fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Result<()> {
     let claimed_h256 = u256_to_h256(claimed_hash);
     let marker = claimed_h256.as_bytes()[0];
 
@@ -352,17 +354,17 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) {
             ]) as usize;
             BytecodeHash::for_evm_bytecode(raw_len, flat_bytecode)
         }
-        _ => panic!(
+        _ => anyhow::bail!(
             "unknown bytecode marker {marker} in hash {claimed_h256:?}"
         ),
     };
 
-    assert_eq!(
-        computed.value_u256(),
-        claimed_hash,
+    anyhow::ensure!(
+        computed.value_u256() == claimed_hash,
         "bytecode hash mismatch: claimed {claimed_h256:?}, computed {:?}",
         u256_to_h256(computed.value_u256()),
     );
+    Ok(())
 }
 
 impl Verify for V1TeeVerifierInput {
@@ -610,23 +612,22 @@ mod tests {
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
-        // Construct a minimal valid EraVM bytecode (must be 32-byte aligned, odd word count).
-        // 1 word = 32 bytes is odd, so that's valid.
         let bytecode = vec![0u8; 32];
         let hash = BytecodeHash::for_bytecode(&bytecode);
-        // Should not panic.
-        verify_bytecode_hash(hash.value_u256(), &bytecode);
+        verify_bytecode_hash(hash.value_u256(), &bytecode).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "bytecode hash mismatch")]
     fn test_verify_bytecode_hash_tampered() {
         let bytecode = vec![0u8; 32];
         let hash = BytecodeHash::for_bytecode(&bytecode);
-        // Tamper: change one byte.
         let mut tampered = bytecode.clone();
         tampered[0] = 0xFF;
-        verify_bytecode_hash(hash.value_u256(), &tampered);
+        let err = verify_bytecode_hash(hash.value_u256(), &tampered).unwrap_err();
+        assert!(
+            err.to_string().contains("bytecode hash mismatch"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
