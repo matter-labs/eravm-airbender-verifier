@@ -76,7 +76,7 @@ pub fn verify_and_commit(
     input: V1TeeVerifierInput,
     commitment_input: CommitmentInput,
 ) -> anyhow::Result<VerificationResult> {
-    assert!(
+    anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
         input.system_env.version
@@ -230,13 +230,13 @@ where
         .any(|h| *h != H256::zero());
     if has_blob_hashes {
         if let Some(pubdata) = &vm_out.pubdata_input {
-            verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes);
+            verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
             commitment::verify_blob_opening_commitments(
                 pubdata,
                 &commitment_input.blob_versioned_hashes,
                 &commitment_input.blob_linear_hashes,
                 &commitment_input.blob_opening_commitments,
-            );
+            )?;
         }
     }
 
@@ -321,13 +321,11 @@ fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
 ///
 /// In Boojum, this was verified by a dedicated `EIP4844Repack` sub-circuit inside
 /// the scheduler. In Airbender, we verify it directly from the VM's pubdata output.
-fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) {
-    // Compute expected hashes from pubdata chunks.
+fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) -> anyhow::Result<()> {
     let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
 
     for (i, claimed) in claimed_hashes.iter().enumerate() {
         if i < num_blobs_from_pubdata {
-            // This blob has data — compute keccak256 of the (possibly padded) chunk.
             let start = i * ZK_SYNC_BYTES_PER_BLOB;
             let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
             let chunk = &pubdata[start..end];
@@ -335,25 +333,23 @@ fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) {
             let hash = if chunk.len() == ZK_SYNC_BYTES_PER_BLOB {
                 H256(keccak256(chunk))
             } else {
-                // Last chunk: zero-pad to full blob size.
                 let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
                 padded[..chunk.len()].copy_from_slice(chunk);
                 H256(keccak256(&padded))
             };
 
-            assert_eq!(
-                hash, *claimed,
-                "blob linear hash mismatch for blob {i}: computed {hash:?}, claimed {claimed:?}"
+            anyhow::ensure!(
+                hash == *claimed,
+                "blob {i} linear hash mismatch: computed {hash:?}, claimed {claimed:?}"
             );
         } else {
-            // No data for this blob slot — hash must be zero.
-            assert_eq!(
-                *claimed,
-                H256::zero(),
+            anyhow::ensure!(
+                *claimed == H256::zero(),
                 "blob {i} has no pubdata but claimed hash is non-zero: {claimed:?}"
             );
         }
     }
+    Ok(())
 }
 
 /// Verify that a bytecode's content matches its claimed hash.
@@ -688,21 +684,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "blob linear hash mismatch")]
     fn test_verify_blob_hashes_tampered() {
         let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
         let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = H256([0xFF; 32]); // wrong hash
-        verify_blob_linear_hashes(&pubdata, &claimed);
+        claimed[0] = H256([0xFF; 32]);
+        let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
+        assert!(err.to_string().contains("linear hash mismatch"), "unexpected: {err}");
     }
 
     #[test]
-    #[should_panic(expected = "no pubdata but claimed hash is non-zero")]
     fn test_verify_blob_hashes_extra_blob() {
-        let pubdata = vec![]; // no data
+        let pubdata = vec![];
         let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = H256([0xFF; 32]); // but claims a blob exists
-        verify_blob_linear_hashes(&pubdata, &claimed);
+        claimed[0] = H256([0xFF; 32]);
+        let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
+        assert!(err.to_string().contains("no pubdata"), "unexpected: {err}");
     }
 
     #[test]
@@ -790,7 +786,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "blob 0 opening commitment mismatch")]
     fn test_verify_blob_opening_commitment_tampered() {
         use crate::commitment::{verify_blob_opening_commitments, ZK_SYNC_BYTES_PER_BLOB};
 
@@ -805,11 +800,16 @@ mod tests {
         let mut output_hashes = vec![H256::zero(); 16];
         output_hashes[0] = H256([0xFF; 32]); // wrong hash
 
-        verify_blob_opening_commitments(
+        let err = verify_blob_opening_commitments(
             &blob_data,
             &versioned_hashes,
             &linear_hashes,
             &output_hashes,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("opening commitment mismatch"),
+            "unexpected: {err}"
         );
     }
 

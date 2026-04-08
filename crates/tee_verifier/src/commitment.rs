@@ -234,18 +234,25 @@ pub fn verify_blob_opening_commitments(
     versioned_hashes: &[H256],
     claimed_linear_hashes: &[H256],
     claimed_output_hashes: &[H256],
-) {
+) -> anyhow::Result<()> {
     use ark_bls12_381::Fr as Bls12_381Fr;
-    use ark_ff::{BigInteger, Field, PrimeField, Zero};
+    use ark_ff::{BigInteger, PrimeField, Zero};
+
+    ensure!(
+        versioned_hashes.len() == claimed_linear_hashes.len()
+            && claimed_linear_hashes.len() == claimed_output_hashes.len(),
+        "blob array length mismatch: versioned={}, linear={}, output={}",
+        versioned_hashes.len(),
+        claimed_linear_hashes.len(),
+        claimed_output_hashes.len()
+    );
 
     let num_blobs = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
 
     for i in 0..claimed_output_hashes.len() {
         if claimed_linear_hashes[i] == H256::zero() {
-            // No blob data for this slot — output hash must also be zero.
-            assert_eq!(
-                claimed_output_hashes[i],
-                H256::zero(),
+            ensure!(
+                claimed_output_hashes[i] == H256::zero(),
                 "blob {i}: linear hash is zero but output hash is non-zero"
             );
             continue;
@@ -320,12 +327,13 @@ pub fn verify_blob_opening_commitments(
             H256(keccak256(&preimage))
         };
 
-        assert_eq!(
-            expected_output_hash, claimed_output_hashes[i],
+        ensure!(
+            expected_output_hash == claimed_output_hashes[i],
             "blob {i} opening commitment mismatch: computed {expected_output_hash:?}, claimed {:?}",
             claimed_output_hashes[i]
         );
     }
+    Ok(())
 }
 
 /// Expand sparse bootloader heap content to a full byte buffer.
