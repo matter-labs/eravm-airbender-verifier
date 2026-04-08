@@ -18,10 +18,7 @@ use anyhow::ensure;
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
-    commitment::serialize_commitments,
-    l2_to_l1_log::SystemL2ToL1Log,
-    web3::keccak256,
-    H256, U256,
+    commitment::serialize_commitments, l2_to_l1_log::SystemL2ToL1Log, web3::keccak256, H256, U256,
 };
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
@@ -315,7 +312,9 @@ pub fn verify_blob_opening_commitments(
         let opening_value_bytes: [u8; 32] = {
             let be_vec = opening_value.into_bigint().to_bytes_be();
             // BLS12-381 Fr uses BigInteger256 → exactly 32 bytes.
-            be_vec.try_into().expect("BLS12-381 Fr should be 32 bytes BE")
+            be_vec
+                .try_into()
+                .expect("BLS12-381 Fr should be 32 bytes BE")
         };
 
         // Step 5: Compute expected output_hash = keccak256(versioned_hash || evaluation_point || opening_value)

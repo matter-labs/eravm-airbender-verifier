@@ -35,19 +35,15 @@ pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
                 batch_input.path.display()
             )
         })?;
-        run_batch(
-            &runner,
-            batch_input.number,
-            &input_words,
-            &batch_input.path,
-        )
-        .with_context(|| {
-            format!(
-                "while attempting to run batch {} from {} in transpiler",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
+        run_batch(&runner, batch_input.number, &input_words, &batch_input.path).with_context(
+            || {
+                format!(
+                    "while attempting to run batch {} from {} in transpiler",
+                    batch_input.number,
+                    batch_input.path.display()
+                )
+            },
+        )?;
     }
 
     Ok(())

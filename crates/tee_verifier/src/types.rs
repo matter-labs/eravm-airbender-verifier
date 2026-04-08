@@ -91,7 +91,6 @@ impl V1TeeVerifierInput {
             pubdata_params,
         }
     }
-
 }
 
 /// Data used as input for the TEE verifier.

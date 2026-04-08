@@ -82,9 +82,13 @@ pub fn verify_and_commit(
         input.system_env.version
     );
 
-    verify_with_vm(input, commitment_input, |l1_batch_env, system_env, storage_view| {
-        FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-    })
+    verify_with_vm(
+        input,
+        commitment_input,
+        |l1_batch_env, system_env, storage_view| {
+            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+        },
+    )
 }
 
 type VerifierStorage = StorageSnapshot;
@@ -152,23 +156,24 @@ where
     // Build the storage snapshot with real enumeration indices from the Merkle witness.
     // Slots with a known enumeration index get Some((value, index)); slots that are
     // initial writes (no prior index) get None.
-    let storage = read_storage_ops
-        .map(|(key, value)| {
-            let hashed = key.hashed_key();
-            let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
-            if enum_idx > 0 {
-                (hashed, Some((value, enum_idx)))
-            } else {
-                // Key exists in reads but has no enumeration index — treat as
-                // a slot without a prior write (value is the default or was
-                // never indexed).
-                (hashed, Some((value, 0)))
-            }
-        })
-        .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-            initial_write.then_some((key.hashed_key(), None))
-        }))
-        .collect();
+    let storage =
+        read_storage_ops
+            .map(|(key, value)| {
+                let hashed = key.hashed_key();
+                let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
+                if enum_idx > 0 {
+                    (hashed, Some((value, enum_idx)))
+                } else {
+                    // Key exists in reads but has no enumeration index — treat as
+                    // a slot without a prior write (value is the default or was
+                    // never indexed).
+                    (hashed, Some((value, 0)))
+                }
+            })
+            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+                initial_write.then_some((key.hashed_key(), None))
+            }))
+            .collect();
 
     // Verify the bootloader bytecode matches its claimed hash.
     // The bootloader is loaded separately from used_bytecodes and orchestrates
@@ -261,8 +266,7 @@ where
     let new_enumeration_index = enumeration_index + num_insertions;
 
     // Expand bootloader heap and compute the batch commitment.
-    let bootloader_memory_size =
-        get_used_bootloader_memory_bytes(protocol_version.into());
+    let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
     let expanded_heap = expand_bootloader_heap(&initial_heap_content, bootloader_memory_size);
 
     let commitment_data = CommitmentData {
@@ -366,15 +370,12 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
         1 => BytecodeHash::for_bytecode(flat_bytecode),
         2 => {
             // EVM bytecode: the length field encodes the raw (unpadded) length.
-            let raw_len = u16::from_be_bytes([
-                claimed_h256.as_bytes()[2],
-                claimed_h256.as_bytes()[3],
-            ]) as usize;
+            let raw_len =
+                u16::from_be_bytes([claimed_h256.as_bytes()[2], claimed_h256.as_bytes()[3]])
+                    as usize;
             BytecodeHash::for_evm_bytecode(raw_len, flat_bytecode)
         }
-        _ => anyhow::bail!(
-            "unknown bytecode marker {marker} in hash {claimed_h256:?}"
-        ),
+        _ => anyhow::bail!("unknown bytecode marker {marker} in hash {claimed_h256:?}"),
     };
 
     anyhow::ensure!(
@@ -401,19 +402,27 @@ impl Verify for V1TeeVerifierInput {
             self.system_env.version
         );
 
-        verify_with_vm(self, CommitmentInput::default(), |l1_batch_env, system_env, storage_view| {
-            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-        })
+        verify_with_vm(
+            self,
+            CommitmentInput::default(),
+            |l1_batch_env, system_env, storage_view| {
+                FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+            },
+        )
     }
 
     fn verify_legacy(self) -> anyhow::Result<VerificationResult> {
-        verify_with_vm(self, CommitmentInput::default(), |l1_batch_env, system_env, storage_view| {
-            <LegacyVerifierVm as VmFactory<VerifierStorageView>>::new(
-                l1_batch_env,
-                system_env,
-                storage_view,
-            )
-        })
+        verify_with_vm(
+            self,
+            CommitmentInput::default(),
+            |l1_batch_env, system_env, storage_view| {
+                <LegacyVerifierVm as VmFactory<VerifierStorageView>>::new(
+                    l1_batch_env,
+                    system_env,
+                    storage_view,
+                )
+            },
+        )
     }
 }
 
@@ -689,7 +698,10 @@ mod tests {
         let mut claimed = vec![H256::zero(); 16];
         claimed[0] = H256([0xFF; 32]);
         let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
-        assert!(err.to_string().contains("linear hash mismatch"), "unexpected: {err}");
+        assert!(
+            err.to_string().contains("linear hash mismatch"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]
@@ -755,7 +767,9 @@ mod tests {
             let be = repr.to_bytes_be();
             let mut buf = [0u8; 32];
             for (j, b) in be.iter().enumerate() {
-                if j < 32 { buf[j] = *b; }
+                if j < 32 {
+                    buf[j] = *b;
+                }
             }
             buf
         };

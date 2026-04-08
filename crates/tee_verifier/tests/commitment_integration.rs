@@ -81,8 +81,7 @@ fn test_batch_506093_commitment() {
         "commitment should be non-zero"
     );
     assert_ne!(
-        result.proof_public_input,
-        [0u32; 8],
+        result.proof_public_input, [0u32; 8],
         "proof public input should be non-zero"
     );
 

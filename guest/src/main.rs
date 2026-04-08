@@ -10,8 +10,7 @@ fn main() -> [u32; 8] {
     let TeeVerifierInput::V1(input) = input else {
         panic!("expected TeeVerifierInput::V1")
     };
-    let commitment_input: CommitmentInput =
-        read().expect("failed to read CommitmentInput");
+    let commitment_input: CommitmentInput = read().expect("failed to read CommitmentInput");
 
     let result = verify_and_commit(input, commitment_input).unwrap();
     result.proof_public_input

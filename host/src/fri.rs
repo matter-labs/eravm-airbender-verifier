@@ -188,9 +188,7 @@ pub(crate) fn run_batch(
 }
 
 /// Run native (non-transpiler) verification and commitment computation.
-fn run_native_verification(
-    batch_path: &Path,
-) -> Result<zksync_tee_verifier::VerificationResult> {
+fn run_native_verification(batch_path: &Path) -> Result<zksync_tee_verifier::VerificationResult> {
     use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput};
 
     let input = load_verifier_input(batch_path)?;
@@ -223,9 +221,8 @@ fn load_verifier_input(batch_path: &Path) -> Result<zksync_tee_verifier::types::
 }
 
 fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) = words
-        .split_first()
-        .context("frame has no length word")?;
+    let (&byte_len_word, payload_words) =
+        words.split_first().context("frame has no length word")?;
     let byte_len = byte_len_word as usize;
 
     let mut bytes = Vec::with_capacity(byte_len);
@@ -285,7 +282,10 @@ fn crosscheck_commitment(
             bootloader_initial_content_commitment: H256::zero(),
         },
         blob_hashes: vec![
-            BlobHash { linear_hash: H256::zero(), commitment: H256::zero() };
+            BlobHash {
+                linear_hash: H256::zero(),
+                commitment: H256::zero()
+            };
             TOTAL_BLOBS_IN_COMMITMENT
         ],
         aggregation_root: H256::zero(),
@@ -295,12 +295,14 @@ fn crosscheck_commitment(
     anyhow::ensure!(
         result.pass_through_data_hash == seq_hashes.pass_through_data,
         "passThroughDataHash mismatch: guest {:?} vs sequencer {:?}",
-        result.pass_through_data_hash, seq_hashes.pass_through_data
+        result.pass_through_data_hash,
+        seq_hashes.pass_through_data
     );
     anyhow::ensure!(
         result.metadata_hash == seq_hashes.meta_parameters,
         "metadataHash mismatch: guest {:?} vs sequencer {:?}",
-        result.metadata_hash, seq_hashes.meta_parameters
+        result.metadata_hash,
+        seq_hashes.meta_parameters
     );
 
     // system_logs_hash + state_diff_hash independently.
@@ -318,7 +320,8 @@ fn crosscheck_commitment(
 
     // bootloader_heap_hash independently.
     let memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
-    let ind_heap_hash = Blake2Hasher.hash_bytes(&expand_bootloader_heap(initial_heap_content, memory_size));
+    let ind_heap_hash =
+        Blake2Hasher.hash_bytes(&expand_bootloader_heap(initial_heap_content, memory_size));
     anyhow::ensure!(
         result.bootloader_heap_hash == ind_heap_hash,
         "bootloader_heap_hash mismatch"
@@ -352,7 +355,8 @@ fn crosscheck_commitment(
     anyhow::ensure!(
         result.commitment == ind_commitment,
         "full commitment mismatch: guest {:?} vs independent {:?}",
-        result.commitment, ind_commitment
+        result.commitment,
+        ind_commitment
     );
 
     Ok(())
