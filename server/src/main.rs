@@ -8,8 +8,8 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
-use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
 
 #[derive(Debug, Parser)]
 #[command(
