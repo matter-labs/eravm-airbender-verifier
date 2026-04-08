@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
 
-pub(crate) const EXPECTED_OUTPUT: u32 = 1;
+/// The guest returns `[u32; 8]` — the proof public input hash.
+/// We no longer check against a fixed expected output; any non-zero output
+/// indicates successful execution + commitment computation.
+/// The actual value is batch-specific and verified by L1 against stored commitments.
 pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
 pub(crate) type RawFriProof = airbender_host::raw::UnrolledProgramProof;
@@ -81,19 +84,19 @@ impl FriPipeline {
         })?;
         let proving_time = proving_started_at.elapsed();
         let cycles = prove_result.cycles;
-        let output = prove_result.receipt.output[0];
+        let output = prove_result.receipt.output;
 
         info!(
             batch_number,
             cycles,
             proving_time_secs = proving_time.as_secs_f64(),
-            output,
+            ?output,
             "Finished FRI proof generation"
         );
 
-        if output != EXPECTED_OUTPUT {
+        if output == [0u32; 8] {
             anyhow::bail!(
-                "batch {batch_number} proof output {output} does not match expected {EXPECTED_OUTPUT}"
+                "batch {batch_number} proof returned zero output — verification or commitment failed"
             );
         }
 
@@ -101,7 +104,7 @@ impl FriPipeline {
             .verify(
                 &prove_result.proof,
                 &self.vk,
-                VerificationRequest::real(&EXPECTED_OUTPUT),
+                VerificationRequest::real(&output),
             )
             .with_context(|| {
                 format!("while attempting to verify proof for batch {batch_number}")
@@ -145,19 +148,19 @@ pub(crate) fn run_batch(
     let execution = runner
         .run(input_words)
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
-    let output = execution.receipt.output[0];
+    let output = execution.receipt.output;
 
     info!(
         batch_number,
         cycles = execution.cycles_executed,
         reached_end = execution.reached_end,
-        output,
+        ?output,
         "Finished transpiler run"
     );
 
-    if output != EXPECTED_OUTPUT {
+    if output == [0u32; 8] {
         anyhow::bail!(
-            "batch {batch_number} returned unexpected output {output}, expected {EXPECTED_OUTPUT}"
+            "batch {batch_number} returned zero output — verification or commitment failed"
         );
     }
 
