@@ -127,7 +127,11 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             let input = response
                 .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
-            let (batch_number, protocol_version) = extract_v1_fields(&input)?;
+            let AirbenderVerifierInput::V1(ref v1) = input else {
+                anyhow::bail!("expected AirbenderVerifierInput::V1");
+            };
+            let batch_number = v1.vm_run_data.l1_batch_number.0;
+            let protocol_version = v1.vm_run_data.protocol_version as u16;
             let input_words = input_to_words(&input)?;
             Ok(Some(Job {
                 batch_number,
@@ -141,17 +145,6 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             Ok(None)
         }
     }
-}
-
-/// Extracts batch number and protocol version from the verifier input.
-fn extract_v1_fields(input: &AirbenderVerifierInput) -> Result<(u32, u16)> {
-    let AirbenderVerifierInput::V1(v1) = input else {
-        anyhow::bail!("expected AirbenderVerifierInput::V1");
-    };
-    Ok((
-        v1.vm_run_data.l1_batch_number.0,
-        v1.vm_run_data.protocol_version as u16,
-    ))
 }
 
 /// Serializes `AirbenderVerifierInput` to the `Vec<u32>` word stream expected by the prover.
