@@ -142,7 +142,9 @@ fn compare_batch(
     let batch_number = batch_input.number;
     let batch_file = batch_input.path.display();
     let AirbenderVerifierInput::V1(input) = input else {
-        anyhow::bail!("batch {batch_number} from {batch_file} must contain AirbenderVerifierInput::V1");
+        anyhow::bail!(
+            "batch {batch_number} from {batch_file} must contain AirbenderVerifierInput::V1"
+        );
     };
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {
