@@ -178,7 +178,12 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             SUDO=sudo
           fi
-          ${SUDO} apt update && ${SUDO} apt install -y cmake libclang-dev clang git-lfs
+          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+
+      - name: Install CMake 3.28+
+        uses: jwlawson/actions-setup-cmake@802fa1a2c4e212495c05bf94dba2704a92a472be # v2.0.2
+        with:
+          cmake-version: '3.28.x'
 
       - name: Install Git LFS
         run: git lfs install --local
