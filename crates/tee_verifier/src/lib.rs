@@ -67,24 +67,19 @@ pub trait Verify {
     fn verify_legacy(self) -> anyhow::Result<VerificationResult>;
 }
 
-use crate::types::CommitmentInput;
+use crate::types::{CommitmentInput, V2TeeVerifierInput};
 
 /// Verify execution and compute the batch commitment.
-/// `commitment_input` is provided separately from `V1TeeVerifierInput` because the
-/// latter's bincode layout is frozen (old test batches must still deserialize).
-pub fn verify_and_commit(
-    input: V1TeeVerifierInput,
-    commitment_input: CommitmentInput,
-) -> anyhow::Result<VerificationResult> {
+pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<VerificationResult> {
     anyhow::ensure!(
-        is_supported_by_fast_vm(input.system_env.version),
+        is_supported_by_fast_vm(input.v1.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.system_env.version
+        input.v1.system_env.version
     );
 
     verify_with_vm(
-        input,
-        commitment_input,
+        input.v1,
+        input.commitment_input,
         |l1_batch_env, system_env, storage_view| {
             FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
         },

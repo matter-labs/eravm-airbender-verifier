@@ -93,6 +93,13 @@ impl V1TeeVerifierInput {
     }
 }
 
+/// Version 2: V1 + CommitmentInput for Airbender settlement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V2TeeVerifierInput {
+    pub v1: V1TeeVerifierInput,
+    pub commitment_input: CommitmentInput,
+}
+
 /// Data used as input for the TEE verifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
@@ -101,6 +108,7 @@ pub enum TeeVerifierInput {
     /// `V0` suppresses warning about irrefutable `let...else` pattern.
     V0,
     V1(V1TeeVerifierInput),
+    V2(V2TeeVerifierInput),
 }
 
 impl TeeVerifierInput {

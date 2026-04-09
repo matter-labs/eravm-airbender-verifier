@@ -58,15 +58,8 @@ pub fn prove_batches_fri(
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {
-        let input_words = load_batch_words(batch_input).with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
         let proof_artifact = pipeline
-            .prove_batch(batch_input.number, &input_words)
+            .prove_batch(batch_input.number, &batch_input.path)
             .with_context(|| {
                 format!(
                     "while attempting to prove batch {} from {}",

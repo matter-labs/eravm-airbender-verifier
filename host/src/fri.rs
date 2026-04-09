@@ -77,10 +77,38 @@ impl FriPipeline {
     pub(crate) fn prove_batch(
         &self,
         batch_number: u64,
-        input_words: &[u32],
+        batch_path: &Path,
     ) -> Result<FriProofArtifact> {
+        // Build V2 framed input (same as run_batch).
+        let prover_input = {
+            use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
+
+            let v1_input = load_verifier_input(batch_path)?;
+            let TeeVerifierInput::V1(v1) = v1_input else {
+                anyhow::bail!("expected TeeVerifierInput::V1");
+            };
+
+            let v2 = TeeVerifierInput::V2(V2TeeVerifierInput {
+                v1,
+                commitment_input: CommitmentInput::default(),
+            });
+
+            let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
+                .context("failed to encode V2 TeeVerifierInput")?;
+
+            let byte_len = encoded.len() as u32;
+            let mut words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
+            words.push(byte_len);
+            for chunk in encoded.chunks(4) {
+                let mut padded = [0u8; 4];
+                padded[..chunk.len()].copy_from_slice(chunk);
+                words.push(u32::from_be_bytes(padded));
+            }
+            words
+        };
+
         let proving_started_at = Instant::now();
-        let prove_result = self.prover.prove(input_words).with_context(|| {
+        let prove_result = self.prover.prove(&prover_input).with_context(|| {
             format!("while attempting to generate proof for batch {batch_number}")
         })?;
         let proving_time = proving_started_at.elapsed();
@@ -144,7 +172,7 @@ pub(crate) fn build_runner(jit: bool) -> Result<TranspilerRunner> {
 pub(crate) fn run_batch(
     runner: &TranspilerRunner,
     batch_number: u64,
-    input_words: &[u32],
+    _input_words: &[u32],
     batch_path: &Path,
 ) -> Result<()> {
     // Run native verification + commitment as ground truth.
@@ -164,32 +192,36 @@ pub(crate) fn run_batch(
 
     info!(batch_number, "Commitment cross-check passed");
 
-    // Build transpiler input: original batch frame + CommitmentInput frame.
-    // The guest reads two values: TeeVerifierInput then CommitmentInput.
+    // Build transpiler input: deserialize V1, upgrade to V2, re-serialize as single frame.
     let transpiler_input = {
-        use zksync_tee_verifier::types::CommitmentInput;
+        use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
 
-        let commitment_input = CommitmentInput::default();
-        let encoded = bincode::serde::encode_to_vec(&commitment_input, bincode::config::standard())
-            .context("failed to encode CommitmentInput")?;
+        let v1_input = load_verifier_input(batch_path)?;
+        let TeeVerifierInput::V1(v1) = v1_input else {
+            anyhow::bail!("expected TeeVerifierInput::V1");
+        };
 
-        // Frame the encoded bytes: [byte_len_word, payload_words...]
+        let v2 = TeeVerifierInput::V2(V2TeeVerifierInput {
+            v1,
+            commitment_input: CommitmentInput::default(),
+        });
+
+        let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
+            .context("failed to encode V2 TeeVerifierInput")?;
+
+        // Frame: [byte_len_word, payload_words...]
         let byte_len = encoded.len() as u32;
-        let mut commitment_words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
-        commitment_words.push(byte_len);
+        let mut words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
+        words.push(byte_len);
         for chunk in encoded.chunks(4) {
             let mut padded = [0u8; 4];
             padded[..chunk.len()].copy_from_slice(chunk);
-            commitment_words.push(u32::from_be_bytes(padded));
+            words.push(u32::from_be_bytes(padded));
         }
-
-        // Concatenate: batch frame + commitment frame
-        let mut combined = input_words.to_vec();
-        combined.extend_from_slice(&commitment_words);
-        combined
+        words
     };
 
-    // Run transpiler execution with both frames.
+    // Run transpiler execution with single V2 frame.
     let execution = runner
         .run(&transpiler_input)
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
@@ -220,15 +252,19 @@ pub(crate) fn run_batch(
 
 /// Run native (non-transpiler) verification and commitment computation.
 fn run_native_verification(batch_path: &Path) -> Result<zksync_tee_verifier::VerificationResult> {
-    use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput};
+    use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
 
     let input = load_verifier_input(batch_path)?;
-    let TeeVerifierInput::V1(input) = input else {
+    let TeeVerifierInput::V1(v1) = input else {
         anyhow::bail!("expected TeeVerifierInput::V1");
     };
 
-    zksync_tee_verifier::verify_and_commit(input, CommitmentInput::default())
-        .context("verify_and_commit failed")
+    let v2 = V2TeeVerifierInput {
+        v1,
+        commitment_input: CommitmentInput::default(),
+    };
+
+    zksync_tee_verifier::verify_and_commit(v2).context("verify_and_commit failed")
 }
 
 /// Load and deserialize a TeeVerifierInput from a batch file.
