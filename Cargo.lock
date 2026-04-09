@@ -1646,7 +1646,10 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
+<<<<<<< HEAD
  "serde",
+=======
+>>>>>>> 26ca2c9 (feat: compute real blob data for test batches)
  "serde_json",
  "tracing",
  "tracing-subscriber",
@@ -5473,6 +5476,7 @@ dependencies = [
  "zksync_crypto_primitives",
  "zksync_merkle_tree",
  "zksync_multivm",
+ "zksync_tee_verifier",
  "zksync_types",
  "zksync_vm_interface",
 ]

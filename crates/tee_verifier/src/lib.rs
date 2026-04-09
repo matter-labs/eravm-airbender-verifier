@@ -8,6 +8,8 @@
 //! commitment and returns a proof public input hash for L1 settlement.
 
 pub mod commitment;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 pub mod types;
 
 use anyhow::{bail, Context, Result};
@@ -18,12 +20,12 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
-        FinishedL1Batch, L2BlockEnv, VmFactory, VmInterfaceExt, VmInterfaceHistoryEnabled,
+        FinishedL1Batch, L2BlockEnv, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
     utils::get_used_bootloader_memory_bytes,
-    FastVmInstance, LegacyVmInstance,
+    FastVmInstance,
 };
 use zksync_types::{
     block::L2BlockExecutionData, bytecode::BytecodeHash, commitment::PubdataParams, u256_to_h256,
@@ -58,13 +60,15 @@ pub struct VerificationResult {
     /// Raw data for independent cross-checking by tests.
     pub system_logs: Vec<zksync_types::l2_to_l1_log::SystemL2ToL1Log>,
     pub state_diffs: Vec<zksync_types::writes::StateDiffRecord>,
+    /// Pubdata produced by VM execution, for blob hash computation.
+    pub pubdata_input: Option<Vec<u8>>,
 }
 
-/// A trait for the computations that can be verified in TEE.
+/// A trait for backward-compatible verification that computes blob data
+/// from pubdata internally. Only available with the `test-utils` feature.
+#[cfg(any(test, feature = "test-utils"))]
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
-
-    fn verify_legacy(self) -> anyhow::Result<VerificationResult>;
 }
 
 use crate::types::{CommitmentInput, V2TeeVerifierInput};
@@ -80,6 +84,27 @@ pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<Verificati
     verify_with_vm(
         input.v1,
         input.commitment_input,
+        true, // always verify blobs in production
+        |l1_batch_env, system_env, storage_view| {
+            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+        },
+    )
+}
+
+/// Execute batch and return pubdata without blob verification.
+/// Used by test_utils to compute blob data before real verification.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn execute_for_pubdata(v1: V1TeeVerifierInput) -> anyhow::Result<VerificationResult> {
+    anyhow::ensure!(
+        is_supported_by_fast_vm(v1.system_env.version),
+        "unsupported protocol version: {:?}",
+        v1.system_env.version
+    );
+
+    verify_with_vm(
+        v1,
+        CommitmentInput::default(),
+        false, // skip blob verification — we're just getting pubdata
         |l1_batch_env, system_env, storage_view| {
             FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
         },
@@ -89,12 +114,11 @@ pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<Verificati
 type VerifierStorage = StorageSnapshot;
 type VerifierStorageView = StorageView<VerifierStorage>;
 type FastVerifierVm = FastVmInstance<VerifierStorage>;
-type LegacyVerifierVm =
-    LegacyVmInstance<VerifierStorage, zksync_multivm::vm_latest::HistoryEnabled>;
 
 fn verify_with_vm<VM, F>(
     input: V1TeeVerifierInput,
     commitment_input: CommitmentInput,
+    verify_blobs: bool,
     make_vm: F,
 ) -> anyhow::Result<VerificationResult>
 where
@@ -212,8 +236,9 @@ where
         input.system_env.version,
     )?;
 
-    // Extract system logs and state diffs before consuming vm_out for tree instructions.
+    // Extract data before consuming vm_out for tree instructions.
     let system_logs = vm_out.final_execution_state.system_logs.clone();
+    let pubdata_input = vm_out.pubdata_input.clone();
     let state_diffs = vm_out
         .state_diffs
         .clone()
@@ -223,12 +248,7 @@ where
     // Verify blob hashes against pubdata produced by execution.
     // In Boojum, both linear hashes and opening commitments were verified by a
     // dedicated EIP4844Repack sub-circuit inside the scheduler.
-    // Skip if no blob hashes were provided (CommitmentInput::default() has all zeros).
-    let has_blob_hashes = commitment_input
-        .blob_linear_hashes
-        .iter()
-        .any(|h| *h != H256::zero());
-    if has_blob_hashes {
+    if verify_blobs {
         if let Some(pubdata) = &vm_out.pubdata_input {
             verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
             commitment::verify_blob_opening_commitments(
@@ -293,6 +313,7 @@ where
         bootloader_heap_hash: commitment_output.bootloader_heap_hash,
         system_logs,
         state_diffs,
+        pubdata_input,
     })
 }
 
@@ -381,43 +402,11 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl Verify for V1TeeVerifierInput {
-    /// Verify that the L1Batch produces the expected root hash
-    /// by executing the VM and verifying the merkle paths of all
-    /// touch storage slots.
-    ///
-    /// # Errors
-    ///
-    /// Returns a verbose error of the failure, because any error is
-    /// not actionable.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        anyhow::ensure!(
-            is_supported_by_fast_vm(self.system_env.version),
-            "Protocol version {:?} is not supported by FastVM tee verifier",
-            self.system_env.version
-        );
-
-        verify_with_vm(
-            self,
-            CommitmentInput::default(),
-            |l1_batch_env, system_env, storage_view| {
-                FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-            },
-        )
-    }
-
-    fn verify_legacy(self) -> anyhow::Result<VerificationResult> {
-        verify_with_vm(
-            self,
-            CommitmentInput::default(),
-            |l1_batch_env, system_env, storage_view| {
-                <LegacyVerifierVm as VmFactory<VerifierStorageView>>::new(
-                    l1_batch_env,
-                    system_env,
-                    storage_view,
-                )
-            },
-        )
+        let v2 = crate::test_utils::v1_to_v2_with_real_blobs(self)?;
+        verify_and_commit(v2)
     }
 }
 

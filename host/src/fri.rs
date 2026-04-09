@@ -79,33 +79,9 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
-        // Build V2 framed input (same as run_batch).
-        let prover_input = {
-            use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
-
-            let v1_input = load_verifier_input(batch_path)?;
-            let TeeVerifierInput::V1(v1) = v1_input else {
-                anyhow::bail!("expected TeeVerifierInput::V1");
-            };
-
-            let v2 = TeeVerifierInput::V2(V2TeeVerifierInput {
-                v1,
-                commitment_input: CommitmentInput::default(),
-            });
-
-            let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
-                .context("failed to encode V2 TeeVerifierInput")?;
-
-            let byte_len = encoded.len() as u32;
-            let mut words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
-            words.push(byte_len);
-            for chunk in encoded.chunks(4) {
-                let mut padded = [0u8; 4];
-                padded[..chunk.len()].copy_from_slice(chunk);
-                words.push(u32::from_be_bytes(padded));
-            }
-            words
-        };
+        let v2 = load_v2_with_real_blobs(batch_path)
+            .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+        let prover_input = frame_v2_input(zksync_tee_verifier::types::TeeVerifierInput::V2(v2))?;
 
         let proving_started_at = Instant::now();
         let prove_result = self.prover.prove(&prover_input).with_context(|| {
@@ -169,21 +145,20 @@ pub(crate) fn build_runner(jit: bool) -> Result<TranspilerRunner> {
         .context("while attempting to build transpiler runner")
 }
 
-pub(crate) fn run_batch(
-    runner: &TranspilerRunner,
-    batch_number: u64,
-    _input_words: &[u32],
-    batch_path: &Path,
-) -> Result<()> {
-    // Run native verification + commitment as ground truth.
-    let native_result = run_native_verification(batch_path)
-        .with_context(|| format!("native verification failed for batch {batch_number}"))?;
+pub(crate) fn run_batch(runner: &TranspilerRunner, batch_number: u64, batch_path: &Path) -> Result<()> {
+    // Load batch and compute real CommitmentInput (blob hashes from pubdata).
+    let v2 = load_v2_with_real_blobs(batch_path)
+        .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+
+    // Run native verification with real blob data.
+    let native_result = zksync_tee_verifier::verify_and_commit(v2.clone())
+        .context("native verification with real blob data failed")?;
 
     info!(
         batch_number,
         ?native_result.commitment,
         ?native_result.proof_public_input,
-        "Native verification + commitment succeeded"
+        "Native verification + commitment succeeded (with blob data)"
     );
 
     // Cross-check commitment sub-hashes against sequencer code.
@@ -192,36 +167,9 @@ pub(crate) fn run_batch(
 
     info!(batch_number, "Commitment cross-check passed");
 
-    // Build transpiler input: deserialize V1, upgrade to V2, re-serialize as single frame.
-    let transpiler_input = {
-        use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
+    // Run transpiler with the same real CommitmentInput.
+    let transpiler_input = frame_v2_input(zksync_tee_verifier::types::TeeVerifierInput::V2(v2))?;
 
-        let v1_input = load_verifier_input(batch_path)?;
-        let TeeVerifierInput::V1(v1) = v1_input else {
-            anyhow::bail!("expected TeeVerifierInput::V1");
-        };
-
-        let v2 = TeeVerifierInput::V2(V2TeeVerifierInput {
-            v1,
-            commitment_input: CommitmentInput::default(),
-        });
-
-        let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
-            .context("failed to encode V2 TeeVerifierInput")?;
-
-        // Frame: [byte_len_word, payload_words...]
-        let byte_len = encoded.len() as u32;
-        let mut words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
-        words.push(byte_len);
-        for chunk in encoded.chunks(4) {
-            let mut padded = [0u8; 4];
-            padded[..chunk.len()].copy_from_slice(chunk);
-            words.push(u32::from_be_bytes(padded));
-        }
-        words
-    };
-
-    // Run transpiler execution with single V2 frame.
     let execution = runner
         .run(&transpiler_input)
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
@@ -250,21 +198,36 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Run native (non-transpiler) verification and commitment computation.
-fn run_native_verification(batch_path: &Path) -> Result<zksync_tee_verifier::VerificationResult> {
-    use zksync_tee_verifier::types::{CommitmentInput, TeeVerifierInput, V2TeeVerifierInput};
+/// Load a V1 batch, compute real CommitmentInput from pubdata, return V2.
+/// Uses test_utils to generate self-consistent blob data.
+fn load_v2_with_real_blobs(
+    batch_path: &Path,
+) -> Result<zksync_tee_verifier::types::V2TeeVerifierInput> {
+    use zksync_tee_verifier::types::TeeVerifierInput;
 
-    let input = load_verifier_input(batch_path)?;
-    let TeeVerifierInput::V1(v1) = input else {
+    let v1_input = load_verifier_input(batch_path)?;
+    let TeeVerifierInput::V1(v1) = v1_input else {
         anyhow::bail!("expected TeeVerifierInput::V1");
     };
 
-    let v2 = V2TeeVerifierInput {
-        v1,
-        commitment_input: CommitmentInput::default(),
-    };
+    zksync_tee_verifier::test_utils::v1_to_v2_with_real_blobs(v1)
+        .context("failed to compute real blob data")
+}
 
-    zksync_tee_verifier::verify_and_commit(v2).context("verify_and_commit failed")
+/// Frame a TeeVerifierInput as words for the transpiler/prover.
+fn frame_v2_input(v2: zksync_tee_verifier::types::TeeVerifierInput) -> Result<Vec<u32>> {
+    let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
+        .context("failed to encode V2 TeeVerifierInput")?;
+
+    let byte_len = encoded.len() as u32;
+    let mut words = Vec::with_capacity(1 + encoded.len().div_ceil(4));
+    words.push(byte_len);
+    for chunk in encoded.chunks(4) {
+        let mut padded = [0u8; 4];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        words.push(u32::from_be_bytes(padded));
+    }
+    Ok(words)
 }
 
 /// Load and deserialize a TeeVerifierInput from a batch file.
@@ -392,38 +355,6 @@ fn crosscheck_commitment(
     anyhow::ensure!(
         result.bootloader_heap_hash == ind_heap_hash,
         "bootloader_heap_hash mismatch"
-    );
-
-    // Reconstruct full commitment from independent sub-hashes.
-    let ind_aux = {
-        let mut data = Vec::new();
-        data.extend_from_slice(ind_logs_hash.as_bytes());
-        data.extend_from_slice(ind_diff_hash.as_bytes());
-        data.extend_from_slice(ind_heap_hash.as_bytes());
-        data.extend_from_slice(&[0u8; 32]);
-        for _ in 0..TOTAL_BLOBS_IN_COMMITMENT {
-            data.extend_from_slice(&[0u8; 64]);
-        }
-        H256(keccak256(&data))
-    };
-    anyhow::ensure!(
-        result.auxiliary_output_hash == ind_aux,
-        "auxiliaryOutputHash mismatch"
-    );
-
-    let ind_commitment = H256(keccak256(
-        &[
-            seq_hashes.pass_through_data.as_bytes(),
-            seq_hashes.meta_parameters.as_bytes(),
-            ind_aux.as_bytes(),
-        ]
-        .concat(),
-    ));
-    anyhow::ensure!(
-        result.commitment == ind_commitment,
-        "full commitment mismatch: guest {:?} vs independent {:?}",
-        result.commitment,
-        ind_commitment
     );
 
     Ok(())

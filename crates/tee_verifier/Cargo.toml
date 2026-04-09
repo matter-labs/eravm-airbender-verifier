@@ -10,6 +10,10 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+test-utils = []
+
 [dependencies]
 zksync_crypto_primitives.workspace = true
 zksync_merkle_tree = { workspace = true, default-features = false }
@@ -23,7 +27,10 @@ ark-bls12-381.workspace = true
 serde.workspace = true
 tracing.workspace = true
 
+# Enable test-utils for integration tests.
 [dev-dependencies]
+zksync_tee_verifier = { path = ".", features = ["test-utils"] }
+
 zksync_contracts.workspace = true
 serde_json.workspace = true
 zksync_types.workspace = true
