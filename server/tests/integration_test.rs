@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use tokio::sync::oneshot;
 
-use airbender_host::{Proof, Program, ProverLevel, VerificationKey, VerificationRequest, Verifier};
+use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch_words, BatchInputFile};
 
@@ -249,7 +249,10 @@ async fn prover_server_proves_one_batch() {
         .expect("failed to build RealVerifier");
 
     let manifest_sha256 = program.manifest().bin.sha256.trim().to_owned();
-    assert!(!manifest_sha256.is_empty(), "guest manifest has empty sha256");
+    assert!(
+        !manifest_sha256.is_empty(),
+        "guest manifest has empty sha256"
+    );
     let vk_cache = PathBuf::from(format!("vk-{manifest_sha256}.bin"));
     let vk = load_or_generate_vk(&verifier, &vk_cache);
 
