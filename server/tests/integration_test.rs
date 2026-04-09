@@ -6,7 +6,13 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use axum::{
+    extract::{DefaultBodyLimit, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
+};
 use tokio::sync::oneshot;
 
 use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
@@ -176,7 +182,10 @@ async fn prover_server_proves_one_batch() {
 
     let app = Router::new()
         .route("/airbender/proof_inputs", post(handle_proof_inputs))
-        .route("/airbender/submit_proofs", post(handle_submit_proofs))
+        .route(
+            "/airbender/submit_proofs",
+            post(handle_submit_proofs).layer(DefaultBodyLimit::disable()),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

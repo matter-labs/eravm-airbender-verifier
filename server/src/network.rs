@@ -204,7 +204,15 @@ fn submit_result_with_retries(
     for attempt in 1..=attempts {
         match submit_result(client, base_url, prover_id, batch_number, proof_bytes) {
             Ok(()) => return Ok(()),
-            Err(err) => {
+            Err((status, err)) => {
+                // 4xx errors (other than 429 Too Many Requests) are not retriable —
+                // the same payload will be rejected every time.
+                let retriable = status.is_none_or(|s| {
+                    s == reqwest::StatusCode::TOO_MANY_REQUESTS || s.is_server_error()
+                });
+                if !retriable {
+                    return Err(err);
+                }
                 warn!(
                     batch_number,
                     attempt,
@@ -226,30 +234,42 @@ fn submit_result_with_retries(
 ///
 /// The body mirrors `SubmitAirbenderProofRequest` from zksync-era:
 /// `{ "l1_batch_number": <u32>, "prover_id": "<string>", "proof": "<hex-encoded bytes>" }`.
+///
+/// Returns `Ok(())` on success, or `Err((status, err))` where `status` is the HTTP status code
+/// if the server responded (or `None` for transport-level errors).
 fn submit_result(
     client: &reqwest::blocking::Client,
     base_url: &str,
     prover_id: &str,
     batch_number: u32,
     proof_bytes: &[u8],
-) -> Result<()> {
+) -> Result<(), (Option<reqwest::StatusCode>, anyhow::Error)> {
     let url = format!("{base_url}/airbender/submit_proofs");
     let payload = SubmitProofRequest {
         l1_batch_number: batch_number,
         prover_id: prover_id.to_owned(),
         proof: proof_bytes,
     };
+    info!(
+        batch_number,
+        proof_bytes = proof_bytes.len(),
+        "Submitting proof"
+    );
     let response = client
         .post(&url)
         .json(&payload)
         .send()
-        .with_context(|| format!("while submitting proof to {url}"))?;
+        .with_context(|| format!("while submitting proof to {url}"))
+        .map_err(|e| (None, e))?;
 
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "server returned {} when submitting proof for batch {batch_number}",
-            response.status()
-        );
+    let status = response.status();
+    if !status.is_success() {
+        return Err((
+            Some(status),
+            anyhow::anyhow!(
+                "server returned {status} when submitting proof for batch {batch_number}"
+            ),
+        ));
     }
     Ok(())
 }
