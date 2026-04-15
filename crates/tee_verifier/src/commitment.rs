@@ -409,6 +409,8 @@ mod tests {
             bootloader_initial_heap: vec![0u8; 64], // 2 words of zeros
             commitment_input: CommitmentInput {
                 prev_batch_commitment: H256([0x55; 32]),
+                prev_meta_hash: H256::zero(),
+                prev_aux_hash: H256::zero(),
                 blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
                 blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
                 blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],

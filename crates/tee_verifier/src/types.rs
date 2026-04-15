@@ -40,6 +40,12 @@ pub struct CommitmentInput {
     /// If the operator provides the wrong value, the proof will not match L1's
     /// reconstruction and will be rejected.
     pub prev_batch_commitment: H256,
+    /// The metadata hash of the previous batch. Together with `prev_aux_hash`,
+    /// used to verify that `prev_batch_commitment` is consistent with the
+    /// previous state root (old_root_hash).
+    pub prev_meta_hash: H256,
+    /// The auxiliary output hash of the previous batch.
+    pub prev_aux_hash: H256,
     /// EIP-4844 blob linear hashes for the auxiliary output.
     /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are `H256::zero()`.
     pub blob_linear_hashes: Vec<H256>,
@@ -55,6 +61,8 @@ impl Default for CommitmentInput {
     fn default() -> Self {
         Self {
             prev_batch_commitment: H256::zero(),
+            prev_meta_hash: H256::zero(),
+            prev_aux_hash: H256::zero(),
             blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
             blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
             blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],

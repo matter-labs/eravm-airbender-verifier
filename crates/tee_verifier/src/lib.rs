@@ -143,6 +143,34 @@ where
         .map(u256_to_h256)
         .unwrap_or_default();
 
+    // Verify that prev_batch_commitment is consistent with old_root_hash.
+    // This binds the previous state root to the previous commitment inside the proof,
+    // preventing a malicious operator from supplying a correct prev_batch_commitment
+    // with a fake old_root_hash. Matches Boojum's scheduler circuit behavior.
+    if verify_blobs {
+        let prev_passthrough = {
+            let mut data = Vec::with_capacity(80);
+            data.extend_from_slice(&enumeration_index.to_be_bytes());
+            data.extend_from_slice(old_root_hash.as_bytes());
+            data.extend_from_slice(&0u64.to_be_bytes());
+            data.extend_from_slice(&[0u8; 32]);
+            H256(keccak256(&data))
+        };
+        let expected_prev_commitment = {
+            let mut data = Vec::with_capacity(96);
+            data.extend_from_slice(prev_passthrough.as_bytes());
+            data.extend_from_slice(commitment_input.prev_meta_hash.as_bytes());
+            data.extend_from_slice(commitment_input.prev_aux_hash.as_bytes());
+            H256(keccak256(&data))
+        };
+        anyhow::ensure!(
+            expected_prev_commitment == commitment_input.prev_batch_commitment,
+            "prev_batch_commitment binding failed: recomputed {expected_prev_commitment:?} \
+             != claimed {:?}. old_root_hash={old_root_hash:?}, enumeration_index={enumeration_index}",
+            commitment_input.prev_batch_commitment,
+        );
+    }
+
     // Build a mapping from hashed storage key → real enumeration index from the
     // Merkle proof witness. This is needed so that FinishedL1Batch.state_diffs
     // contains correct enumeration indices for state diff hash computation.
@@ -223,7 +251,24 @@ where
             verify_bytecode_hash(claimed_hash, &flat_bytes)?;
             Ok((u256_to_h256(claimed_hash), flat_bytes))
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect::<anyhow::Result<std::collections::HashMap<H256, Vec<u8>>>>()?;
+
+    // Verify that default_aa and evm_emulator code hashes correspond to verified
+    // bytecodes. These hashes go into metadataHash (and thus the batch commitment).
+    // In Boojum, the code decommitter circuit verifies them when decommitted.
+    // Here, we check they exist in the already-verified factory_deps map.
+    anyhow::ensure!(
+        factory_deps.contains_key(&default_aa_code_hash),
+        "default_aa_code_hash {default_aa_code_hash:?} not found in verified factory deps — \
+         the bytecode must be included in used_bytecodes to verify its hash"
+    );
+    if evm_emulator_code_hash != H256::zero() {
+        anyhow::ensure!(
+            factory_deps.contains_key(&evm_emulator_code_hash),
+            "evm_emulator_code_hash {evm_emulator_code_hash:?} not found in verified factory deps — \
+             the bytecode must be included in used_bytecodes to verify its hash"
+        );
+    }
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();

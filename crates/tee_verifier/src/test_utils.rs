@@ -21,10 +21,35 @@ pub fn v1_to_v2_with_real_blobs(v1: V1TeeVerifierInput) -> anyhow::Result<V2TeeV
     let (blob_versioned_hashes, blob_opening_commitments) =
         compute_blob_opening_data(pubdata, &blob_linear_hashes);
 
+    // Compute a self-consistent prev_batch_commitment from old_root_hash and
+    // enumeration_index so that the prev_batch_commitment binding check passes.
+    // In production these come from L1; for tests we derive them from the V1 input.
+    let old_root_hash = v1.l1_batch_env.previous_batch_hash.unwrap();
+    let enumeration_index = v1.merkle_paths.next_enumeration_index();
+    let prev_meta_hash = H256::zero();
+    let prev_aux_hash = H256::zero();
+    let prev_batch_commitment = {
+        let prev_passthrough = {
+            let mut data = Vec::with_capacity(80);
+            data.extend_from_slice(&enumeration_index.to_be_bytes());
+            data.extend_from_slice(old_root_hash.as_bytes());
+            data.extend_from_slice(&0u64.to_be_bytes());
+            data.extend_from_slice(&[0u8; 32]);
+            H256(keccak256(&data))
+        };
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(prev_passthrough.as_bytes());
+        data.extend_from_slice(prev_meta_hash.as_bytes());
+        data.extend_from_slice(prev_aux_hash.as_bytes());
+        H256(keccak256(&data))
+    };
+
     Ok(V2TeeVerifierInput {
         v1,
         commitment_input: CommitmentInput {
-            prev_batch_commitment: H256::zero(), // not available for test batches
+            prev_batch_commitment,
+            prev_meta_hash,
+            prev_aux_hash,
             blob_linear_hashes,
             blob_versioned_hashes,
             blob_opening_commitments,
