@@ -84,7 +84,7 @@ pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<Verificati
     verify_with_vm(
         input.v1,
         input.commitment_input,
-        true, // always verify blobs in production
+        true, // full verification in production
         |l1_batch_env, system_env, storage_view| {
             FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
         },
@@ -104,7 +104,7 @@ pub fn execute_for_pubdata(v1: V1TeeVerifierInput) -> anyhow::Result<Verificatio
     verify_with_vm(
         v1,
         CommitmentInput::default(),
-        false, // skip blob verification — we're just getting pubdata
+        false, // skip commitment verification — we're just getting pubdata
         |l1_batch_env, system_env, storage_view| {
             FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
         },
@@ -118,7 +118,7 @@ type FastVerifierVm = FastVmInstance<VerifierStorage>;
 fn verify_with_vm<VM, F>(
     input: V1TeeVerifierInput,
     commitment_input: CommitmentInput,
-    verify_blobs: bool,
+    full_verification: bool,
     make_vm: F,
 ) -> anyhow::Result<VerificationResult>
 where
@@ -147,22 +147,14 @@ where
     // This binds the previous state root to the previous commitment inside the proof,
     // preventing a malicious operator from supplying a correct prev_batch_commitment
     // with a fake old_root_hash. Matches Boojum's scheduler circuit behavior.
-    if verify_blobs {
-        let prev_passthrough = {
-            let mut data = Vec::with_capacity(80);
-            data.extend_from_slice(&enumeration_index.to_be_bytes());
-            data.extend_from_slice(old_root_hash.as_bytes());
-            data.extend_from_slice(&0u64.to_be_bytes());
-            data.extend_from_slice(&[0u8; 32]);
-            H256(keccak256(&data))
-        };
-        let expected_prev_commitment = {
-            let mut data = Vec::with_capacity(96);
-            data.extend_from_slice(prev_passthrough.as_bytes());
-            data.extend_from_slice(commitment_input.prev_meta_hash.as_bytes());
-            data.extend_from_slice(commitment_input.prev_aux_hash.as_bytes());
-            H256(keccak256(&data))
-        };
+    if full_verification {
+        let prev_passthrough =
+            commitment::compute_pass_through_data_hash(enumeration_index, old_root_hash);
+        let expected_prev_commitment = commitment::compute_commitment(
+            prev_passthrough,
+            commitment_input.prev_meta_hash,
+            commitment_input.prev_aux_hash,
+        );
         anyhow::ensure!(
             expected_prev_commitment == commitment_input.prev_batch_commitment,
             "prev_batch_commitment binding failed: recomputed {expected_prev_commitment:?} \
@@ -293,7 +285,7 @@ where
     // Verify blob hashes against pubdata produced by execution.
     // In Boojum, both linear hashes and opening commitments were verified by a
     // dedicated EIP4844Repack sub-circuit inside the scheduler.
-    if verify_blobs {
+    if full_verification {
         if let Some(pubdata) = &vm_out.pubdata_input {
             verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
             commitment::verify_blob_opening_commitments(
@@ -921,7 +913,9 @@ mod tests {
 
     #[test]
     fn test_prev_commitment_binding_recomputation() {
-        use crate::commitment::CommitmentData;
+        use crate::commitment::{
+            compute_commitment, compute_pass_through_data_hash, CommitmentData,
+        };
         use crate::types::CommitmentInput;
 
         // Simulate a "previous batch" by computing its commitment.
@@ -930,24 +924,12 @@ mod tests {
         let prev_meta_hash = H256([0xBB; 32]);
         let prev_aux_hash = H256([0xCC; 32]);
 
-        // Compute prev_passthrough the same way the binding check does.
-        let prev_passthrough = {
-            let mut data = Vec::with_capacity(80);
-            data.extend_from_slice(&prev_enum_index.to_be_bytes());
-            data.extend_from_slice(prev_state_root.as_bytes());
-            data.extend_from_slice(&0u64.to_be_bytes());
-            data.extend_from_slice(&[0u8; 32]);
-            H256(keccak256(&data))
-        };
-        let prev_commitment = {
-            let mut data = Vec::with_capacity(96);
-            data.extend_from_slice(prev_passthrough.as_bytes());
-            data.extend_from_slice(prev_meta_hash.as_bytes());
-            data.extend_from_slice(prev_aux_hash.as_bytes());
-            H256(keccak256(&data))
-        };
+        // Compute prev_passthrough and commitment using the shared functions
+        // (the same ones used by the binding check in verify_with_vm).
+        let prev_passthrough = compute_pass_through_data_hash(prev_enum_index, prev_state_root);
+        let prev_commitment = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
 
-        // Verify CommitmentData produces the same passthrough hash.
+        // Verify CommitmentData::compute() produces the same passthrough hash.
         let commitment_data = CommitmentData {
             new_state_root: prev_state_root,
             new_enumeration_index: prev_enum_index,
@@ -969,20 +951,15 @@ mod tests {
         };
         let output = commitment_data.compute().unwrap();
 
-        // The passthrough hash must match.
+        // The passthrough hash must match — both paths use the same shared function.
         assert_eq!(
             output.pass_through_data_hash, prev_passthrough,
-            "passthrough hash mismatch between manual computation and CommitmentData"
+            "passthrough hash mismatch between CommitmentData and shared function"
         );
 
         // The full commitment must match when using the same meta + aux hashes.
-        let reconstructed = {
-            let mut data = Vec::with_capacity(96);
-            data.extend_from_slice(output.pass_through_data_hash.as_bytes());
-            data.extend_from_slice(prev_meta_hash.as_bytes());
-            data.extend_from_slice(prev_aux_hash.as_bytes());
-            H256(keccak256(&data))
-        };
+        let reconstructed =
+            compute_commitment(output.pass_through_data_hash, prev_meta_hash, prev_aux_hash);
         assert_eq!(
             reconstructed, prev_commitment,
             "reconstructed commitment doesn't match — encoding mismatch"

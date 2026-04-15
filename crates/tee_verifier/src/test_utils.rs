@@ -6,7 +6,9 @@
 
 use zksync_types::{web3::keccak256, H256};
 
-use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
+use crate::commitment::{
+    compute_commitment, compute_pass_through_data_hash, ZK_SYNC_BYTES_PER_BLOB,
+};
 use crate::types::{
     CommitmentInput, V1TeeVerifierInput, V2TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
 };
@@ -28,21 +30,8 @@ pub fn v1_to_v2_with_real_blobs(v1: V1TeeVerifierInput) -> anyhow::Result<V2TeeV
     let enumeration_index = v1.merkle_paths.next_enumeration_index();
     let prev_meta_hash = H256::zero();
     let prev_aux_hash = H256::zero();
-    let prev_batch_commitment = {
-        let prev_passthrough = {
-            let mut data = Vec::with_capacity(80);
-            data.extend_from_slice(&enumeration_index.to_be_bytes());
-            data.extend_from_slice(old_root_hash.as_bytes());
-            data.extend_from_slice(&0u64.to_be_bytes());
-            data.extend_from_slice(&[0u8; 32]);
-            H256(keccak256(&data))
-        };
-        let mut data = Vec::with_capacity(96);
-        data.extend_from_slice(prev_passthrough.as_bytes());
-        data.extend_from_slice(prev_meta_hash.as_bytes());
-        data.extend_from_slice(prev_aux_hash.as_bytes());
-        H256(keccak256(&data))
-    };
+    let prev_passthrough = compute_pass_through_data_hash(enumeration_index, old_root_hash);
+    let prev_batch_commitment = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
 
     Ok(V2TeeVerifierInput {
         v1,

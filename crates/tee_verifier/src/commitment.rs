@@ -23,6 +23,35 @@ use zksync_types::{
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 
+/// Compute the passthrough data hash for a batch.
+///
+/// This is used both for the current batch's commitment and for verifying
+/// the previous batch's commitment binding. Matches `Committer.sol::_batchPassThroughData()`.
+pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) -> H256 {
+    let mut data = Vec::with_capacity(8 + 32 + 8 + 32);
+    data.extend_from_slice(&enumeration_index.to_be_bytes());
+    data.extend_from_slice(state_root.as_bytes());
+    data.extend_from_slice(&0u64.to_be_bytes()); // zkPorter index (reserved)
+    data.extend_from_slice(&[0u8; 32]); // zkPorter batch hash (reserved)
+    H256(keccak256(&data))
+}
+
+/// Compute the full batch commitment from its three sub-hashes.
+///
+/// Used for both current batch commitment and previous batch commitment
+/// reconstruction. Matches `Committer.sol::_createBatchCommitment()`.
+pub fn compute_commitment(
+    pass_through_data_hash: H256,
+    metadata_hash: H256,
+    auxiliary_output_hash: H256,
+) -> H256 {
+    let mut data = Vec::with_capacity(96);
+    data.extend_from_slice(pass_through_data_hash.as_bytes());
+    data.extend_from_slice(metadata_hash.as_bytes());
+    data.extend_from_slice(auxiliary_output_hash.as_bytes());
+    H256(keccak256(&data))
+}
+
 /// Result of the batch commitment computation.
 pub struct BatchCommitmentOutput {
     /// The batch commitment: `keccak256(abi.encode(passThrough, metadata, auxiliary))`.
@@ -62,21 +91,16 @@ pub struct CommitmentData {
 
 impl CommitmentData {
     pub fn compute(self) -> anyhow::Result<BatchCommitmentOutput> {
-        let pass_through_data_hash = self.compute_pass_through_data_hash();
+        let pass_through_data_hash =
+            compute_pass_through_data_hash(self.new_enumeration_index, self.new_state_root);
         let metadata_hash = self.compute_metadata_hash();
         let system_logs_hash = self.compute_system_logs_hash();
         let bootloader_heap_hash = self.compute_bootloader_heap_hash();
         let state_diff_hash = self.state_diff_hash;
         let auxiliary_output_hash = self.compute_auxiliary_output_hash()?;
 
-        // Committer.sol:749 — uses abi.encode (equivalent to abi.encodePacked for bytes32 types)
-        let commitment = {
-            let mut data = Vec::with_capacity(96);
-            data.extend_from_slice(pass_through_data_hash.as_bytes());
-            data.extend_from_slice(metadata_hash.as_bytes());
-            data.extend_from_slice(auxiliary_output_hash.as_bytes());
-            H256(keccak256(&data))
-        };
+        let commitment =
+            compute_commitment(pass_through_data_hash, metadata_hash, auxiliary_output_hash);
 
         // Executor.sol:321-322
         let prev = self.commitment_input.prev_batch_commitment;
@@ -98,25 +122,6 @@ impl CommitmentData {
             state_diff_hash,
             bootloader_heap_hash,
         })
-    }
-
-    /// Matches `Committer.sol::_batchPassThroughData()`.
-    ///
-    /// ```solidity
-    /// abi.encodePacked(
-    ///     _batch.indexRepeatedStorageChanges,  // uint64
-    ///     _batch.newStateRoot,                 // bytes32
-    ///     uint64(0),                           // zkPorter index (reserved)
-    ///     bytes32(0)                           // zkPorter batch hash (reserved)
-    /// )
-    /// ```
-    fn compute_pass_through_data_hash(&self) -> H256 {
-        let mut data = Vec::with_capacity(8 + 32 + 8 + 32);
-        data.extend_from_slice(&self.new_enumeration_index.to_be_bytes());
-        data.extend_from_slice(self.new_state_root.as_bytes());
-        data.extend_from_slice(&0u64.to_be_bytes()); // zkPorter index
-        data.extend_from_slice(&[0u8; 32]); // zkPorter batch hash
-        H256(keccak256(&data))
     }
 
     /// Matches `Committer.sol::_batchMetaParameters()`.
@@ -434,7 +439,7 @@ mod tests {
             commitment_input: CommitmentInput::default(),
         };
 
-        let hash = data.compute_pass_through_data_hash();
+        let hash = compute_pass_through_data_hash(data.new_enumeration_index, data.new_state_root);
         // Should be keccak256 of: 8 bytes (42 as u64 BE) + 32 bytes (0xAB...) + 8 bytes (0) + 32 bytes (0)
         let mut expected_input = Vec::new();
         expected_input.extend_from_slice(&42u64.to_be_bytes());
