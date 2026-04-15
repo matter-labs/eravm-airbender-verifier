@@ -918,4 +918,74 @@ mod tests {
 
         assert_eq!(tvi, deserialized);
     }
+
+    #[test]
+    fn test_prev_commitment_binding_recomputation() {
+        use crate::commitment::CommitmentData;
+        use crate::types::CommitmentInput;
+
+        // Simulate a "previous batch" by computing its commitment.
+        let prev_state_root = H256([0xAA; 32]);
+        let prev_enum_index: u64 = 42;
+        let prev_meta_hash = H256([0xBB; 32]);
+        let prev_aux_hash = H256([0xCC; 32]);
+
+        // Compute prev_passthrough the same way the binding check does.
+        let prev_passthrough = {
+            let mut data = Vec::with_capacity(80);
+            data.extend_from_slice(&prev_enum_index.to_be_bytes());
+            data.extend_from_slice(prev_state_root.as_bytes());
+            data.extend_from_slice(&0u64.to_be_bytes());
+            data.extend_from_slice(&[0u8; 32]);
+            H256(keccak256(&data))
+        };
+        let prev_commitment = {
+            let mut data = Vec::with_capacity(96);
+            data.extend_from_slice(prev_passthrough.as_bytes());
+            data.extend_from_slice(prev_meta_hash.as_bytes());
+            data.extend_from_slice(prev_aux_hash.as_bytes());
+            H256(keccak256(&data))
+        };
+
+        // Verify CommitmentData produces the same passthrough hash.
+        let commitment_data = CommitmentData {
+            new_state_root: prev_state_root,
+            new_enumeration_index: prev_enum_index,
+            zk_porter_available: false,
+            bootloader_code_hash: H256::zero(),
+            default_aa_code_hash: H256::zero(),
+            evm_emulator_code_hash: H256::zero(),
+            system_logs: vec![],
+            state_diff_hash: H256::zero(),
+            bootloader_initial_heap: vec![],
+            commitment_input: CommitmentInput {
+                prev_batch_commitment: H256::zero(),
+                prev_meta_hash: H256::zero(),
+                prev_aux_hash: H256::zero(),
+                blob_linear_hashes: vec![H256::zero(); 16],
+                blob_versioned_hashes: vec![H256::zero(); 16],
+                blob_opening_commitments: vec![H256::zero(); 16],
+            },
+        };
+        let output = commitment_data.compute().unwrap();
+
+        // The passthrough hash must match.
+        assert_eq!(
+            output.pass_through_data_hash, prev_passthrough,
+            "passthrough hash mismatch between manual computation and CommitmentData"
+        );
+
+        // The full commitment must match when using the same meta + aux hashes.
+        let reconstructed = {
+            let mut data = Vec::with_capacity(96);
+            data.extend_from_slice(output.pass_through_data_hash.as_bytes());
+            data.extend_from_slice(prev_meta_hash.as_bytes());
+            data.extend_from_slice(prev_aux_hash.as_bytes());
+            H256(keccak256(&data))
+        };
+        assert_eq!(
+            reconstructed, prev_commitment,
+            "reconstructed commitment doesn't match — encoding mismatch"
+        );
+    }
 }
