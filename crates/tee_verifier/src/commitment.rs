@@ -28,11 +28,12 @@ use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 /// This is used both for the current batch's commitment and for verifying
 /// the previous batch's commitment binding. Matches `Committer.sol::_batchPassThroughData()`.
 pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) -> H256 {
-    let mut data = Vec::with_capacity(8 + 32 + 8 + 32);
-    data.extend_from_slice(&enumeration_index.to_be_bytes());
-    data.extend_from_slice(state_root.as_bytes());
-    data.extend_from_slice(&0u64.to_be_bytes()); // zkPorter index (reserved)
-    data.extend_from_slice(&[0u8; 32]); // zkPorter batch hash (reserved)
+    // abi.encodePacked(uint64, bytes32, uint64, bytes32) — 80 bytes, stack-allocated.
+    let mut data = [0u8; 8 + 32 + 8 + 32];
+    data[..8].copy_from_slice(&enumeration_index.to_be_bytes());
+    data[8..40].copy_from_slice(state_root.as_bytes());
+    // data[40..48] is zkPorter index (reserved) — stays zero.
+    // data[48..80] is zkPorter batch hash (reserved) — stays zero.
     H256(keccak256(&data))
 }
 
@@ -45,10 +46,11 @@ pub fn compute_commitment(
     metadata_hash: H256,
     auxiliary_output_hash: H256,
 ) -> H256 {
-    let mut data = Vec::with_capacity(96);
-    data.extend_from_slice(pass_through_data_hash.as_bytes());
-    data.extend_from_slice(metadata_hash.as_bytes());
-    data.extend_from_slice(auxiliary_output_hash.as_bytes());
+    // abi.encode(bytes32, bytes32, bytes32) — 96 bytes, stack-allocated.
+    let mut data = [0u8; 96];
+    data[..32].copy_from_slice(pass_through_data_hash.as_bytes());
+    data[32..64].copy_from_slice(metadata_hash.as_bytes());
+    data[64..96].copy_from_slice(auxiliary_output_hash.as_bytes());
     H256(keccak256(&data))
 }
 
@@ -152,11 +154,12 @@ impl CommitmentData {
     /// )
     /// ```
     fn compute_metadata_hash(&self) -> H256 {
-        let mut data = Vec::with_capacity(1 + 32 + 32 + 32);
-        data.push(self.zk_porter_available as u8);
-        data.extend_from_slice(self.bootloader_code_hash.as_bytes());
-        data.extend_from_slice(self.default_aa_code_hash.as_bytes());
-        data.extend_from_slice(self.evm_emulator_code_hash.as_bytes());
+        // abi.encodePacked(bool, bytes32, bytes32, bytes32) — 97 bytes, stack-allocated.
+        let mut data = [0u8; 1 + 32 + 32 + 32];
+        data[0] = self.zk_porter_available as u8;
+        data[1..33].copy_from_slice(self.bootloader_code_hash.as_bytes());
+        data[33..65].copy_from_slice(self.default_aa_code_hash.as_bytes());
+        data[65..97].copy_from_slice(self.evm_emulator_code_hash.as_bytes());
         H256(keccak256(&data))
     }
 
@@ -175,7 +178,8 @@ impl CommitmentData {
         let system_logs_hash = self.compute_system_logs_hash();
         let bootloader_heap_hash = self.compute_bootloader_heap_hash();
 
-        let mut data = Vec::new();
+        // Layout: 4 × 32-byte sub-hashes + TOTAL_BLOBS_IN_COMMITMENT × 64-byte blob pairs.
+        let mut data = Vec::with_capacity(4 * 32 + TOTAL_BLOBS_IN_COMMITMENT * 64);
         // [1] keccak256(systemLogs)
         data.extend_from_slice(system_logs_hash.as_bytes());
         // [2] stateDiffHash
@@ -184,8 +188,8 @@ impl CommitmentData {
         data.extend_from_slice(bootloader_heap_hash.as_bytes());
         // [4] eventsQueueStateHash — constant zero
         data.extend_from_slice(&[0u8; 32]);
-        // [5] blob auxiliary output — interleaved (hash, commitment) pairs
-        data.extend_from_slice(&self.encode_blob_auxiliary_output()?);
+        // [5] blob auxiliary output — interleaved (hash, commitment) pairs, appended in place.
+        self.append_blob_auxiliary_output(&mut data)?;
 
         Ok(H256(keccak256(&data)))
     }
@@ -203,9 +207,10 @@ impl CommitmentData {
     }
 
     /// Matches `Committer.sol::_encodeBlobAuxiliaryOutput()`.
-    /// Produces `TOTAL_BLOBS_IN_COMMITMENT` pairs of `(blobHash, blobCommitment)`,
-    /// each 32 bytes, for a total of `TOTAL_BLOBS_IN_COMMITMENT * 64` bytes.
-    fn encode_blob_auxiliary_output(&self) -> anyhow::Result<Vec<u8>> {
+    /// Appends `TOTAL_BLOBS_IN_COMMITMENT` pairs of `(blobHash, blobCommitment)`,
+    /// each 32 bytes, for a total of `TOTAL_BLOBS_IN_COMMITMENT * 64` bytes, directly
+    /// to the caller's buffer to avoid an intermediate allocation.
+    fn append_blob_auxiliary_output(&self, output: &mut Vec<u8>) -> anyhow::Result<()> {
         let hashes = &self.commitment_input.blob_linear_hashes;
         let commits = &self.commitment_input.blob_opening_commitments;
 
@@ -220,12 +225,11 @@ impl CommitmentData {
             commits.len()
         );
 
-        let mut output = Vec::with_capacity(TOTAL_BLOBS_IN_COMMITMENT * 64);
         for i in 0..TOTAL_BLOBS_IN_COMMITMENT {
             output.extend_from_slice(hashes[i].as_bytes());
             output.extend_from_slice(commits[i].as_bytes());
         }
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -268,6 +272,10 @@ pub fn verify_blob_opening_commitments(
 
     let num_blobs = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
 
+    // Scratch buffer for zero-padding a short last chunk. Reused across blobs to avoid
+    // per-blob allocation. Only touched for the (at most one) partial blob.
+    let mut padded_scratch: Option<Vec<u8>> = None;
+
     for i in 0..claimed_output_hashes.len() {
         if claimed_linear_hashes[i] == H256::zero() {
             ensure!(
@@ -277,41 +285,31 @@ pub fn verify_blob_opening_commitments(
             continue;
         }
 
-        // Get the blob data (pad to full blob size if last chunk is short).
-        let blob_data = if i < num_blobs {
-            let start = i * ZK_SYNC_BYTES_PER_BLOB;
-            let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
-            let chunk = &pubdata[start..end];
-            if chunk.len() == ZK_SYNC_BYTES_PER_BLOB {
-                chunk.to_vec()
-            } else {
-                let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
-                padded[..chunk.len()].copy_from_slice(chunk);
-                padded
-            }
+        // A non-zero claimed linear hash outside the pubdata range is caught by
+        // `verify_blob_linear_hashes` before we get here; treat it as a bug if reached.
+        ensure!(
+            i < num_blobs,
+            "blob {i}: claimed linear hash is non-zero but no pubdata for this slot"
+        );
+
+        // View into the blob's bytes; zero-pad only if the last chunk is short.
+        let start = i * ZK_SYNC_BYTES_PER_BLOB;
+        let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
+        let raw = &pubdata[start..end];
+        let blob_bytes: &[u8] = if raw.len() == ZK_SYNC_BYTES_PER_BLOB {
+            raw
         } else {
-            vec![0u8; ZK_SYNC_BYTES_PER_BLOB]
+            let scratch = padded_scratch.get_or_insert_with(|| vec![0u8; ZK_SYNC_BYTES_PER_BLOB]);
+            scratch[..raw.len()].copy_from_slice(raw);
+            scratch[raw.len()..].fill(0);
+            scratch.as_slice()
         };
 
-        // Step 1: Parse blob data into polynomial coefficients (monomial form).
-        // Chunks are read in reverse order (highest-degree coefficient first).
-        // Each 31-byte chunk is interpreted as a little-endian BLS12-381 scalar.
-        let poly: Vec<Bls12_381Fr> = blob_data
-            .chunks(BLOB_CHUNK_SIZE)
-            .rev()
-            .map(|chunk| {
-                let mut buf = [0u8; 32];
-                buf[..BLOB_CHUNK_SIZE].copy_from_slice(chunk);
-                // 31 bytes LE is always below the BLS12-381 modulus.
-                Bls12_381Fr::from_le_bytes_mod_order(&buf)
-            })
-            .collect();
-
-        // Step 2: Compute evaluation point = keccak256(linear_hash || versioned_hash)[16..32]
+        // Step 1: Compute evaluation point = keccak256(linear_hash || versioned_hash)[16..32].
         let evaluation_point_bytes = {
-            let mut preimage = Vec::with_capacity(64);
-            preimage.extend_from_slice(claimed_linear_hashes[i].as_bytes());
-            preimage.extend_from_slice(versioned_hashes[i].as_bytes());
+            let mut preimage = [0u8; 64];
+            preimage[..32].copy_from_slice(claimed_linear_hashes[i].as_bytes());
+            preimage[32..].copy_from_slice(versioned_hashes[i].as_bytes());
             let hash = keccak256(&preimage);
             let mut buf = [0u8; 32];
             buf[16..32].copy_from_slice(&hash[16..32]);
@@ -319,34 +317,36 @@ pub fn verify_blob_opening_commitments(
         };
         let evaluation_point = Bls12_381Fr::from_be_bytes_mod_order(&evaluation_point_bytes);
 
-        // Step 3: Evaluate polynomial using Horner's rule.
-        // poly[0] is the lowest-degree coefficient (built from the last blob chunk).
-        // Horner: result = p[n-1] + x*(p[n-2] + x*(p[n-3] + ... + x*p[0]))
-        // But our poly is already in order [a_0, a_1, ..., a_{n-1}],
-        // so we iterate in reverse: start from a_{n-1} and work down.
+        // Step 2: Evaluate polynomial in-place via Horner's rule.
+        //
+        // The pubdata is a sequence of 31-byte chunks interpreted as polynomial
+        // coefficients starting with the highest-degree one (Boojum convention, see
+        // `zksync-protocol/.../eip_4844/mod.rs:97-98`). Iterating forward and doing
+        // `op = op * x + a` yields `a_n*x^n + a_{n-1}*x^{n-1} + ... + a_0`, same as
+        // the `chunks().rev().collect::<Vec<_>>() + iter().rev()` pattern it replaces.
         let mut opening_value = Bls12_381Fr::zero();
-        for coeff in poly.iter().rev() {
+        let mut buf = [0u8; 32];
+        for chunk in blob_bytes.chunks(BLOB_CHUNK_SIZE) {
+            buf[..BLOB_CHUNK_SIZE].copy_from_slice(chunk);
+            // 31 bytes LE is always below the BLS12-381 modulus.
+            let coeff = Bls12_381Fr::from_le_bytes_mod_order(&buf);
             opening_value *= evaluation_point;
             opening_value += coeff;
         }
 
-        // Step 4: Serialize opening value as 32-byte big-endian.
-        let opening_value_bytes: [u8; 32] = {
-            let be_vec = opening_value.into_bigint().to_bytes_be();
-            // BLS12-381 Fr uses BigInteger256 → exactly 32 bytes.
-            be_vec
-                .try_into()
-                .expect("BLS12-381 Fr should be 32 bytes BE")
-        };
+        // Step 3: Serialize opening value as 32-byte big-endian.
+        let opening_value_bytes: [u8; 32] = opening_value
+            .into_bigint()
+            .to_bytes_be()
+            .try_into()
+            .expect("BLS12-381 Fr should be 32 bytes BE");
 
-        // Step 5: Compute expected output_hash = keccak256(versioned_hash || evaluation_point || opening_value)
-        let expected_output_hash = {
-            let mut preimage = Vec::with_capacity(32 + 16 + 32);
-            preimage.extend_from_slice(versioned_hashes[i].as_bytes());
-            preimage.extend_from_slice(&evaluation_point_bytes[16..32]); // only the 16-byte truncated point
-            preimage.extend_from_slice(&opening_value_bytes);
-            H256(keccak256(&preimage))
-        };
+        // Step 4: Compute expected output_hash = keccak256(versioned_hash || evaluation_point || opening_value).
+        let mut preimage = [0u8; 32 + 16 + 32];
+        preimage[..32].copy_from_slice(versioned_hashes[i].as_bytes());
+        preimage[32..48].copy_from_slice(&evaluation_point_bytes[16..32]);
+        preimage[48..].copy_from_slice(&opening_value_bytes);
+        let expected_output_hash = H256(keccak256(&preimage));
 
         ensure!(
             expected_output_hash == claimed_output_hashes[i],
