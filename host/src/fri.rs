@@ -146,7 +146,11 @@ pub(crate) fn build_runner(jit: bool) -> Result<TranspilerRunner> {
         .context("while attempting to build transpiler runner")
 }
 
-pub(crate) fn run_batch(runner: &TranspilerRunner, batch_number: u64, batch_path: &Path) -> Result<()> {
+pub(crate) fn run_batch(
+    runner: &TranspilerRunner,
+    batch_number: u64,
+    batch_path: &Path,
+) -> Result<()> {
     // Load batch and compute real CommitmentInput (blob hashes from pubdata).
     let v2 = load_v2_with_real_blobs(batch_path)
         .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
@@ -201,8 +205,12 @@ pub(crate) fn run_batch(runner: &TranspilerRunner, batch_number: u64, batch_path
     Ok(())
 }
 
-/// Load a V1 batch, compute real CommitmentInput from pubdata, return V2.
-/// Uses test_utils to generate self-consistent blob data.
+/// Load a V1 batch and build a V2 input with a **test-only** synthetic
+/// `CommitmentInput`: real blob linear hashes from pubdata, fabricated
+/// versioned hashes / opening commitments, zero prev_meta/prev_aux. See
+/// `zksync_tee_verifier::test_utils` module docs — the resulting
+/// `proof_public_input` is **not** L1-settlement-equivalent, only
+/// pipeline-equivalent between native, transpiler, and prover here.
 fn load_v2_with_real_blobs(
     batch_path: &Path,
 ) -> Result<zksync_tee_verifier::types::V2TeeVerifierInput> {

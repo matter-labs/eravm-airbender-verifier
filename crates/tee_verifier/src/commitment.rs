@@ -145,7 +145,7 @@ impl CommitmentData {
         })
     }
 
-    /// Matches `Committer.sol::_batchMetaParameters()`.
+    /// Matches `Executor.sol::_batchMetaParameters()` (L1) exactly:
     ///
     /// ```solidity
     /// abi.encodePacked(
@@ -155,6 +155,18 @@ impl CommitmentData {
     ///     s.l2EvmEmulatorBytecodeHash
     /// )
     /// ```
+    ///
+    /// Note: this intentionally does **not** mirror the sequencer's reference
+    /// `zksync-era/.../commitment/mod.rs::L1BatchMetaParameters::to_bytes`, which skips
+    /// the EVM emulator hash for pre-1.5.0 protocols (L1 always emits 97 bytes) and, for
+    /// post-1.5.0, replaces `None` emulator hashes with `default_aa_code_hash` (L1 stores
+    /// `bytes32(0)` when the emulator isn't deployed). Those fallbacks are off-chain
+    /// sequencer quirks; L1 — our authoritative target — reads raw storage slots. Both
+    /// converge for mainnet chains that have an EVM emulator deployed.
+    ///
+    /// `zk_porter_available` is sourced from the witness (`SystemEnv`); the sequencer
+    /// must set it to match L1's `ZKPORTER_IS_AVAILABLE` constant or the commitment will
+    /// mismatch.
     fn compute_metadata_hash(&self) -> H256 {
         // abi.encodePacked(bool, bytes32, bytes32, bytes32) — 97 bytes, stack-allocated.
         let mut data = [0u8; 1 + 32 + 32 + 32];

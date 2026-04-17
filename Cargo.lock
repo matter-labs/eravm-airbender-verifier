@@ -1646,10 +1646,7 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
-<<<<<<< HEAD
  "serde",
-=======
->>>>>>> 26ca2c9 (feat: compute real blob data for test batches)
  "serde_json",
  "tracing",
  "tracing-subscriber",
