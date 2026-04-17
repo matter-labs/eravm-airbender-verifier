@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use zksync_tee_verifier::test_utils::v1_to_v2_with_real_blobs;
 use zksync_tee_verifier::types::TeeVerifierInput;
 use zksync_tee_verifier::Verify;
 
@@ -73,7 +74,10 @@ fn test_batch_506093_commitment() {
         "Running verification for batch {}...",
         input.l1_batch_env.number
     );
-    let result = input.verify().expect("verification failed");
+    // Synthesize a self-consistent V2 input (fake blob/prev-batch data — see
+    // `test_utils` module docs) and run the production entry point.
+    let v2 = v1_to_v2_with_real_blobs(input).expect("failed to build V2 input");
+    let result = v2.verify().expect("verification failed");
 
     assert_ne!(
         result.commitment,

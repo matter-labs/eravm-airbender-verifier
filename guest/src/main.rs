@@ -2,7 +2,7 @@
 
 use airbender::guest::read;
 use zksync_tee_verifier::types::TeeVerifierInput;
-use zksync_tee_verifier::verify_and_commit;
+use zksync_tee_verifier::Verify;
 
 #[airbender::main]
 fn main() -> [u32; 8] {
@@ -11,6 +11,6 @@ fn main() -> [u32; 8] {
         panic!("expected TeeVerifierInput::V2")
     };
 
-    let result = verify_and_commit(input).unwrap();
+    let result = input.verify().unwrap();
     result.proof_public_input
 }

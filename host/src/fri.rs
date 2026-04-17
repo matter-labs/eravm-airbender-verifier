@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
 use zksync_cli_utils::load_batch_words;
+use zksync_tee_verifier::Verify;
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
 /// We no longer check against a fixed expected output; any non-zero output
@@ -151,7 +152,9 @@ pub(crate) fn run_batch(runner: &TranspilerRunner, batch_number: u64, batch_path
         .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
 
     // Run native verification with real blob data.
-    let native_result = zksync_tee_verifier::verify_and_commit(v2.clone())
+    let native_result = v2
+        .clone()
+        .verify()
         .context("native verification with real blob data failed")?;
 
     info!(

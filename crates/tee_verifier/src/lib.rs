@@ -28,10 +28,13 @@ use zksync_multivm::{
     FastVmInstance,
 };
 use zksync_types::{
-    block::L2BlockExecutionData, bytecode::BytecodeHash,
+    block::L2BlockExecutionData,
+    bytecode::BytecodeHash,
     commitment::{serialize_commitments, PubdataParams},
-    u256_to_h256, web3::keccak256, writes::StateDiffRecord, L1BatchNumber, ProtocolVersionId,
-    StorageLog, StorageValue, Transaction, H256, U256,
+    u256_to_h256,
+    web3::keccak256,
+    writes::StateDiffRecord,
+    L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue, Transaction, H256, U256,
 };
 
 use crate::commitment::{expand_bootloader_heap, CommitmentData, ZK_SYNC_BYTES_PER_BLOB};
@@ -69,29 +72,29 @@ pub struct VerificationResult {
     pub pubdata_input: Option<Vec<u8>>,
 }
 
-/// A trait for backward-compatible verification that computes blob data
-/// from pubdata internally. Only available with the `test-utils` feature.
-#[cfg(any(test, feature = "test-utils"))]
+/// A trait for the computations that can be verified in TEE.
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
 
-/// Verify execution and compute the batch commitment.
-pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<VerificationResult> {
-    anyhow::ensure!(
-        is_supported_by_fast_vm(input.v1.system_env.version),
-        "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.v1.system_env.version
-    );
+impl Verify for V2TeeVerifierInput {
+    /// Verify execution and compute the batch commitment.
+    fn verify(self) -> anyhow::Result<VerificationResult> {
+        anyhow::ensure!(
+            is_supported_by_fast_vm(self.v1.system_env.version),
+            "Protocol version {:?} is not supported by FastVM tee verifier",
+            self.v1.system_env.version
+        );
 
-    verify_with_vm(
-        input.v1,
-        input.commitment_input,
-        true, // full verification in production
-        |l1_batch_env, system_env, storage_view| {
-            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-        },
-    )
+        verify_with_vm(
+            self.v1,
+            self.commitment_input,
+            true, // full verification in production
+            |l1_batch_env, system_env, storage_view| {
+                FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+            },
+        )
+    }
 }
 
 /// Execute batch and return pubdata without blob verification.
@@ -213,16 +216,17 @@ where
     // Build the storage snapshot with real enumeration indices from the Merkle witness.
     // Reads get `Some((value, enum_idx))` where enum_idx is the pre-batch leaf index
     // (0 if the slot has no prior write). Initial-write slots override with `None`.
-    let storage = read_storage_ops
-        .map(|(key, value)| {
-            let hashed = key.hashed_key();
-            let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
-            (hashed, Some((value, enum_idx)))
-        })
-        .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-            initial_write.then_some((key.hashed_key(), None))
-        }))
-        .collect();
+    let storage =
+        read_storage_ops
+            .map(|(key, value)| {
+                let hashed = key.hashed_key();
+                let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
+                (hashed, Some((value, enum_idx)))
+            })
+            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+                initial_write.then_some((key.hashed_key(), None))
+            }))
+            .collect();
 
     // Verify the bootloader bytecode matches its claimed hash.
     // The bootloader is loaded separately from used_bytecodes and orchestrates
@@ -452,14 +456,6 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
         u256_to_h256(computed.value_u256()),
     );
     Ok(())
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-impl Verify for V1TeeVerifierInput {
-    fn verify(self) -> anyhow::Result<VerificationResult> {
-        let v2 = crate::test_utils::v1_to_v2_with_real_blobs(self)?;
-        verify_and_commit(v2)
-    }
 }
 
 /// Sets the initial storage values and returns `BlockOutputWithProofs`
