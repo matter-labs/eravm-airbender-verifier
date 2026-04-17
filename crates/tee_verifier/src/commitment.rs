@@ -56,8 +56,25 @@ pub fn compute_commitment(
 pub struct BatchCommitmentOutput {
     /// The batch commitment: `keccak256(abi.encode(passThrough, metadata, auxiliary))`.
     pub commitment: H256,
-    /// The proof public input: `keccak256(prevCommitment || currentCommitment)`.
-    /// L1 applies `>> 32` before verifying; the guest returns the full 256-bit hash.
+    /// The proof public input preimage: `keccak256(prev_batch_commitment || current_commitment)`,
+    /// packed as 8 big-endian u32 words (`u32[0]` = bytes 0..4 of the hash, `u32[7]` = bytes 28..32).
+    ///
+    /// # Wrapper / L1 contract
+    ///
+    /// L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` (with
+    /// `PUBLIC_INPUT_SHIFT = 32`, see `era-contracts/.../Executor.sol:712` and
+    /// `era-contracts/.../Config.sol:53`) to the FFLONK verifier — i.e. the high 224 bits
+    /// of the hash, zero-extended to 256 bits.
+    ///
+    /// This field exposes all 256 bits. The Airbender → FFLONK SNARK wrapper is responsible
+    /// for dropping the low 32 bits when forming the single BN254 public input:
+    /// treat `u32[0..7]` as a big-endian 224-bit integer and ignore `u32[7]`.
+    /// This mirrors how Boojum's scheduler emits only the high 28 bytes via
+    /// `NUM_SCHEDULER_PUBLIC_INPUTS=4 × take_by=7` (see
+    /// `zksync-protocol/.../zkevm_circuits/src/scheduler/mod.rs:1511-1527`).
+    ///
+    /// `test_proof_public_input_matches_l1_shift` pins this relationship — any wrapper
+    /// or encoding change must update that test.
     pub proof_public_input: [u32; 8],
     /// Sub-hashes for debugging / cross-checking.
     pub pass_through_data_hash: H256,
@@ -522,5 +539,36 @@ mod tests {
     fn test_expand_bootloader_heap_out_of_range() {
         let content = vec![(1000, U256::from(1))]; // offset 1000 * 32 = 32000 > 128
         expand_bootloader_heap(&content, 128);
+    }
+
+    /// Pins the wrapper contract described on `BatchCommitmentOutput::proof_public_input`:
+    /// the big-endian integer formed by the high 7 u32 words must equal
+    /// `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` (PUBLIC_INPUT_SHIFT = 32).
+    ///
+    /// If this test breaks, either the on-wire `[u32; 8]` encoding changed or the L1
+    /// shift contract changed — both require coordinated changes in the SNARK wrapper.
+    #[test]
+    fn test_proof_public_input_matches_l1_shift() {
+        const PUBLIC_INPUT_SHIFT: u32 = 32;
+        let out = make_test_commitment_data().compute().unwrap();
+
+        // Reconstruct L1's value: keccak(prev || curr) >> 32, as a U256.
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(&[0x55; 32]);
+        preimage[32..].copy_from_slice(out.commitment.as_bytes());
+        let l1_input = U256::from_big_endian(&keccak256(&preimage)) >> PUBLIC_INPUT_SHIFT;
+
+        // Reconstruct what the wrapper should feed into L1:
+        // the high 7 u32 words of `proof_public_input`, big-endian-combined into a u256.
+        let mut wrapper_bytes = [0u8; 32];
+        for (i, word) in out.proof_public_input[..7].iter().enumerate() {
+            wrapper_bytes[4 + i * 4..4 + (i + 1) * 4].copy_from_slice(&word.to_be_bytes());
+        }
+        let wrapper_input = U256::from_big_endian(&wrapper_bytes);
+
+        assert_eq!(
+            wrapper_input, l1_input,
+            "proof_public_input high 7 words must equal L1's keccak >> 32"
+        );
     }
 }

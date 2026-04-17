@@ -11,9 +11,23 @@ pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
 const HASH_LEN: usize = 32;
 
-/// Number of blob hash/commitment pairs in the auxiliary output, must match
-/// `TOTAL_BLOBS_IN_COMMITMENT` in `IExecutor.sol`.
+/// Number of blob hash/commitment pairs in the auxiliary output.
+///
+/// Must stay in sync with the L1 source of truth:
+/// `era-contracts/l1-contracts/contracts/state-transition/chain-interfaces/IExecutor.sol:55`
+/// (`uint256 constant TOTAL_BLOBS_IN_COMMITMENT = 16;`).
+/// `test_total_blobs_in_commitment_matches_l1` pins the value.
 pub const TOTAL_BLOBS_IN_COMMITMENT: usize = 16;
+
+#[cfg(test)]
+mod blob_constant_tests {
+    /// Change detector: if L1's `TOTAL_BLOBS_IN_COMMITMENT` ever changes, this constant
+    /// must be updated in lockstep with the contract and the sequencer.
+    #[test]
+    fn test_total_blobs_in_commitment_matches_l1() {
+        assert_eq!(super::TOTAL_BLOBS_IN_COMMITMENT, 16);
+    }
+}
 
 /// VM execution witness used by verifier input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

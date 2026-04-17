@@ -168,17 +168,32 @@ where
     // contains correct enumeration indices for state diff hash computation.
     // The leaf_hashed_key in StorageLogMetadata is a U256 (little-endian convention),
     // which we convert to H256 to match the StorageSnapshot key format.
-    let enum_index_map: std::collections::HashMap<H256, u64> = input
+    //
+    // A leaf_hashed_key may appear in multiple merkle-path entries (e.g. a slot that is
+    // both read and written in the batch). All such entries must carry the same
+    // leaf_enumeration_index at any single point in time; disagreement means the witness
+    // is malformed.
+    let mut enum_index_map: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
+    for log in input
         .merkle_paths
         .merkle_paths
         .iter()
         .filter(|log| log.leaf_enumeration_index > 0)
-        .map(|log| {
-            let mut key_bytes = [0u8; 32];
-            log.leaf_hashed_key.to_little_endian(&mut key_bytes);
-            (H256(key_bytes), log.leaf_enumeration_index)
-        })
-        .collect();
+    {
+        let mut key_bytes = [0u8; 32];
+        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
+        let hashed = H256(key_bytes);
+        if let Some(&existing) = enum_index_map.get(&hashed) {
+            anyhow::ensure!(
+                existing == log.leaf_enumeration_index,
+                "merkle_paths witness has inconsistent enumeration indices for \
+                 leaf_hashed_key {hashed:?}: {existing} vs {}",
+                log.leaf_enumeration_index,
+            );
+        } else {
+            enum_index_map.insert(hashed, log.leaf_enumeration_index);
+        }
+    }
 
     let read_storage_ops = input
         .vm_run_data
@@ -285,16 +300,23 @@ where
     // Verify blob hashes against pubdata produced by execution.
     // In Boojum, both linear hashes and opening commitments were verified by a
     // dedicated EIP4844Repack sub-circuit inside the scheduler.
+    //
+    // Blob verification is mandatory when `full_verification` is set: otherwise the
+    // operator-supplied `blob_linear_hashes` / `blob_opening_commitments` would flow
+    // into `auxiliary_output_hash` unchecked. Post-gateway VMs always populate
+    // `pubdata_input`; if it is missing here, treat it as a malformed input.
     if full_verification {
-        if let Some(pubdata) = &vm_out.pubdata_input {
-            verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
-            commitment::verify_blob_opening_commitments(
-                pubdata,
-                &commitment_input.blob_versioned_hashes,
-                &commitment_input.blob_linear_hashes,
-                &commitment_input.blob_opening_commitments,
-            )?;
-        }
+        let pubdata = vm_out.pubdata_input.as_deref().context(
+            "VM output is missing pubdata_input — required for blob verification \
+             when full_verification is enabled",
+        )?;
+        verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
+        commitment::verify_blob_opening_commitments(
+            pubdata,
+            &commitment_input.blob_versioned_hashes,
+            &commitment_input.blob_linear_hashes,
+            &commitment_input.blob_opening_commitments,
+        )?;
     }
 
     let block_output_with_proofs = get_bowp(input.merkle_paths)?;
@@ -964,5 +986,49 @@ mod tests {
             reconstructed, prev_commitment,
             "reconstructed commitment doesn't match — encoding mismatch"
         );
+    }
+
+    /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
+    /// a claimed `prev_batch_commitment` recomputed from consistent inputs must
+    /// match, and tampering with any input must cause a mismatch (which
+    /// `verify_with_vm` turns into an error via `anyhow::ensure!`).
+    #[test]
+    fn test_prev_commitment_binding_rejects_mismatch() {
+        use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
+
+        let old_root_hash = H256([0xAA; 32]);
+        let enumeration_index: u64 = 4242;
+        let prev_meta_hash = H256([0xBB; 32]);
+        let prev_aux_hash = H256([0xCC; 32]);
+
+        let prev_passthrough = compute_pass_through_data_hash(enumeration_index, old_root_hash);
+        let valid_prev = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
+
+        // Sanity: passing the matching triple reconstructs the same commitment.
+        let recomputed_match = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
+        assert_eq!(recomputed_match, valid_prev);
+
+        // Tampering the meta hash must produce a different commitment.
+        let recomputed_bad_meta =
+            compute_commitment(prev_passthrough, H256([0xDE; 32]), prev_aux_hash);
+        assert_ne!(recomputed_bad_meta, valid_prev);
+
+        // Tampering the aux hash must produce a different commitment.
+        let recomputed_bad_aux =
+            compute_commitment(prev_passthrough, prev_meta_hash, H256([0xAD; 32]));
+        assert_ne!(recomputed_bad_aux, valid_prev);
+
+        // Tampering the enumeration index must produce a different passthrough,
+        // which yields a different commitment.
+        let bad_passthrough = compute_pass_through_data_hash(enumeration_index + 1, old_root_hash);
+        let recomputed_bad_enum =
+            compute_commitment(bad_passthrough, prev_meta_hash, prev_aux_hash);
+        assert_ne!(recomputed_bad_enum, valid_prev);
+
+        // Tampering the old root hash likewise.
+        let bad_passthrough = compute_pass_through_data_hash(enumeration_index, H256([0xEE; 32]));
+        let recomputed_bad_root =
+            compute_commitment(bad_passthrough, prev_meta_hash, prev_aux_hash);
+        assert_ne!(recomputed_bad_root, valid_prev);
     }
 }

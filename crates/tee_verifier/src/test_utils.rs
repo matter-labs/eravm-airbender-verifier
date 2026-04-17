@@ -1,8 +1,19 @@
-//! Test utilities for generating self-consistent `CommitmentInput` from batch data.
+//! Test utilities for generating a **synthetic, self-consistent** `CommitmentInput`.
+//!
+//! The values produced here do **not** match what the sequencer / L1 would supply for
+//! a real batch:
+//! - `prev_meta_hash` / `prev_aux_hash` are forced to zero, so the recomputed
+//!   `prev_batch_commitment` trivially matches the binding check (`lib.rs` binding
+//!   branch is exercised but cannot catch a real mainnet mismatch here).
+//! - `blob_versioned_hashes` are fabricated from `keccak([i] || b"test_versioned_hash")`
+//!   with version byte `0x01` — they are not KZG-derived EIP-4844 versioned hashes.
+//! - `blob_opening_commitments` are derived from the fake versioned hashes, so the
+//!   blob opening check is self-consistent but does not prove mainnet compatibility.
 //!
 //! In production, `CommitmentInput` comes from the sequencer (prev_batch_commitment
-//! from DB, blob data from L1 transactions). For tests, we compute everything from
-//! the VM execution output.
+//! from DB, blob data from L1 transactions). Use this only to exercise the verifier
+//! pipeline end-to-end; for byte-for-byte L1 equivalence, pin values against real
+//! sequencer output.
 
 use zksync_types::{web3::keccak256, H256};
 
