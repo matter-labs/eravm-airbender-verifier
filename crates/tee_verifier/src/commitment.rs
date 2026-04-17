@@ -121,14 +121,16 @@ impl CommitmentData {
         let commitment =
             compute_commitment(pass_through_data_hash, metadata_hash, auxiliary_output_hash);
 
-        // Executor.sol:321-322
+        // Matches `Executor.sol::_getBatchProofPublicInput` at line 712:
+        //   uint256(keccak256(abi.encodePacked(prev, curr))) >> PUBLIC_INPUT_SHIFT
+        // The shift is the wrapper's responsibility — see the doc comment on
+        // `BatchCommitmentOutput::proof_public_input`.
         let prev = self.commitment_input.prev_batch_commitment;
         let proof_public_input = {
             let mut data = [0u8; 64];
             data[..32].copy_from_slice(prev.as_bytes());
             data[32..].copy_from_slice(commitment.as_bytes());
-            let hash = keccak256(&data);
-            bytes32_to_u32x8(hash)
+            bytes32_to_u32x8(keccak256(&data))
         };
 
         Ok(BatchCommitmentOutput {

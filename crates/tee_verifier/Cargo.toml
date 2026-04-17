@@ -32,8 +32,6 @@ tracing.workspace = true
 zksync_tee_verifier = { path = ".", features = ["test-utils"] }
 
 zksync_contracts.workspace = true
-serde_json.workspace = true
-zksync_types.workspace = true
 
 bincode_v1 = { package = "bincode", version = "1" }
 bincode_v2 = { package = "bincode", version = "2", features = ["serde"] }

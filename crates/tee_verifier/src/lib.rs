@@ -28,13 +28,17 @@ use zksync_multivm::{
     FastVmInstance,
 };
 use zksync_types::{
-    block::L2BlockExecutionData, bytecode::BytecodeHash, commitment::PubdataParams, u256_to_h256,
-    web3::keccak256, writes::StateDiffRecord, L1BatchNumber, ProtocolVersionId, StorageLog,
-    StorageValue, Transaction, H256, U256,
+    block::L2BlockExecutionData, bytecode::BytecodeHash,
+    commitment::{serialize_commitments, PubdataParams},
+    u256_to_h256, web3::keccak256, writes::StateDiffRecord, L1BatchNumber, ProtocolVersionId,
+    StorageLog, StorageValue, Transaction, H256, U256,
 };
 
 use crate::commitment::{expand_bootloader_heap, CommitmentData, ZK_SYNC_BYTES_PER_BLOB};
-use crate::types::{StorageLogMetadata, V1TeeVerifierInput, WitnessInputMerklePaths};
+use crate::types::{
+    CommitmentInput, StorageLogMetadata, V1TeeVerifierInput, V2TeeVerifierInput,
+    WitnessInputMerklePaths,
+};
 
 /// A structure to hold the result of verification.
 pub struct VerificationResult {
@@ -42,8 +46,9 @@ pub struct VerificationResult {
     pub value_hash: ValueHash,
     /// The batch number that was verified.
     pub batch_number: L1BatchNumber,
-    /// The proof public input hash for L1 settlement: `keccak256(prev || curr)`.
-    /// L1 applies `>> 32` before verifying against the proof.
+    /// The proof public input preimage `keccak256(prev || curr)`, packed as 8 big-endian
+    /// u32 words. See [`commitment::BatchCommitmentOutput::proof_public_input`] for the
+    /// L1 `PUBLIC_INPUT_SHIFT` contract and the wrapper's responsibility.
     pub proof_public_input: [u32; 8],
     /// The computed batch commitment.
     pub commitment: H256,
@@ -70,8 +75,6 @@ pub struct VerificationResult {
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
-
-use crate::types::{CommitmentInput, V2TeeVerifierInput};
 
 /// Verify execution and compute the batch commitment.
 pub fn verify_and_commit(input: V2TeeVerifierInput) -> anyhow::Result<VerificationResult> {
@@ -208,26 +211,18 @@ where
         .into_iter();
 
     // Build the storage snapshot with real enumeration indices from the Merkle witness.
-    // Slots with a known enumeration index get Some((value, index)); slots that are
-    // initial writes (no prior index) get None.
-    let storage =
-        read_storage_ops
-            .map(|(key, value)| {
-                let hashed = key.hashed_key();
-                let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
-                if enum_idx > 0 {
-                    (hashed, Some((value, enum_idx)))
-                } else {
-                    // Key exists in reads but has no enumeration index — treat as
-                    // a slot without a prior write (value is the default or was
-                    // never indexed).
-                    (hashed, Some((value, 0)))
-                }
-            })
-            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-                initial_write.then_some((key.hashed_key(), None))
-            }))
-            .collect();
+    // Reads get `Some((value, enum_idx))` where enum_idx is the pre-batch leaf index
+    // (0 if the slot has no prior write). Initial-write slots override with `None`.
+    let storage = read_storage_ops
+        .map(|(key, value)| {
+            let hashed = key.hashed_key();
+            let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
+            (hashed, Some((value, enum_idx)))
+        })
+        .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+            initial_write.then_some((key.hashed_key(), None))
+        }))
+        .collect();
 
     // Verify the bootloader bytecode matches its claimed hash.
     // The bootloader is loaded separately from used_bytecodes and orchestrates
@@ -387,9 +382,7 @@ where
 ///
 /// Matches `zksync-era/core/lib/types/src/commitment/mod.rs:424-425`.
 fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
-    use zksync_types::{commitment::serialize_commitments, web3::keccak256};
-    let packed = serialize_commitments(state_diffs);
-    H256(keccak256(&packed))
+    H256(keccak256(&serialize_commitments(state_diffs)))
 }
 
 /// Verify that blob linear hashes match the pubdata produced by VM execution.
