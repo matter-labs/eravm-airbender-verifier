@@ -8,6 +8,9 @@ airbender-host = { workspace = true, features = ["gpu-prover"] }
 anyhow.workspace = true
 bincode = { version = "2", features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zksync_cli_utils.workspace = true
+zkos-wrapper.workspace = true
