@@ -176,6 +176,13 @@ fn batch_output_dir(output_root: &Path, batch_number: u64) -> PathBuf {
 }
 
 fn proof_file_output_dir(output_root: &Path, proof_file: &Path) -> Result<PathBuf> {
+    // Standard host-exported FRI proofs live under `batch-<n>/fri_proof.json`.
+    // Preserve that batch-oriented layout when we wrap those artifacts into
+    // SNARKs, so `prove-fri` and `prove-snark` agree on the same output root.
+    if let Some(batch_number) = batch_number_from_exported_fri_proof_path(proof_file) {
+        return Ok(batch_output_dir(output_root, batch_number));
+    }
+
     let stem = proof_file
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -186,9 +193,21 @@ fn proof_file_output_dir(output_root: &Path, proof_file: &Path) -> Result<PathBu
     Ok(output_root.join(stem))
 }
 
+fn batch_number_from_exported_fri_proof_path(proof_file: &Path) -> Option<u64> {
+    if proof_file.file_name()? != FRI_PROOF_FILE_NAME {
+        return None;
+    }
+
+    let parent_name = proof_file.parent()?.file_name()?.to_str()?;
+    let batch_number = parent_name.strip_prefix("batch-")?;
+    batch_number.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{batch_output_dir, proof_file_output_dir};
+    use super::{
+        batch_number_from_exported_fri_proof_path, batch_output_dir, proof_file_output_dir,
+    };
     use std::path::Path;
 
     #[test]
@@ -205,5 +224,29 @@ mod tests {
         )
         .expect("proof stem should be available");
         assert_eq!(output_dir, Path::new("/tmp/output/fri-proof"));
+    }
+
+    #[test]
+    fn proof_file_output_dir_reuses_batch_directory_for_exported_fri_proof() {
+        let output_dir = proof_file_output_dir(
+            Path::new("/tmp/output"),
+            Path::new("/tmp/input/batch-42/fri_proof.json"),
+        )
+        .expect("batch directory name should be available");
+        assert_eq!(output_dir, Path::new("/tmp/output/batch-42"));
+    }
+
+    #[test]
+    fn batch_number_from_exported_fri_proof_path_reads_standard_layout() {
+        let batch_number =
+            batch_number_from_exported_fri_proof_path(Path::new("/tmp/input/batch-42/fri_proof.json"));
+        assert_eq!(batch_number, Some(42));
+    }
+
+    #[test]
+    fn batch_number_from_exported_fri_proof_path_ignores_nonstandard_layout() {
+        let batch_number =
+            batch_number_from_exported_fri_proof_path(Path::new("/tmp/input/fri_proof.json"));
+        assert_eq!(batch_number, None);
     }
 }
