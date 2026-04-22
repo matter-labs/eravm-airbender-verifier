@@ -13,4 +13,9 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zksync_cli_utils.workspace = true
-zkos-wrapper.workspace = true
+zkos-wrapper = { workspace = true }
+
+[features]
+# airbender uses GPU by default, but for SNARK wrapper you need to have bellman-cuda
+# installed, so by default we use CPU.
+snark_gpu = ["zkos-wrapper/gpu"]
