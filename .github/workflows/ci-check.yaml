@@ -148,7 +148,7 @@ jobs:
       - name: Run host execution for CI batches
         run: |
           cargo run --release -p eravm-prover-host --locked -- \
-            --action run \
+            run \
             --batches-dir "$BATCHES_DIR" \
             --batch-files "$CI_BATCHES"
 
