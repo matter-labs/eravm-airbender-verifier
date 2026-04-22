@@ -111,3 +111,54 @@ Import the existing local corpus into the repo as compressed Git LFS objects:
 ```
 
 More detailed batch-data instructions live in [testdata/era_mainnet_batches/README.md](testdata/era_mainnet_batches/README.md).
+
+## Full e2e proving flow
+
+If you're going to use GPU proving for SNARK, you also need to set up bellman CUDA.
+
+Important: right now, bellman-cuda supports ONLY CUDA 12, while airbender can work with both 12 and 13.
+So if you have CUDA 13 installed, your options are either to rely on CPU proving if acceptable, or install CUDA 12 instead.
+
+```bash
+# `era-bellman-cuda` & SNARK wrapper use old code that doesn't always respect `CUDA_HOME` and instead
+# on linux checks `/usr/local/cuda`
+echo $CUDA_HOME
+# If your output is not `/usr/local/cuda`, you might want to create a symlink, e.g. `sudo ln -s /opt/cuda /usr/local/cuda`.
+
+if [ ! -d "era-bellman-cuda" ]; then
+    git clone https://github.com/matter-labs/era-bellman-cuda.git
+else
+    echo "era-bellman-cuda repository already exists. Skipping clone."
+fi
+# Now cmake will find the CUDA compiler (nvcc) via the updated PATH
+cmake -Bera-bellman-cuda/build -Sera-bellman-cuda/ -DCMAKE_BUILD_TYPE=Release
+cmake --build era-bellman-cuda/build/ -j16
+
+BELLMAN_DIR="$(pwd)/era-bellman-cuda"
+
+# === IMPORTANT ===
+# Add BELLMAN_DIR to your *rc file (e.g. `.bashrc` / `.zshrc`)!
+```
+Then you can use the following flow:
+
+```bash
+# Clone the repo and set up the branch (check out the required branch)
+git clone https://github.com/matter-labs/eravm-airbender-verifier.git
+cd eravm-airbender-verifier
+git checkout <desired_branch> # e.g. popzxc-snark-integrated-properly at the time of writing
+
+# Download artifacts for proving
+git lfs install
+
+# Set up CRS key and stack for SNARK proving
+curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2\^24.key --output setup.key
+ulimit -s unlimited
+
+# Generate FRI proof
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-fri --batch-files 506093.bin.gz --output-dir ./artifacts/proofs
+
+# Generate SNARK proof
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json   --output-dir ./artifacts/proofs --trusted-setup setup.key
+```
+
+Note: `--features snark_gpu` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU.
