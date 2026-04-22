@@ -67,6 +67,9 @@ struct ProveSnarkArgs {
 
     #[arg(long)]
     use_zk: bool,
+
+    #[arg(long)]
+    save_intermediates: bool,
 }
 
 impl BatchSelectionArgs {
@@ -100,6 +103,7 @@ fn main() -> Result<()> {
                 worker_threads: args.worker_threads,
                 trusted_setup: args.trusted_setup,
                 use_zk: args.use_zk,
+                save_intermediates: args.save_intermediates,
             };
             wrap_to_snark(&args.proof_files, &args.output_dir, &snark_options)
         }
@@ -114,4 +118,37 @@ fn init_tracing() -> Result<()> {
         .with_target(false)
         .try_init()
         .map_err(|err| anyhow::anyhow!("while attempting to initialize tracing subscriber: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn prove_snark_parses_save_intermediates_flag() {
+        let cli = Cli::try_parse_from([
+            "eravm-prover-host",
+            "prove-snark",
+            "--proof-files",
+            "./artifacts/proofs/batch-42/fri_proof.json",
+            "--output-dir",
+            "./artifacts/proofs",
+            "--save-intermediates",
+        ])
+        .expect("prove-snark arguments should parse");
+
+        match cli.command {
+            Command::ProveSnark(args) => {
+                assert!(args.save_intermediates);
+                assert_eq!(
+                    args.proof_files,
+                    vec![PathBuf::from("./artifacts/proofs/batch-42/fri_proof.json")]
+                );
+                assert_eq!(args.output_dir, PathBuf::from("./artifacts/proofs"));
+            }
+            _ => panic!("expected prove-snark command"),
+        }
+    }
 }
