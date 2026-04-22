@@ -108,7 +108,7 @@ jobs:
         with:
           repository: matter-labs/airbender-platform
           # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 3cb7a8033b5c56cf5eb8daab3b72650f94a9ca52
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
           path: airbender-platform
 
       - name: Install linux packages
