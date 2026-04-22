@@ -135,12 +135,24 @@ where
         zksync_vm_interface::storage::StoragePtr<VerifierStorageView>,
     ) -> VM,
 {
-    let old_root_hash = input.l1_batch_env.previous_batch_hash.unwrap();
+    let old_root_hash = input
+        .l1_batch_env
+        .previous_batch_hash
+        .context("previous_batch_hash is missing — genesis batches are not supported")?;
     let enumeration_index = input.merkle_paths.next_enumeration_index();
     let batch_number = input.l1_batch_env.number;
     let initial_heap_content = input.vm_run_data.initial_heap_content.clone();
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
+    if full_verification {
+        anyhow::ensure!(
+            zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
+            "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
+             the resulting commitment would never match L1 settlement",
+            zk_porter_available,
+            zksync_system_constants::ZKPORTER_IS_AVAILABLE,
+        );
+    }
     let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
     let default_aa_code_hash = u256_to_h256(input.vm_run_data.default_account_code_hash);
     let evm_emulator_code_hash = input
@@ -214,14 +226,24 @@ where
         .into_iter();
 
     // Build the storage snapshot with real enumeration indices from the Merkle witness.
-    // Reads get `Some((value, enum_idx))` where enum_idx is the pre-batch leaf index
-    // (0 if the slot has no prior write). Initial-write slots override with `None`.
+    // `StorageSnapshot::new`'s contract:
+    //   * `None`                   — slot is empty (no prior write, value is zero).
+    //   * `Some((value, enum_idx))` — slot has `value` at leaf `enum_idx`.
+    //   * `Some((value, 0))`       — mid-batch write where value is known but the
+    //                                 enum index has not been materialized yet.
+    // We must emit `None` for reads of never-written zero slots or the snapshot's
+    // own invariants are violated (and serialization bloats with phantom entries).
     let storage =
         read_storage_ops
             .map(|(key, value)| {
                 let hashed = key.hashed_key();
                 let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
-                (hashed, Some((value, enum_idx)))
+                let entry = if enum_idx == 0 && value == H256::zero() {
+                    None
+                } else {
+                    Some((value, enum_idx))
+                };
+                (hashed, entry)
             })
             .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
                 initial_write.then_some((key.hashed_key(), None))

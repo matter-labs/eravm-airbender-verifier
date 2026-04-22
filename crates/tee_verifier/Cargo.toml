@@ -18,6 +18,7 @@ test-utils = []
 zksync_crypto_primitives.workspace = true
 zksync_merkle_tree = { workspace = true, default-features = false }
 zksync_multivm.workspace = true
+zksync_system_constants.workspace = true
 zksync_types.workspace = true
 zksync_vm_interface.workspace = true
 

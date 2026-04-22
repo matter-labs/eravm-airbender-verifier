@@ -5472,6 +5472,7 @@ dependencies = [
  "zksync_crypto_primitives",
  "zksync_merkle_tree",
  "zksync_multivm",
+ "zksync_system_constants",
  "zksync_tee_verifier",
  "zksync_types",
  "zksync_vm_interface",

@@ -243,9 +243,15 @@ fn frame_v2_input(v2: zksync_tee_verifier::types::TeeVerifierInput) -> Result<Ve
 
 /// Load and deserialize a TeeVerifierInput from a batch file.
 fn load_verifier_input(batch_path: &Path) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+    let parent_dir = batch_path.parent().with_context(|| {
+        format!(
+            "batch path {} has no parent directory",
+            batch_path.display()
+        )
+    })?;
     let framed_words = load_batch_words(
         &zksync_cli_utils::resolve_batch_inputs(
-            batch_path.parent().unwrap(),
+            parent_dir,
             Some(&[batch_path.to_path_buf()]),
             false,
         )?[0],
@@ -339,12 +345,18 @@ fn crosscheck_commitment(
         result.pass_through_data_hash,
         seq_hashes.pass_through_data
     );
-    anyhow::ensure!(
-        result.metadata_hash == seq_hashes.meta_parameters,
-        "metadataHash mismatch: guest {:?} vs sequencer {:?}",
-        result.metadata_hash,
-        seq_hashes.meta_parameters
-    );
+    // The sequencer's `L1BatchMetaParameters::to_bytes()` differs from the L1 contract
+    // encoding when `evm_emulator_code_hash` is `None` (sequencer falls back to
+    // `default_aa`; L1 uses zero) or pre-1.5.0 protocols (sequencer truncates to 64 bytes).
+    // Only cross-check when both ends agree — modern protocol with an explicit emulator.
+    if evm_emulator_code_hash.is_some() && protocol_version.is_post_1_5_0() {
+        anyhow::ensure!(
+            result.metadata_hash == seq_hashes.meta_parameters,
+            "metadataHash mismatch: guest {:?} vs sequencer {:?}",
+            result.metadata_hash,
+            seq_hashes.meta_parameters
+        );
+    }
 
     // system_logs_hash + state_diff_hash independently.
     let ind_logs_hash = H256(keccak256(&serialize_commitments(&result.system_logs)));

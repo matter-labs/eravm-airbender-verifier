@@ -13,7 +13,7 @@ use zksync_tee_verifier::Verify;
 /// Uses bincode v2 (matching the host and vm_compare tooling).
 fn load_batch(path: &Path) -> TeeVerifierInput {
     // Decompress if .gz
-    let raw_text = if path.extension().is_some_and(|e| e == "gz") {
+    let raw_text = if path.extension().and_then(|e| e.to_str()) == Some("gz") {
         let compressed = std::fs::read(path).expect("failed to read batch file");
         let mut decoder = flate2::read::GzDecoder::new(&compressed[..]);
         let mut text = String::new();

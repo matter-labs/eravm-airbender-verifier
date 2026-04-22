@@ -15,6 +15,7 @@
 //! pipeline end-to-end; for byte-for-byte L1 equivalence, pin values against real
 //! sequencer output.
 
+use anyhow::Context;
 use zksync_types::{web3::keccak256, H256};
 
 use crate::commitment::{
@@ -47,7 +48,9 @@ pub fn v1_to_v2_with_real_blobs(v1: V1TeeVerifierInput) -> anyhow::Result<V2TeeV
     // Compute a self-consistent prev_batch_commitment from old_root_hash and
     // enumeration_index so that the prev_batch_commitment binding check passes.
     // In production these come from L1; for tests we derive them from the V1 input.
-    let old_root_hash = v1.l1_batch_env.previous_batch_hash.unwrap();
+    let old_root_hash = v1.l1_batch_env.previous_batch_hash.context(
+        "previous_batch_hash is missing — genesis batches are not supported by this helper",
+    )?;
     let enumeration_index = v1.merkle_paths.next_enumeration_index();
     let prev_meta_hash = H256::zero();
     let prev_aux_hash = H256::zero();
