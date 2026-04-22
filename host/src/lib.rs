@@ -187,8 +187,9 @@ mod tests {
 
     #[test]
     fn batch_number_from_exported_fri_proof_path_reads_standard_layout() {
-        let batch_number =
-            batch_number_from_exported_fri_proof_path(Path::new("/tmp/input/batch-42/fri_proof.json"));
+        let batch_number = batch_number_from_exported_fri_proof_path(Path::new(
+            "/tmp/input/batch-42/fri_proof.json",
+        ));
         assert_eq!(batch_number, Some(42));
     }
 
