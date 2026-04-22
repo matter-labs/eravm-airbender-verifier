@@ -92,57 +92,6 @@ pub fn prove_batches_fri(
     Ok(())
 }
 
-pub fn prove_batches_fri_then_snark(
-    batch_inputs: &[BatchInputFile],
-    worker_threads: Option<usize>,
-    output_root: &Path,
-    snark_options: &SnarkOptions,
-) -> Result<()> {
-    let pipeline = FriPipeline::new(worker_threads)?;
-    let mut statistics = StatisticsCollector::default();
-
-    for (index, batch_input) in batch_inputs.iter().enumerate() {
-        let input_words = load_batch_words(batch_input).with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
-        let proof_artifact = pipeline
-            .prove_batch(batch_input.number, &input_words)
-            .with_context(|| {
-                format!(
-                    "while attempting to prove batch {} from {}",
-                    batch_input.number,
-                    batch_input.path.display()
-                )
-            })?;
-
-        let output_dir = batch_output_dir(output_root, batch_input.number);
-        prove_snark(proof_artifact.proof, snark_options, &output_dir).with_context(|| {
-            format!(
-                "while attempting to wrap batch {} from {} into a SNARK",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
-
-        statistics.add_sample(proof_artifact.proving_time, proof_artifact.cycles);
-        info!(
-            batch_number = batch_input.number,
-            batch_file = %batch_input.path.display(),
-            output_dir = %output_dir.display(),
-            completed_batches = index + 1,
-            total_batches = batch_inputs.len(),
-            "Successfully generated FRI and SNARK proofs"
-        );
-        statistics.print_stats();
-    }
-
-    Ok(())
-}
-
 pub fn wrap_to_snark(
     proof_files: &[PathBuf],
     output_root: &Path,

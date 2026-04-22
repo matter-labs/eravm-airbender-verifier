@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use eravm_prover_host::{
-    prove_batches_fri, prove_batches_fri_then_snark, run_batches, wrap_to_snark, SnarkOptions,
-};
+use eravm_prover_host::{prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions};
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
 
@@ -18,7 +16,6 @@ enum Command {
     Run(RunArgs),
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
-    ProveBoth(ProveBothArgs),
 }
 
 #[derive(Debug, Args)]
@@ -72,24 +69,6 @@ struct ProveSnarkArgs {
     use_zk: bool,
 }
 
-#[derive(Debug, Args)]
-struct ProveBothArgs {
-    #[command(flatten)]
-    batch_selection: BatchSelectionArgs,
-
-    #[arg(long)]
-    output_dir: PathBuf,
-
-    #[arg(long)]
-    worker_threads: Option<usize>,
-
-    #[arg(long)]
-    trusted_setup: Option<PathBuf>,
-
-    #[arg(long)]
-    use_zk: bool,
-}
-
 impl BatchSelectionArgs {
     fn resolve(&self) -> Result<Vec<BatchInputFile>> {
         let batches_dir = self.batches_dir.canonicalize().with_context(|| {
@@ -123,20 +102,6 @@ fn main() -> Result<()> {
                 use_zk: args.use_zk,
             };
             wrap_to_snark(&args.proof_files, &args.output_dir, &snark_options)
-        }
-        Command::ProveBoth(args) => {
-            let batch_inputs = args.batch_selection.resolve()?;
-            let snark_options = SnarkOptions {
-                worker_threads: args.worker_threads,
-                trusted_setup: args.trusted_setup,
-                use_zk: args.use_zk,
-            };
-            prove_batches_fri_then_snark(
-                &batch_inputs,
-                args.worker_threads,
-                &args.output_dir,
-                &snark_options,
-            )
         }
     }
 }
