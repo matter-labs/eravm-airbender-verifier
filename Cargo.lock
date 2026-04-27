@@ -6,7 +6,6 @@ version = 4
 name = "add_sub_lui_auipc_mop"
 version = "0.1.0"
 source = "git+https://github.com/matter-labs/zksync-airbender.git?branch=dev#591efe90f1a5f0e0cfe23ac366bf0fc221fbfe0a"
-source = "git+https://github.com/matter-labs/zksync-airbender.git?branch=dev#591efe90f1a5f0e0cfe23ac366bf0fc221fbfe0a"
 dependencies = [
  "common_constants",
  "prover",
@@ -994,7 +993,7 @@ dependencies = [
 [[package]]
 name = "circuit_mersenne_field"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=popzxc-wrapper-interface#cb90ce852dd2735996b72dcdc02d164692def278"
+source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=popzxc-wrapper-interface#e864d874770951d9c40e38547d878fba778116c9"
 dependencies = [
  "boojum",
  "field",
@@ -1662,7 +1661,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2648,7 +2647,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3569,7 +3568,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4087,7 +4086,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4704,7 +4703,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5133,7 +5132,7 @@ dependencies = [
 [[package]]
 name = "zkos-wrapper"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=popzxc-wrapper-interface#cb90ce852dd2735996b72dcdc02d164692def278"
+source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=popzxc-wrapper-interface#e864d874770951d9c40e38547d878fba778116c9"
 dependencies = [
  "anyhow",
  "blake2_with_compression_verifier",
