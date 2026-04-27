@@ -13,10 +13,9 @@ const HASH_LEN: usize = 32;
 
 /// Number of blob hash/commitment pairs in the auxiliary output.
 ///
-/// Must stay in sync with the L1 source of truth:
-/// `era-contracts/l1-contracts/contracts/state-transition/chain-interfaces/IExecutor.sol:55`
-/// (`uint256 constant TOTAL_BLOBS_IN_COMMITMENT = 16;`).
-/// `test_total_blobs_in_commitment_matches_l1` pins the value.
+/// Must stay in sync with the L1 source of truth: `IExecutor.sol`'s
+/// `TOTAL_BLOBS_IN_COMMITMENT`. `test_total_blobs_in_commitment_matches_l1`
+/// pins the value.
 pub const TOTAL_BLOBS_IN_COMMITMENT: usize = 16;
 
 #[cfg(test)]

@@ -25,22 +25,26 @@ use crate::types::{
     CommitmentInput, V1TeeVerifierInput, V2TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
-/// Build a `V2TeeVerifierInput` from a V1 input by running a preliminary VM pass to
-/// obtain pubdata, then synthesising a self-consistent `CommitmentInput`.
+/// Augment a V1 input with a **synthetic** `CommitmentInput` so that the verifier
+/// pipeline can be exercised end-to-end without real sequencer/L1 inputs.
 ///
-/// - `blob_linear_hashes` are **real**: computed from the VM's pubdata.
-/// - `blob_versioned_hashes` and `blob_opening_commitments` are **synthetic**: fabricated
-///   deterministically so the blob opening check passes end-to-end.
+/// What's produced:
+/// - `blob_linear_hashes` are derived from the VM's pubdata (real, in the sense that
+///   they match what the VM actually emitted).
+/// - `blob_versioned_hashes` and `blob_opening_commitments` are fabricated
+///   deterministically so the blob opening check passes.
 /// - `prev_meta_hash` / `prev_aux_hash` are forced to zero, and `prev_batch_commitment`
 ///   is derived from those zeros so the binding check is satisfied tautologically.
 ///
-/// See the module-level docs for why these values do not match real sequencer/L1 inputs.
-/// Only use this for testing the verifier pipeline; L1-settlement equivalence requires
-/// real `CommitmentInput` from the sequencer.
-pub fn v1_to_v2_with_real_blobs(v1: V1TeeVerifierInput) -> anyhow::Result<V2TeeVerifierInput> {
-    // Run full verification without blob checks to get pubdata.
-    let preliminary = crate::execute_for_pubdata(v1.clone())?;
-    let pubdata = preliminary.pubdata_input.as_deref().unwrap_or(&[]);
+/// See the module-level docs for why this is **not** L1-settlement-equivalent.
+/// Only use this for testing the verifier pipeline.
+pub fn augment_with_synthetic_commitment(
+    v1: V1TeeVerifierInput,
+) -> anyhow::Result<V2TeeVerifierInput> {
+    // Run the VM once to obtain pubdata; the resulting state is dropped because
+    // we still need a fresh execution after `commitment_input` is filled in.
+    let preliminary = crate::execute(v1.clone())?;
+    let pubdata = preliminary.pubdata();
     let blob_linear_hashes = compute_blob_linear_hashes(pubdata);
     let (blob_versioned_hashes, blob_opening_commitments) =
         compute_blob_opening_data(pubdata, &blob_linear_hashes);

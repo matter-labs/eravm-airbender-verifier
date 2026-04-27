@@ -1,6 +1,7 @@
 mod fri;
 mod snark;
 mod statistics;
+mod test_utils;
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};

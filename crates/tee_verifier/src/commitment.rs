@@ -23,6 +23,11 @@ use zksync_types::{
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 
+/// `keccak256` of serialized system logs, matching L1's `keccak256(_batch.systemLogs)`.
+pub fn compute_system_logs_hash(system_logs: &[SystemL2ToL1Log]) -> H256 {
+    H256(keccak256(&serialize_commitments(system_logs)))
+}
+
 /// Compute the passthrough data hash for a batch.
 ///
 /// This is used both for the current batch's commitment and for verifying
@@ -61,19 +66,22 @@ pub struct BatchCommitmentOutput {
     /// The proof public input preimage: `keccak256(prev_batch_commitment || current_commitment)`,
     /// packed as 8 big-endian u32 words (`u32[0]` = bytes 0..4 of the hash, `u32[7]` = bytes 28..32).
     ///
-    /// # Wrapper / L1 contract
+    /// # Why the full 256 bits, and why the wrapper drops 32 of them
     ///
-    /// L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` (with
-    /// `PUBLIC_INPUT_SHIFT = 32`, see `era-contracts/.../Executor.sol:712` and
-    /// `era-contracts/.../Config.sol:53`) to the FFLONK verifier — i.e. the high 224 bits
-    /// of the hash, zero-extended to 256 bits.
+    /// The FFLONK verifier on L1 takes a single BN254 scalar as public input, but BN254's
+    /// scalar field is ~254 bits — the full 256-bit `keccak(prev || curr)` doesn't fit.
+    /// L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` with
+    /// `PUBLIC_INPUT_SHIFT = 32` (see `Executor.sol::_getBatchProofPublicInput` and
+    /// `Config.sol`), i.e. the high 224 bits.
     ///
-    /// This field exposes all 256 bits. The Airbender → FFLONK SNARK wrapper is responsible
-    /// for dropping the low 32 bits when forming the single BN254 public input:
-    /// treat `u32[0..7]` as a big-endian 224-bit integer and ignore `u32[7]`.
-    /// This mirrors how Boojum's scheduler emits only the high 28 bytes via
-    /// `NUM_SCHEDULER_PUBLIC_INPUTS=4 × take_by=7` (see
-    /// `zksync-protocol/.../zkevm_circuits/src/scheduler/mod.rs:1511-1527`).
+    /// We expose all 256 bits here for two reasons: (a) the STARK public output is
+    /// byte-shaped, so the natural emission is the full hash; (b) keeping the unshifted
+    /// hash decouples the guest from the wrapper circuit's field-size constraint — if
+    /// the wrapper later switches curve or scalar size, only the wrapper changes.
+    ///
+    /// The Airbender → FFLONK wrapper drops the low 32 bits when forming the BN254
+    /// public input: treat `u32[0..7]` as a big-endian 224-bit integer and ignore
+    /// `u32[7]`. This mirrors Boojum's scheduler, which emits only the high 28 bytes.
     ///
     /// `test_proof_public_input_matches_l1_shift` pins this relationship — any wrapper
     /// or encoding change must update that test.
@@ -100,7 +108,7 @@ pub struct CommitmentData {
     pub evm_emulator_code_hash: H256,
 
     // auxiliaryOutput components
-    pub system_logs: Vec<SystemL2ToL1Log>,
+    pub system_logs_hash: H256,
     pub state_diff_hash: H256,
     pub bootloader_initial_heap: Vec<u8>,
 
@@ -113,7 +121,7 @@ impl CommitmentData {
         let pass_through_data_hash =
             compute_pass_through_data_hash(self.new_enumeration_index, self.new_state_root);
         let metadata_hash = self.compute_metadata_hash();
-        let system_logs_hash = self.compute_system_logs_hash();
+        let system_logs_hash = self.system_logs_hash;
         let bootloader_heap_hash = self.compute_bootloader_heap_hash();
         let state_diff_hash = self.state_diff_hash;
         let auxiliary_output_hash = self.compute_auxiliary_output_hash()?;
@@ -121,7 +129,7 @@ impl CommitmentData {
         let commitment =
             compute_commitment(pass_through_data_hash, metadata_hash, auxiliary_output_hash);
 
-        // Matches `Executor.sol::_getBatchProofPublicInput` at line 712:
+        // Matches `Executor.sol::_getBatchProofPublicInput`:
         //   uint256(keccak256(abi.encodePacked(prev, curr))) >> PUBLIC_INPUT_SHIFT
         // The shift is the wrapper's responsibility — see the doc comment on
         // `BatchCommitmentOutput::proof_public_input`.
@@ -156,13 +164,8 @@ impl CommitmentData {
     /// )
     /// ```
     ///
-    /// Note: this intentionally does **not** mirror the sequencer's reference
-    /// `zksync-era/.../commitment/mod.rs::L1BatchMetaParameters::to_bytes`, which skips
-    /// the EVM emulator hash for pre-1.5.0 protocols (L1 always emits 97 bytes) and, for
-    /// post-1.5.0, replaces `None` emulator hashes with `default_aa_code_hash` (L1 stores
-    /// `bytes32(0)` when the emulator isn't deployed). Those fallbacks are off-chain
-    /// sequencer quirks; L1 — our authoritative target — reads raw storage slots. Both
-    /// converge for mainnet chains that have an EVM emulator deployed.
+    /// Only protocol versions with the EVM emulator deployed are supported, so we
+    /// always emit the full 97-byte form matching L1.
     ///
     /// `zk_porter_available` is sourced from the witness (`SystemEnv`); the sequencer
     /// must set it to match L1's `ZKPORTER_IS_AVAILABLE` constant or the commitment will
@@ -189,7 +192,7 @@ impl CommitmentData {
     /// )
     /// ```
     fn compute_auxiliary_output_hash(&self) -> anyhow::Result<H256> {
-        let system_logs_hash = self.compute_system_logs_hash();
+        let system_logs_hash = self.system_logs_hash;
         let bootloader_heap_hash = self.compute_bootloader_heap_hash();
 
         // Layout: 4 × 32-byte sub-hashes + TOTAL_BLOBS_IN_COMMITMENT × 64-byte blob pairs.
@@ -206,12 +209,6 @@ impl CommitmentData {
         self.append_blob_auxiliary_output(&mut data)?;
 
         Ok(H256(keccak256(&data)))
-    }
-
-    /// `keccak256` of serialized system logs, matching L1's `keccak256(_batch.systemLogs)`.
-    fn compute_system_logs_hash(&self) -> H256 {
-        let serialized = serialize_commitments(&self.system_logs);
-        H256(keccak256(&serialized))
     }
 
     /// Blake2s hash of the full expanded bootloader heap.
@@ -440,7 +437,7 @@ mod tests {
             bootloader_code_hash: H256([0x11; 32]),
             default_aa_code_hash: H256([0x22; 32]),
             evm_emulator_code_hash: H256([0x33; 32]),
-            system_logs: vec![],
+            system_logs_hash: compute_system_logs_hash(&[]),
             state_diff_hash: H256([0x44; 32]),
             bootloader_initial_heap: vec![0u8; 64], // 2 words of zeros
             commitment_input: CommitmentInput {
@@ -464,7 +461,7 @@ mod tests {
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),
             evm_emulator_code_hash: H256::zero(),
-            system_logs: vec![],
+            system_logs_hash: compute_system_logs_hash(&[]),
             state_diff_hash: H256::zero(),
             bootloader_initial_heap: vec![],
             commitment_input: CommitmentInput::default(),

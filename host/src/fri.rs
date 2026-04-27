@@ -80,7 +80,7 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
-        let v2 = load_v2_with_real_blobs(batch_path)
+        let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
             .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
         let prover_input = frame_v2_input(zksync_tee_verifier::types::TeeVerifierInput::V2(v2))?;
 
@@ -152,7 +152,7 @@ pub(crate) fn run_batch(
     batch_path: &Path,
 ) -> Result<()> {
     // Load batch and compute real CommitmentInput (blob hashes from pubdata).
-    let v2 = load_v2_with_real_blobs(batch_path)
+    let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
         .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
 
     // Run native verification with real blob data.
@@ -205,26 +205,6 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Load a V1 batch and build a V2 input with a **test-only** synthetic
-/// `CommitmentInput`: real blob linear hashes from pubdata, fabricated
-/// versioned hashes / opening commitments, zero prev_meta/prev_aux. See
-/// `zksync_tee_verifier::test_utils` module docs — the resulting
-/// `proof_public_input` is **not** L1-settlement-equivalent, only
-/// pipeline-equivalent between native, transpiler, and prover here.
-fn load_v2_with_real_blobs(
-    batch_path: &Path,
-) -> Result<zksync_tee_verifier::types::V2TeeVerifierInput> {
-    use zksync_tee_verifier::types::TeeVerifierInput;
-
-    let v1_input = load_verifier_input(batch_path)?;
-    let TeeVerifierInput::V1(v1) = v1_input else {
-        anyhow::bail!("expected TeeVerifierInput::V1");
-    };
-
-    zksync_tee_verifier::test_utils::v1_to_v2_with_real_blobs(v1)
-        .context("failed to compute real blob data")
-}
-
 /// Frame a TeeVerifierInput as words for the transpiler/prover.
 fn frame_v2_input(v2: zksync_tee_verifier::types::TeeVerifierInput) -> Result<Vec<u32>> {
     let encoded = bincode::serde::encode_to_vec(&v2, bincode::config::standard())
@@ -242,7 +222,9 @@ fn frame_v2_input(v2: zksync_tee_verifier::types::TeeVerifierInput) -> Result<Ve
 }
 
 /// Load and deserialize a TeeVerifierInput from a batch file.
-fn load_verifier_input(batch_path: &Path) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+pub(crate) fn load_verifier_input(
+    batch_path: &Path,
+) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
     let parent_dir = batch_path.parent().with_context(|| {
         format!(
             "batch path {} has no parent directory",

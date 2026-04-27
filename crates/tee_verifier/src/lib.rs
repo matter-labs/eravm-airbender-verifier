@@ -1,11 +1,9 @@
 //! Tee verifier
 //!
-//! Verifies that a L1Batch has the expected root hash after
-//! executing the VM and verifying all the accessed memory slots by their
-//! merkle path.
-//!
-//! When used with Airbender, the verifier also computes the Era VM batch
-//! commitment and returns a proof public input hash for L1 settlement.
+//! Verifies that a L1Batch has the expected root hash after executing the VM
+//! and verifying all the accessed memory slots by their merkle path, and
+//! computes the Era VM batch commitment together with the proof public input
+//! hash that the Airbender → FFLONK wrapper feeds to L1 settlement.
 
 pub mod commitment;
 #[cfg(any(test, feature = "test-utils"))]
@@ -78,55 +76,62 @@ pub trait Verify {
 }
 
 impl Verify for V2TeeVerifierInput {
-    /// Verify execution and compute the batch commitment.
+    /// Run the VM, verify the new state root, and compute the batch commitment.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        anyhow::ensure!(
-            is_supported_by_fast_vm(self.v1.system_env.version),
-            "Protocol version {:?} is not supported by FastVM tee verifier",
-            self.v1.system_env.version
-        );
-
-        verify_with_vm(
-            self.v1,
-            self.commitment_input,
-            true, // full verification in production
-            |l1_batch_env, system_env, storage_view| {
-                FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-            },
-        )
+        let state = execute(self.v1)?;
+        verify_commitment(state, self.commitment_input)
     }
 }
 
-/// Execute batch and return pubdata without blob verification.
-/// Used by test_utils to compute blob data before real verification.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn execute_for_pubdata(v1: V1TeeVerifierInput) -> anyhow::Result<VerificationResult> {
+/// Run the VM, verify the new state root via merkle proofs, and return the
+/// intermediate state needed to compute the batch commitment.
+///
+/// This does not run any commitment-input-dependent checks (prev binding,
+/// blob verification). Test code can call this to obtain pubdata, then build
+/// a `CommitmentInput` and pass the state to [`verify_commitment`].
+pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
-        is_supported_by_fast_vm(v1.system_env.version),
-        "unsupported protocol version: {:?}",
-        v1.system_env.version
+        is_supported_by_fast_vm(input.system_env.version),
+        "Protocol version {:?} is not supported by FastVM tee verifier",
+        input.system_env.version
     );
 
-    verify_with_vm(
-        v1,
-        CommitmentInput::default(),
-        false, // skip commitment verification — we're just getting pubdata
-        |l1_batch_env, system_env, storage_view| {
-            FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-        },
-    )
+    execute_inner(input, |l1_batch_env, system_env, storage_view| {
+        FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
+    })
 }
 
 type VerifierStorage = StorageSnapshot;
 type VerifierStorageView = StorageView<VerifierStorage>;
 type FastVerifierVm = FastVmInstance<VerifierStorage>;
 
-fn verify_with_vm<VM, F>(
-    input: V1TeeVerifierInput,
-    commitment_input: CommitmentInput,
-    full_verification: bool,
-    make_vm: F,
-) -> anyhow::Result<VerificationResult>
+/// Intermediate state after VM execution and merkle proof verification,
+/// before any commitment-input-dependent checks.
+pub struct VmExecutionState {
+    batch_number: zksync_types::L1BatchNumber,
+    old_root_hash: H256,
+    prev_enumeration_index: u64,
+    new_root_hash: H256,
+    new_enumeration_index: u64,
+    system_logs: Vec<zksync_types::l2_to_l1_log::SystemL2ToL1Log>,
+    state_diffs: Vec<StateDiffRecord>,
+    pubdata_input: Option<Vec<u8>>,
+    expanded_heap: Vec<u8>,
+    zk_porter_available: bool,
+    bootloader_code_hash: H256,
+    default_aa_code_hash: H256,
+    evm_emulator_code_hash: H256,
+}
+
+impl VmExecutionState {
+    /// Pubdata produced by the VM. Empty when the VM did not emit a pubdata
+    /// input (e.g. pre-gateway protocols).
+    pub fn pubdata(&self) -> &[u8] {
+        self.pubdata_input.as_deref().unwrap_or(&[])
+    }
+}
+
+fn execute_inner<VM, F>(input: V1TeeVerifierInput, make_vm: F) -> anyhow::Result<VmExecutionState>
 where
     VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
     F: FnOnce(
@@ -144,15 +149,6 @@ where
     let initial_heap_content = input.vm_run_data.initial_heap_content.clone();
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
-    if full_verification {
-        anyhow::ensure!(
-            zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
-            "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
-             the resulting commitment would never match L1 settlement",
-            zk_porter_available,
-            zksync_system_constants::ZKPORTER_IS_AVAILABLE,
-        );
-    }
     let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
     let default_aa_code_hash = u256_to_h256(input.vm_run_data.default_account_code_hash);
     let evm_emulator_code_hash = input
@@ -160,26 +156,6 @@ where
         .evm_emulator_code_hash
         .map(u256_to_h256)
         .unwrap_or_default();
-
-    // Verify that prev_batch_commitment is consistent with old_root_hash.
-    // This binds the previous state root to the previous commitment inside the proof,
-    // preventing a malicious operator from supplying a correct prev_batch_commitment
-    // with a fake old_root_hash. Matches Boojum's scheduler circuit behavior.
-    if full_verification {
-        let prev_passthrough =
-            commitment::compute_pass_through_data_hash(enumeration_index, old_root_hash);
-        let expected_prev_commitment = commitment::compute_commitment(
-            prev_passthrough,
-            commitment_input.prev_meta_hash,
-            commitment_input.prev_aux_hash,
-        );
-        anyhow::ensure!(
-            expected_prev_commitment == commitment_input.prev_batch_commitment,
-            "prev_batch_commitment binding failed: recomputed {expected_prev_commitment:?} \
-             != claimed {:?}. old_root_hash={old_root_hash:?}, enumeration_index={enumeration_index}",
-            commitment_input.prev_batch_commitment,
-        );
-    }
 
     // Build a mapping from hashed storage key → real enumeration index from the
     // Merkle proof witness. This is needed so that FinishedL1Batch.state_diffs
@@ -302,43 +278,21 @@ where
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
     let vm = make_vm(input.l1_batch_env, input.system_env.clone(), storage_view);
 
-    let vm_out = execute_vm(
+    let mut vm_out = execute_vm(
         input.l2_blocks_execution_data,
         vm,
         input.pubdata_params,
         input.system_env.version,
     )?;
 
-    // Extract data before consuming vm_out for tree instructions.
-    let system_logs = vm_out.final_execution_state.system_logs.clone();
-    let pubdata_input = vm_out.pubdata_input.clone();
+    // Take fields out of vm_out before generate_tree_instructions consumes it.
+    // The tree-instructions path only reads final_execution_state.deduplicated_storage_logs.
+    let system_logs = std::mem::take(&mut vm_out.final_execution_state.system_logs);
+    let pubdata_input = vm_out.pubdata_input.take();
     let state_diffs = vm_out
         .state_diffs
-        .clone()
+        .take()
         .context("state_diffs missing from VM output — required for commitment")?;
-    let state_diff_hash = compute_state_diff_hash(&state_diffs);
-
-    // Verify blob hashes against pubdata produced by execution.
-    // In Boojum, both linear hashes and opening commitments were verified by a
-    // dedicated EIP4844Repack sub-circuit inside the scheduler.
-    //
-    // Blob verification is mandatory when `full_verification` is set: otherwise the
-    // operator-supplied `blob_linear_hashes` / `blob_opening_commitments` would flow
-    // into `auxiliary_output_hash` unchecked. Post-gateway VMs always populate
-    // `pubdata_input`; if it is missing here, treat it as a malformed input.
-    if full_verification {
-        let pubdata = vm_out.pubdata_input.as_deref().context(
-            "VM output is missing pubdata_input — required for blob verification \
-             when full_verification is enabled",
-        )?;
-        verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
-        commitment::verify_blob_opening_commitments(
-            pubdata,
-            &commitment_input.blob_versioned_hashes,
-            &commitment_input.blob_linear_hashes,
-            &commitment_input.blob_opening_commitments,
-        )?;
-    }
 
     let block_output_with_proofs = get_bowp(input.merkle_paths)?;
 
@@ -360,40 +314,114 @@ where
         .count() as u64;
     let new_enumeration_index = enumeration_index + num_insertions;
 
-    // Expand bootloader heap and compute the batch commitment.
+    // Expand bootloader heap; needed by commitment computation downstream.
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
     let expanded_heap = expand_bootloader_heap(&initial_heap_content, bootloader_memory_size);
 
-    let commitment_data = CommitmentData {
-        new_state_root: new_root_hash,
+    Ok(VmExecutionState {
+        batch_number,
+        old_root_hash,
+        prev_enumeration_index: enumeration_index,
+        new_root_hash,
         new_enumeration_index,
+        system_logs,
+        state_diffs,
+        pubdata_input,
+        expanded_heap,
         zk_porter_available,
         bootloader_code_hash,
         default_aa_code_hash,
         evm_emulator_code_hash,
-        system_logs: system_logs.clone(),
+    })
+}
+
+/// Run commitment-input-dependent checks (zk_porter sanity, prev-batch binding,
+/// blob verification) against the post-execution state, then compute the batch
+/// commitment and the proof public input.
+pub fn verify_commitment(
+    state: VmExecutionState,
+    commitment_input: CommitmentInput,
+) -> anyhow::Result<VerificationResult> {
+    anyhow::ensure!(
+        state.zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
+        "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
+         the resulting commitment would never match L1 settlement",
+        state.zk_porter_available,
+        zksync_system_constants::ZKPORTER_IS_AVAILABLE,
+    );
+
+    // Verify that prev_batch_commitment is consistent with old_root_hash.
+    // This binds the previous state root to the previous commitment inside the proof,
+    // preventing a malicious operator from supplying a correct prev_batch_commitment
+    // with a fake old_root_hash. Matches Boojum's scheduler circuit behavior.
+    let prev_passthrough = commitment::compute_pass_through_data_hash(
+        state.prev_enumeration_index,
+        state.old_root_hash,
+    );
+    let expected_prev_commitment = commitment::compute_commitment(
+        prev_passthrough,
+        commitment_input.prev_meta_hash,
+        commitment_input.prev_aux_hash,
+    );
+    anyhow::ensure!(
+        expected_prev_commitment == commitment_input.prev_batch_commitment,
+        "prev_batch_commitment binding failed: recomputed {expected_prev_commitment:?} \
+         != claimed {:?}. old_root_hash={:?}, enumeration_index={}",
+        commitment_input.prev_batch_commitment,
+        state.old_root_hash,
+        state.prev_enumeration_index,
+    );
+
+    // Verify blob hashes against pubdata produced by execution.
+    // In Boojum, both linear hashes and opening commitments were verified by a
+    // dedicated EIP4844Repack sub-circuit inside the scheduler. Post-gateway VMs
+    // always populate `pubdata_input`; if it is missing here, treat it as a
+    // malformed input.
+    let pubdata = state
+        .pubdata_input
+        .as_deref()
+        .context("VM output is missing pubdata_input — required for blob verification")?;
+    verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
+    commitment::verify_blob_opening_commitments(
+        pubdata,
+        &commitment_input.blob_versioned_hashes,
+        &commitment_input.blob_linear_hashes,
+        &commitment_input.blob_opening_commitments,
+    )?;
+
+    let system_logs_hash = commitment::compute_system_logs_hash(&state.system_logs);
+    let state_diff_hash = compute_state_diff_hash(&state.state_diffs);
+
+    let commitment_data = CommitmentData {
+        new_state_root: state.new_root_hash,
+        new_enumeration_index: state.new_enumeration_index,
+        zk_porter_available: state.zk_porter_available,
+        bootloader_code_hash: state.bootloader_code_hash,
+        default_aa_code_hash: state.default_aa_code_hash,
+        evm_emulator_code_hash: state.evm_emulator_code_hash,
+        system_logs_hash,
         state_diff_hash,
-        bootloader_initial_heap: expanded_heap,
+        bootloader_initial_heap: state.expanded_heap,
         commitment_input,
     };
 
     let commitment_output = commitment_data.compute()?;
 
     Ok(VerificationResult {
-        value_hash: new_root_hash,
-        batch_number,
+        value_hash: state.new_root_hash,
+        batch_number: state.batch_number,
         proof_public_input: commitment_output.proof_public_input,
         commitment: commitment_output.commitment,
-        new_enumeration_index,
+        new_enumeration_index: state.new_enumeration_index,
         pass_through_data_hash: commitment_output.pass_through_data_hash,
         metadata_hash: commitment_output.metadata_hash,
         auxiliary_output_hash: commitment_output.auxiliary_output_hash,
         system_logs_hash: commitment_output.system_logs_hash,
         state_diff_hash: commitment_output.state_diff_hash,
         bootloader_heap_hash: commitment_output.bootloader_heap_hash,
-        system_logs,
-        state_diffs,
-        pubdata_input,
+        system_logs: state.system_logs,
+        state_diffs: state.state_diffs,
+        pubdata_input: state.pubdata_input,
     })
 }
 
@@ -406,7 +434,7 @@ where
 /// The storage snapshot must be set up with real enumeration indices (from the Merkle
 /// witness) so that `FinishedL1Batch.state_diffs` contains correct values.
 ///
-/// Matches `zksync-era/core/lib/types/src/commitment/mod.rs:424-425`.
+/// Matches the sequencer's `L1BatchAuxiliaryOutput::state_diff_hash` derivation.
 fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
     H256(keccak256(&serialize_commitments(state_diffs)))
 }
@@ -970,7 +998,7 @@ mod tests {
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),
             evm_emulator_code_hash: H256::zero(),
-            system_logs: vec![],
+            system_logs_hash: commitment::compute_system_logs_hash(&[]),
             state_diff_hash: H256::zero(),
             bootloader_initial_heap: vec![],
             commitment_input: CommitmentInput {
