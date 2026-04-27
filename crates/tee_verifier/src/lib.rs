@@ -146,7 +146,6 @@ where
         .context("previous_batch_hash is missing — genesis batches are not supported")?;
     let enumeration_index = input.merkle_paths.next_enumeration_index();
     let batch_number = input.l1_batch_env.number;
-    let initial_heap_content = input.vm_run_data.initial_heap_content.clone();
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
     let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
@@ -157,16 +156,11 @@ where
         .map(u256_to_h256)
         .unwrap_or_default();
 
-    // Build a mapping from hashed storage key → real enumeration index from the
-    // Merkle proof witness. This is needed so that FinishedL1Batch.state_diffs
-    // contains correct enumeration indices for state diff hash computation.
-    // The leaf_hashed_key in StorageLogMetadata is a U256 (little-endian convention),
-    // which we convert to H256 to match the StorageSnapshot key format.
-    //
-    // A leaf_hashed_key may appear in multiple merkle-path entries (e.g. a slot that is
-    // both read and written in the batch). All such entries must carry the same
-    // leaf_enumeration_index at any single point in time; disagreement means the witness
-    // is malformed.
+    // Map hashed storage key → enumeration index, sourced from the Merkle witness.
+    // Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
+    // state-diff hash. A key that appears in multiple merkle-path entries (read+write
+    // in the same batch) must agree on its enum index — disagreement means a malformed
+    // witness.
     let mut enum_index_map: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
     for log in input
         .merkle_paths
@@ -201,14 +195,8 @@ where
         .is_write_initial
         .into_iter();
 
-    // Build the storage snapshot with real enumeration indices from the Merkle witness.
-    // `StorageSnapshot::new`'s contract:
-    //   * `None`                   — slot is empty (no prior write, value is zero).
-    //   * `Some((value, enum_idx))` — slot has `value` at leaf `enum_idx`.
-    //   * `Some((value, 0))`       — mid-batch write where value is known but the
-    //                                 enum index has not been materialized yet.
-    // We must emit `None` for reads of never-written zero slots or the snapshot's
-    // own invariants are violated (and serialization bloats with phantom entries).
+    // Reads of never-written zero slots must be encoded as `None`, not `Some((0, 0))`,
+    // or `StorageSnapshot::new` will violate its own invariants and bloat with phantoms.
     let storage =
         read_storage_ops
             .map(|(key, value)| {
@@ -276,13 +264,13 @@ where
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
-    let vm = make_vm(input.l1_batch_env, input.system_env.clone(), storage_view);
+    let vm = make_vm(input.l1_batch_env, input.system_env, storage_view);
 
     let mut vm_out = execute_vm(
         input.l2_blocks_execution_data,
         vm,
         input.pubdata_params,
-        input.system_env.version,
+        protocol_version,
     )?;
 
     // Take fields out of vm_out before generate_tree_instructions consumes it.
@@ -316,7 +304,10 @@ where
 
     // Expand bootloader heap; needed by commitment computation downstream.
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
-    let expanded_heap = expand_bootloader_heap(&initial_heap_content, bootloader_memory_size);
+    let expanded_heap = expand_bootloader_heap(
+        &input.vm_run_data.initial_heap_content,
+        bootloader_memory_size,
+    );
 
     Ok(VmExecutionState {
         batch_number,

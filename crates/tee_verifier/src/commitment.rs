@@ -329,12 +329,9 @@ pub fn verify_blob_opening_commitments(
         let evaluation_point = Bls12_381Fr::from_be_bytes_mod_order(&evaluation_point_bytes);
 
         // Step 2: Evaluate polynomial in-place via Horner's rule.
-        //
-        // The pubdata is a sequence of 31-byte chunks interpreted as polynomial
-        // coefficients starting with the highest-degree one (Boojum convention, see
-        // `zksync-protocol/.../eip_4844/mod.rs:97-98`). Iterating forward and doing
-        // `op = op * x + a` yields `a_n*x^n + a_{n-1}*x^{n-1} + ... + a_0`, same as
-        // the `chunks().rev().collect::<Vec<_>>() + iter().rev()` pattern it replaces.
+        // Pubdata is 31-byte chunks treated as coefficients, highest-degree first
+        // (Boojum convention from `zksync-protocol`'s `eip_4844`). Forward iteration
+        // with `op = op * x + a` yields `a_n*x^n + ... + a_0`.
         let mut opening_value = Bls12_381Fr::zero();
         let mut buf = [0u8; 32];
         for chunk in blob_bytes.chunks(BLOB_CHUNK_SIZE) {
