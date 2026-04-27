@@ -83,7 +83,7 @@ airbender-host = { git = "https://github.com/matter-labs/airbender-platform", br
 airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", branch = "main" } # TODO: Must be pinned before merge
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
-zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "dev" } # TODO: Must be pinned before merge
+zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "popzxc-wrapper-interface" } # TODO: Must be pinned before merge
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airbender-eravm" } # TODO: Must be pinned before merge
 
 # Local dependencies in this workspace
