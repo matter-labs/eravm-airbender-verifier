@@ -152,7 +152,7 @@ git lfs install
 
 # Set up CRS key and stack for SNARK proving
 # IMPORTANT: CPU/GPU use different keys
-curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2\^24.key --output setup.key
+curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2\^24.key --output setup.key &
 curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_compact.key --output setup_gpu.key
 
 ulimit -s unlimited
@@ -162,6 +162,16 @@ RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --featur
 
 # Generate SNARK proof
 RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key
+```
+
+If you need to save intermediate SNARK artifacts:
+
+```bash
+# On CPU
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup.key --save-intermediates
+
+# On GPU
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key --save-intermediates
 ```
 
 Note: `--features snark_gpu` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
