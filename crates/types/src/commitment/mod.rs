@@ -312,8 +312,8 @@ impl SerializeCommitment for StateDiffRecord {
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Serialize, Deserialize))]
 pub struct L1BatchAuxiliaryCommonOutput {
-    l2_l1_logs_merkle_root: H256,
-    protocol_version: ProtocolVersionId,
+    pub l2_l1_logs_merkle_root: H256,
+    pub protocol_version: ProtocolVersionId,
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
@@ -599,15 +599,15 @@ impl L1BatchMetaParameters {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Serialize, Deserialize))]
-struct RootState {
+pub struct RootState {
     pub last_leaf_index: u64,
     pub root_hash: H256,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Serialize, Deserialize))]
-struct L1BatchPassThroughData {
-    shared_states: Vec<RootState>,
+pub struct L1BatchPassThroughData {
+    pub shared_states: Vec<RootState>,
 }
 
 impl L1BatchPassThroughData {

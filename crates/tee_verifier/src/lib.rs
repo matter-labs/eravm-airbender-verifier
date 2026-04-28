@@ -8,7 +8,7 @@
 //! later — the public-input shape is the same either way.)
 
 pub mod commitment;
-#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
 pub mod test_utils;
 pub mod types;
 
@@ -85,32 +85,14 @@ impl Verify for V2TeeVerifierInput {
     }
 }
 
-/// Run the VM, verify the new state root via merkle proofs, and return the
-/// intermediate state needed to compute the batch commitment.
-///
-/// This does not run any commitment-input-dependent checks (prev binding,
-/// blob verification). Test code can call this to obtain pubdata, then build
-/// a `CommitmentInput` and pass the state to [`verify_commitment`].
-pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
-    anyhow::ensure!(
-        is_supported_by_fast_vm(input.system_env.version),
-        "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.system_env.version
-    );
-
-    execute_inner(input, |l1_batch_env, system_env, storage_view| {
-        FastVerifierVm::fast(l1_batch_env, system_env, storage_view)
-    })
-}
-
 type VerifierStorage = StorageSnapshot;
-type VerifierStorageView = StorageView<VerifierStorage>;
 type FastVerifierVm = FastVmInstance<VerifierStorage>;
 
 /// Intermediate state after VM execution and merkle proof verification,
 /// before any commitment-input-dependent checks.
 pub struct VmExecutionState {
     batch_number: zksync_types::L1BatchNumber,
+    protocol_version: ProtocolVersionId,
     old_root_hash: H256,
     prev_enumeration_index: u64,
     new_root_hash: H256,
@@ -133,15 +115,19 @@ impl VmExecutionState {
     }
 }
 
-fn execute_inner<VM, F>(input: V1TeeVerifierInput, make_vm: F) -> anyhow::Result<VmExecutionState>
-where
-    VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
-    F: FnOnce(
-        zksync_vm_interface::L1BatchEnv,
-        zksync_vm_interface::SystemEnv,
-        zksync_vm_interface::storage::StoragePtr<VerifierStorageView>,
-    ) -> VM,
-{
+/// Run the VM, verify the new state root via merkle proofs, and return the
+/// intermediate state needed to compute the batch commitment.
+///
+/// This does not run any commitment-input-dependent checks (prev binding,
+/// blob verification). Test code can call this to obtain pubdata, then build
+/// a `CommitmentInput` and pass the state to [`verify_commitment`].
+pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
+    anyhow::ensure!(
+        is_supported_by_fast_vm(input.system_env.version),
+        "Protocol version {:?} is not supported by FastVM tee verifier",
+        input.system_env.version
+    );
+
     let old_root_hash = input
         .l1_batch_env
         .previous_batch_hash
@@ -150,13 +136,70 @@ where
     let batch_number = input.l1_batch_env.number;
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
-    let bootloader_code_hash = input.system_env.base_system_smart_contracts.bootloader.hash;
-    let default_aa_code_hash = u256_to_h256(input.vm_run_data.default_account_code_hash);
-    let evm_emulator_code_hash = input
-        .vm_run_data
-        .evm_emulator_code_hash
-        .map(u256_to_h256)
+
+    // Source all metadata-bound code hashes from system_env.base_system_smart_contracts.
+    // That's what the VM actually loads — verifying any other copy (vm_run_data's
+    // bootloader_code, default_account_code_hash, evm_emulator_code_hash) leaves a
+    // window for a malicious witness to lie: ship a legitimate bytecode in
+    // vm_run_data while the VM runs a different one from system_env.
+    let base = &input.system_env.base_system_smart_contracts;
+    let bootloader_code_hash = base.bootloader.hash;
+    let default_aa_code_hash = base.default_aa.hash;
+    let evm_emulator_code_hash = base
+        .evm_emulator
+        .as_ref()
+        .map(|e| e.hash)
         .unwrap_or_default();
+
+    // Verify the bytecodes the VM consumes match the hashes that flow into
+    // metadata_hash (and thus the batch commitment). System contracts are
+    // EraVM bytecodes in practice; `verify_bytecode_hash` dispatches on the
+    // marker byte so it works uniformly with user contracts in factory_deps.
+    let h256_to_u256 = |h: H256| U256::from_big_endian(h.as_bytes());
+    verify_bytecode_hash(h256_to_u256(bootloader_code_hash), &base.bootloader.code)
+        .context("verifying bootloader bytecode")?;
+    verify_bytecode_hash(h256_to_u256(default_aa_code_hash), &base.default_aa.code)
+        .context("verifying default_aa bytecode")?;
+    if let Some(emu) = &base.evm_emulator {
+        verify_bytecode_hash(h256_to_u256(evm_emulator_code_hash), &emu.code)
+            .context("verifying evm_emulator bytecode")?;
+    }
+
+    // Enforce that vm_run_data's redundant copies match system_env. The
+    // verifier doesn't *use* these (system_env is the source of truth) but a
+    // mismatch is a malformed witness and we'd rather catch it here than
+    // have it propagate silently.
+    {
+        let vm_run_default_aa = u256_to_h256(input.vm_run_data.default_account_code_hash);
+        anyhow::ensure!(
+            vm_run_default_aa == default_aa_code_hash,
+            "vm_run_data.default_account_code_hash {vm_run_default_aa:?} does not match \
+             system_env.base_system_smart_contracts.default_aa.hash {default_aa_code_hash:?}",
+        );
+
+        let vm_run_evm_emulator = input.vm_run_data.evm_emulator_code_hash.map(u256_to_h256);
+        let env_evm_emulator = base.evm_emulator.as_ref().map(|e| e.hash);
+        anyhow::ensure!(
+            vm_run_evm_emulator == env_evm_emulator,
+            "vm_run_data.evm_emulator_code_hash {vm_run_evm_emulator:?} does not match \
+             system_env.base_system_smart_contracts.evm_emulator hash {env_evm_emulator:?}",
+        );
+
+        let vm_run_bootloader_bytes: Vec<u8> = input
+            .vm_run_data
+            .bootloader_code
+            .iter()
+            .flat_map(|word| word.as_slice())
+            .copied()
+            .collect();
+        anyhow::ensure!(
+            vm_run_bootloader_bytes == base.bootloader.code,
+            "vm_run_data.bootloader_code does not match system_env.base_system_smart_contracts.bootloader.code \
+             (lengths: {} vs {})",
+            vm_run_bootloader_bytes.len(),
+            base.bootloader.code.len(),
+        );
+    }
 
     // Map hashed storage key → enumeration index, sourced from the Merkle witness.
     // Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
@@ -216,26 +259,9 @@ where
             }))
             .collect();
 
-    // Verify the bootloader bytecode matches its claimed hash.
-    // The bootloader is loaded separately from used_bytecodes and orchestrates
-    // all transaction execution — a tampered bootloader would compromise everything.
-    {
-        let bootloader_flat: Vec<u8> = input
-            .vm_run_data
-            .bootloader_code
-            .iter()
-            .flat_map(|word| word.as_slice())
-            .copied()
-            .collect();
-        let computed = BytecodeHash::for_bytecode(&bootloader_flat);
-        anyhow::ensure!(
-            u256_to_h256(computed.value_u256()) == bootloader_code_hash,
-            "bootloader bytecode hash mismatch: claimed {bootloader_code_hash:?}, computed {:?}",
-            u256_to_h256(computed.value_u256()),
-        );
-    }
-
-    // Verify all other bytecode hashes and build factory deps in a single pass.
+    // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
+    // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
+    // system_env, not from factory_deps, so they're verified separately above.
     let factory_deps = input
         .vm_run_data
         .used_bytecodes
@@ -247,26 +273,9 @@ where
         })
         .collect::<anyhow::Result<std::collections::HashMap<H256, Vec<u8>>>>()?;
 
-    // Verify that default_aa and evm_emulator code hashes correspond to verified
-    // bytecodes. These hashes go into metadataHash (and thus the batch commitment).
-    // In Boojum, the code decommitter circuit verifies them when decommitted.
-    // Here, we check they exist in the already-verified factory_deps map.
-    anyhow::ensure!(
-        factory_deps.contains_key(&default_aa_code_hash),
-        "default_aa_code_hash {default_aa_code_hash:?} not found in verified factory deps — \
-         the bytecode must be included in used_bytecodes to verify its hash"
-    );
-    if evm_emulator_code_hash != H256::zero() {
-        anyhow::ensure!(
-            factory_deps.contains_key(&evm_emulator_code_hash),
-            "evm_emulator_code_hash {evm_emulator_code_hash:?} not found in verified factory deps — \
-             the bytecode must be included in used_bytecodes to verify its hash"
-        );
-    }
-
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
-    let vm = make_vm(input.l1_batch_env, input.system_env, storage_view);
+    let vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
 
     let mut vm_out = execute_vm(
         input.l2_blocks_execution_data,
@@ -283,6 +292,13 @@ where
         .state_diffs
         .take()
         .context("state_diffs missing from VM output — required for commitment")?;
+    // The final bootloader memory is what the VM actually executed (initial layout
+    // built from `l1_batch_env` + transactions, plus pubdata appended in-flight).
+    // Hashing the witness's `vm_run_data.initial_heap_content` would let a malicious
+    // proof commit a heap that was never executed; this comes from the VM itself.
+    let final_bootloader_memory = vm_out.final_bootloader_memory.take().context(
+        "VM output is missing final_bootloader_memory — required for the bootloader heap commitment",
+    )?;
 
     let block_output_with_proofs = get_bowp(input.merkle_paths)?;
 
@@ -304,15 +320,14 @@ where
         .count() as u64;
     let new_enumeration_index = enumeration_index + num_insertions;
 
-    // Expand bootloader heap; needed by commitment computation downstream.
+    // Expand the bootloader memory the VM actually executed; needed for the
+    // bootloader heap commitment downstream.
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
-    let expanded_heap = expand_bootloader_heap(
-        &input.vm_run_data.initial_heap_content,
-        bootloader_memory_size,
-    );
+    let expanded_heap = expand_bootloader_heap(&final_bootloader_memory, bootloader_memory_size);
 
     Ok(VmExecutionState {
         batch_number,
+        protocol_version,
         old_root_hash,
         prev_enumeration_index: enumeration_index,
         new_root_hash,
@@ -366,10 +381,18 @@ pub fn verify_commitment(
     );
 
     // Verify blob hashes against pubdata produced by execution.
-    // In Boojum, both linear hashes and opening commitments were verified by a
-    // dedicated EIP4844Repack sub-circuit inside the scheduler. Post-gateway VMs
-    // always populate `pubdata_input`; if it is missing here, treat it as a
-    // malformed input.
+    //
+    // The blob slots self-degenerate for non-Rollup DA modes the same way
+    // Boojum's `EIP4844Repack` does: when a chain uses Validium / NoDA /
+    // external DA, the L2 DA validator emits zero blob hashes for every
+    // slot. `verify_blob_linear_hashes` skips slots whose claimed hash is
+    // zero, and `verify_blob_opening_commitments` skips slots whose claimed
+    // linear hash is zero — so for non-Rollup modes both functions trivially
+    // pass while the auxiliary-output hash still includes the (zero) blob
+    // slots, matching what L1 expects.
+    //
+    // Post-gateway VMs always populate `pubdata_input`; if it is missing
+    // here, treat it as a malformed input.
     let pubdata = state
         .pubdata_input
         .as_deref()
@@ -388,6 +411,7 @@ pub fn verify_commitment(
     let commitment_data = CommitmentData {
         new_state_root: state.new_root_hash,
         new_enumeration_index: state.new_enumeration_index,
+        protocol_version: state.protocol_version,
         zk_porter_available: state.zk_porter_available,
         bootloader_code_hash: state.bootloader_code_hash,
         default_aa_code_hash: state.default_aa_code_hash,
@@ -434,39 +458,37 @@ fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
 
 /// Verify that blob linear hashes match the pubdata produced by VM execution.
 ///
-/// Each blob linear hash is `keccak256` of a `ZK_SYNC_BYTES_PER_BLOB`-sized chunk
-/// of pubdata (zero-padded if the last chunk is shorter). Unused blob slots must
-/// have a zero hash.
-///
-/// In Boojum, this was verified by a dedicated `EIP4844Repack` sub-circuit inside
-/// the scheduler. In Airbender, we verify it directly from the VM's pubdata output.
+/// Mirrors Boojum's `EIP4844Repack` self-degeneration: a slot whose claimed
+/// hash is zero is treated as "no blob in this slot" and skipped (this is
+/// what non-Rollup DA modes always look like). For non-zero claims we
+/// recompute via [`commitment::compute_blob_linear_hashes`] and require an
+/// exact match, plus that pubdata actually has a blob's worth of bytes for
+/// the slot — i.e. we don't accept a non-zero claim on a slot the pubdata
+/// can't back.
 fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) -> anyhow::Result<()> {
+    let computed = commitment::compute_blob_linear_hashes(pubdata);
+    anyhow::ensure!(
+        claimed_hashes.len() <= computed.len(),
+        "claimed blob_linear_hashes length {} exceeds capacity {}",
+        claimed_hashes.len(),
+        computed.len(),
+    );
     let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
-
     for (i, claimed) in claimed_hashes.iter().enumerate() {
-        if i < num_blobs_from_pubdata {
-            let start = i * ZK_SYNC_BYTES_PER_BLOB;
-            let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
-            let chunk = &pubdata[start..end];
-
-            let hash = if chunk.len() == ZK_SYNC_BYTES_PER_BLOB {
-                H256(keccak256(chunk))
-            } else {
-                let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
-                padded[..chunk.len()].copy_from_slice(chunk);
-                H256(keccak256(&padded))
-            };
-
-            anyhow::ensure!(
-                hash == *claimed,
-                "blob {i} linear hash mismatch: computed {hash:?}, claimed {claimed:?}"
-            );
-        } else {
-            anyhow::ensure!(
-                *claimed == H256::zero(),
-                "blob {i} has no pubdata but claimed hash is non-zero: {claimed:?}"
-            );
+        if *claimed == H256::zero() {
+            // Slot empty. Mode-specific DA validation (e.g. NoDA's state-diff
+            // hash, Validium's committee root) is L1's `IL1DAValidator` job.
+            continue;
         }
+        anyhow::ensure!(
+            i < num_blobs_from_pubdata,
+            "blob {i}: claimed non-zero linear hash but no pubdata for this slot"
+        );
+        anyhow::ensure!(
+            *claimed == computed[i],
+            "blob {i} linear hash mismatch: computed {:?}, claimed {claimed:?}",
+            computed[i],
+        );
     }
     Ok(())
 }
@@ -987,6 +1009,7 @@ mod tests {
         let commitment_data = CommitmentData {
             new_state_root: prev_state_root,
             new_enumeration_index: prev_enum_index,
+            protocol_version: ProtocolVersionId::Version28,
             zk_porter_available: false,
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),

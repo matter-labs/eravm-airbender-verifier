@@ -7,18 +7,30 @@
 //! commitment = keccak256(abi.encode(passThroughDataHash, metadataHash, auxiliaryOutputHash))
 //! ```
 //!
-//! The only deviation from Boojum is inside `auxiliaryOutputHash`:
-//! - `bootloaderHeapInitialContentsHash` uses Blake2s instead of Poseidon2-Goldilocks.
-//! - `eventsQueueStateHash` is set to `bytes32(0)` (events are deterministic outputs of
-//!   proven-correct execution and don't need separate commitment).
+//! ## Relationship to `zksync_types::commitment::L1BatchCommitment`
 //!
-//! All other components are identical to the L1 contract's computation.
+//! The vendored `zksync_types::commitment::L1BatchCommitment` from zksync-era
+//! computes the same 3-layer hash for Boojum. We don't reuse it directly
+//! because Airbender deviates inside `auxiliaryOutputHash`:
+//! - `bootloaderHeapInitialContentsHash` uses Blake2s instead of Poseidon2-Goldilocks.
+//! - `eventsQueueStateHash` is set to `bytes32(0)` (events are deterministic outputs
+//!   of proven-correct execution and don't need separate commitment).
+//!
+//! `pass_through_data_hash` and `metadata_hash` are otherwise identical to
+//! upstream and are cross-checked against `L1BatchCommitment::hash()` in
+//! `host::fri::crosscheck_commitment` for every CI batch.
 
-use anyhow::ensure;
+use anyhow::Context;
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
-    commitment::serialize_commitments, l2_to_l1_log::SystemL2ToL1Log, web3::keccak256, H256, U256,
+    commitment::{
+        serialize_commitments, AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput,
+        L1BatchAuxiliaryOutput, L1BatchMetaParameters, L1BatchPassThroughData, RootState,
+    },
+    l2_to_l1_log::SystemL2ToL1Log,
+    web3::keccak256,
+    ProtocolVersionId, H256, U256,
 };
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
@@ -31,15 +43,26 @@ pub fn compute_system_logs_hash(system_logs: &[SystemL2ToL1Log]) -> H256 {
 /// Compute the passthrough data hash for a batch.
 ///
 /// This is used both for the current batch's commitment and for verifying
-/// the previous batch's commitment binding. Matches `Committer.sol::_batchPassThroughData()`.
+/// the previous batch's commitment binding. Delegates to upstream
+/// `L1BatchPassThroughData::hash` so the encoding stays in lockstep with
+/// `Committer.sol::_batchPassThroughData()`.
 pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) -> H256 {
-    // abi.encodePacked(uint64, bytes32, uint64, bytes32) — 80 bytes, stack-allocated.
-    let mut data = [0u8; 8 + 32 + 8 + 32];
-    data[..8].copy_from_slice(&enumeration_index.to_be_bytes());
-    data[8..40].copy_from_slice(state_root.as_bytes());
-    // data[40..48] is zkPorter index (reserved) — stays zero.
-    // data[48..80] is zkPorter batch hash (reserved) — stays zero.
-    H256(keccak256(&data))
+    L1BatchPassThroughData {
+        shared_states: vec![
+            RootState {
+                last_leaf_index: enumeration_index,
+                root_hash: state_root,
+            },
+            // zkPorter shared state — `last_leaf_index` and `root_hash` are reserved
+            // and always zero.
+            RootState {
+                last_leaf_index: 0,
+                root_hash: H256::zero(),
+            },
+        ],
+    }
+    .hash()
+    .expect("two RootStates must serialize to 80 bytes")
 }
 
 /// Compute the full batch commitment from its three sub-hashes.
@@ -103,6 +126,7 @@ pub struct CommitmentData {
     pub new_enumeration_index: u64,
 
     // metadataHash components
+    pub protocol_version: ProtocolVersionId,
     pub zk_porter_available: bool,
     pub bootloader_code_hash: H256,
     pub default_aa_code_hash: H256,
@@ -154,94 +178,81 @@ impl CommitmentData {
         })
     }
 
-    /// Matches `Executor.sol::_batchMetaParameters()` (L1) exactly:
+    /// Delegates to upstream `L1BatchMetaParameters::hash`, which matches
+    /// `Executor.sol::_batchMetaParameters()` for protocol versions ≥ 1.5.0
+    /// (the only ones supported by this verifier — see
+    /// `is_supported_by_fast_vm` in `lib.rs`).
     ///
-    /// ```solidity
-    /// abi.encodePacked(
-    ///     s.zkPorterIsAvailable,
-    ///     s.l2BootloaderBytecodeHash,
-    ///     s.l2DefaultAccountBytecodeHash,
-    ///     s.l2EvmEmulatorBytecodeHash
-    /// )
-    /// ```
-    ///
-    /// Only protocol versions with the EVM emulator deployed are supported, so we
-    /// always emit the full 97-byte form matching L1.
-    ///
-    /// `zk_porter_available` is sourced from the witness (`SystemEnv`); the sequencer
-    /// must set it to match L1's `ZKPORTER_IS_AVAILABLE` constant or the commitment will
-    /// mismatch.
+    /// `zk_porter_available` is sourced from the witness (`SystemEnv`); the
+    /// sequencer must set it to match L1's `ZKPORTER_IS_AVAILABLE` constant
+    /// or the commitment will mismatch.
     fn compute_metadata_hash(&self) -> H256 {
-        // abi.encodePacked(bool, bytes32, bytes32, bytes32) — 97 bytes, stack-allocated.
-        let mut data = [0u8; 1 + 32 + 32 + 32];
-        data[0] = self.zk_porter_available as u8;
-        data[1..33].copy_from_slice(self.bootloader_code_hash.as_bytes());
-        data[33..65].copy_from_slice(self.default_aa_code_hash.as_bytes());
-        data[65..97].copy_from_slice(self.evm_emulator_code_hash.as_bytes());
-        H256(keccak256(&data))
+        L1BatchMetaParameters {
+            zkporter_is_available: self.zk_porter_available,
+            bootloader_code_hash: self.bootloader_code_hash,
+            default_aa_code_hash: self.default_aa_code_hash,
+            evm_emulator_code_hash: Some(self.evm_emulator_code_hash),
+            protocol_version: Some(self.protocol_version),
+        }
+        .hash()
     }
 
-    /// Matches `Committer.sol::_batchAuxiliaryOutput()`.
+    /// Delegates to upstream `L1BatchAuxiliaryOutput::hash` (PostBoojum variant)
+    /// so the encoding stays in lockstep with `Committer.sol::_batchAuxiliaryOutput()`.
     ///
-    /// ```solidity
-    /// abi.encodePacked(
-    ///     keccak256(systemLogs),
-    ///     stateDiffHash,
-    ///     bootloaderHeapInitialContentsHash,  // Blake2s (was Poseidon2)
-    ///     eventsQueueStateHash,               // bytes32(0) (was Poseidon2)
-    ///     _encodeBlobAuxiliaryOutput(blobCommitments, blobHashes)
-    /// )
-    /// ```
+    /// Airbender deviations from Boojum (documented in the module preamble) are
+    /// encoded as direct field values:
+    /// - `bootloader_initial_content_commitment`: Blake2s of the expanded heap
+    ///   (vs Boojum's Poseidon2-Goldilocks sponge).
+    /// - `events_queue_commitment`: `H256::zero()` (events are deterministic
+    ///   outputs of proven-correct execution).
     fn compute_auxiliary_output_hash(&self) -> anyhow::Result<H256> {
-        let system_logs_hash = self.system_logs_hash;
-        let bootloader_heap_hash = self.compute_bootloader_heap_hash();
+        let hashes = &self.commitment_input.blob_linear_hashes;
+        let commits = &self.commitment_input.blob_opening_commitments;
+        anyhow::ensure!(
+            hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
+            "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+            hashes.len()
+        );
+        anyhow::ensure!(
+            commits.len() == TOTAL_BLOBS_IN_COMMITMENT,
+            "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+            commits.len()
+        );
+        let blob_hashes: Vec<BlobHash> = hashes
+            .iter()
+            .zip(commits.iter())
+            .map(|(&linear_hash, &commitment)| BlobHash {
+                linear_hash,
+                commitment,
+            })
+            .collect();
 
-        // Layout: 4 × 32-byte sub-hashes + TOTAL_BLOBS_IN_COMMITMENT × 64-byte blob pairs.
-        let mut data = Vec::with_capacity(4 * 32 + TOTAL_BLOBS_IN_COMMITMENT * 64);
-        // [1] keccak256(systemLogs)
-        data.extend_from_slice(system_logs_hash.as_bytes());
-        // [2] stateDiffHash
-        data.extend_from_slice(self.state_diff_hash.as_bytes());
-        // [3] bootloaderHeapInitialContentsHash — Blake2s of full expanded heap
-        data.extend_from_slice(bootloader_heap_hash.as_bytes());
-        // [4] eventsQueueStateHash — constant zero
-        data.extend_from_slice(&[0u8; 32]);
-        // [5] blob auxiliary output — interleaved (hash, commitment) pairs, appended in place.
-        self.append_blob_auxiliary_output(&mut data)?;
-
-        Ok(H256(keccak256(&data)))
+        // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
+        // `aggregation_root`, and `local_root`, so we fill them with zeros.
+        Ok(L1BatchAuxiliaryOutput::PostBoojum {
+            common: L1BatchAuxiliaryCommonOutput {
+                l2_l1_logs_merkle_root: H256::zero(),
+                protocol_version: self.protocol_version,
+            },
+            system_logs_linear_hash: self.system_logs_hash,
+            state_diffs_compressed: vec![],
+            state_diffs_hash: self.state_diff_hash,
+            aux_commitments: AuxCommitments {
+                events_queue_commitment: H256::zero(),
+                bootloader_initial_content_commitment: self.compute_bootloader_heap_hash(),
+            },
+            blob_hashes,
+            aggregation_root: H256::zero(),
+            local_root: H256::zero(),
+        }
+        .hash())
     }
 
     /// Blake2s hash of the full expanded bootloader heap.
     /// Replaces Boojum's Poseidon2-Goldilocks sponge over `MemoryQuery` entries.
     fn compute_bootloader_heap_hash(&self) -> H256 {
         Blake2Hasher.hash_bytes(&self.bootloader_initial_heap)
-    }
-
-    /// Matches `Committer.sol::_encodeBlobAuxiliaryOutput()`.
-    /// Appends `TOTAL_BLOBS_IN_COMMITMENT` pairs of `(blobHash, blobCommitment)`,
-    /// each 32 bytes, for a total of `TOTAL_BLOBS_IN_COMMITMENT * 64` bytes, directly
-    /// to the caller's buffer to avoid an intermediate allocation.
-    fn append_blob_auxiliary_output(&self, output: &mut Vec<u8>) -> anyhow::Result<()> {
-        let hashes = &self.commitment_input.blob_linear_hashes;
-        let commits = &self.commitment_input.blob_opening_commitments;
-
-        ensure!(
-            hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            hashes.len()
-        );
-        ensure!(
-            commits.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            commits.len()
-        );
-
-        for i in 0..TOTAL_BLOBS_IN_COMMITMENT {
-            output.extend_from_slice(hashes[i].as_bytes());
-            output.extend_from_slice(commits[i].as_bytes());
-        }
-        Ok(())
     }
 }
 
@@ -254,15 +265,103 @@ const ELEMENTS_PER_4844_BLOCK: usize = 4096;
 /// Total blob data size: 31 * 4096 = 126976 bytes.
 pub const ZK_SYNC_BYTES_PER_BLOB: usize = BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK;
 
-/// Verify blob opening commitments by evaluating the blob polynomial.
+/// Return blob `i`'s bytes from `pubdata` as a fully-sized,
+/// zero-padded `Vec<u8>` (length `ZK_SYNC_BYTES_PER_BLOB`).
+/// Returns `None` when `i` is past pubdata's blob count.
 ///
-/// For each blob with non-zero `linear_hash`:
-/// 1. Parse the blob chunk into BLS12-381 scalar field elements (polynomial in monomial form)
-/// 2. Compute `evaluation_point = keccak256(linear_hash || versioned_hash)[16..]`
-/// 3. Evaluate the polynomial at `evaluation_point` using Horner's rule
-/// 4. Verify `output_hash == keccak256(versioned_hash || evaluation_point || opening_value)`
+/// Owned `Vec` rather than `Cow`/scratch keeps the API simple; the worst
+/// case is one full blob copy per slot, which is negligible next to the
+/// keccak / BLS12-381 work each caller does on the result.
+pub fn padded_blob_for(pubdata: &[u8], i: usize) -> Option<Vec<u8>> {
+    let start = i * ZK_SYNC_BYTES_PER_BLOB;
+    if start >= pubdata.len() {
+        return None;
+    }
+    let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
+    let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
+    padded[..end - start].copy_from_slice(&pubdata[start..end]);
+    Some(padded)
+}
+
+/// Compute blob linear hashes from pubdata: keccak256 of each blob-sized chunk,
+/// zero-padded for the last partial chunk. Returns `TOTAL_BLOBS_IN_COMMITMENT`
+/// entries; unused slots are `H256::zero()`.
+pub fn compute_blob_linear_hashes(pubdata: &[u8]) -> Vec<H256> {
+    let mut result = vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT];
+    for (i, slot) in result.iter_mut().enumerate() {
+        if let Some(blob) = padded_blob_for(pubdata, i) {
+            *slot = H256(keccak256(&blob));
+        }
+    }
+    result
+}
+
+/// Compute the EIP-4844 opening commitment for a single padded blob.
 ///
-/// This matches the `EIP4844Repack` sub-circuit in Boojum
+/// Steps (matching Boojum's `EIP4844Repack` and `zksync-protocol`'s `eip_4844`):
+/// 1. evaluation_point = `keccak256(linear_hash || versioned_hash)[16..32]`
+/// 2. opening_value = `polynomial(evaluation_point)` over the BLS12-381 scalar
+///    field, where the polynomial is the blob bytes interpreted as 31-byte
+///    little-endian coefficients with the highest-degree coefficient first.
+/// 3. opening_commitment = `keccak256(versioned_hash || eval_point[16..32] || opening_value)`
+///
+/// `blob_bytes` must be exactly `ZK_SYNC_BYTES_PER_BLOB` long; callers are
+/// responsible for zero-padding partial blobs.
+pub fn compute_blob_opening_commitment(
+    blob_bytes: &[u8],
+    versioned_hash: H256,
+    linear_hash: H256,
+) -> H256 {
+    use ark_bls12_381::Fr as Bls12_381Fr;
+    use ark_ff::{BigInteger, PrimeField, Zero};
+
+    debug_assert_eq!(
+        blob_bytes.len(),
+        ZK_SYNC_BYTES_PER_BLOB,
+        "compute_blob_opening_commitment expects a fully-padded blob"
+    );
+
+    // Step 1.
+    let eval_hash = {
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(linear_hash.as_bytes());
+        preimage[32..].copy_from_slice(versioned_hash.as_bytes());
+        keccak256(&preimage)
+    };
+    let mut evaluation_point_bytes = [0u8; 32];
+    evaluation_point_bytes[16..32].copy_from_slice(&eval_hash[16..32]);
+    let evaluation_point = Bls12_381Fr::from_be_bytes_mod_order(&evaluation_point_bytes);
+
+    // Step 2: Horner's rule, forward iteration treats first chunk as
+    // highest-degree coefficient.
+    let mut opening_value = Bls12_381Fr::zero();
+    let mut buf = [0u8; 32];
+    for chunk in blob_bytes.chunks(BLOB_CHUNK_SIZE) {
+        buf[..BLOB_CHUNK_SIZE].copy_from_slice(chunk);
+        // 31 bytes LE is always below the BLS12-381 modulus.
+        let coeff = Bls12_381Fr::from_le_bytes_mod_order(&buf);
+        opening_value *= evaluation_point;
+        opening_value += coeff;
+    }
+
+    // Step 3.
+    let opening_value_bytes: [u8; 32] = opening_value
+        .into_bigint()
+        .to_bytes_be()
+        .try_into()
+        .expect("BLS12-381 Fr should be 32 bytes BE");
+
+    let mut preimage = [0u8; 32 + 16 + 32];
+    preimage[..32].copy_from_slice(versioned_hash.as_bytes());
+    preimage[32..48].copy_from_slice(&eval_hash[16..32]);
+    preimage[48..].copy_from_slice(&opening_value_bytes);
+    H256(keccak256(&preimage))
+}
+
+/// Verify blob opening commitments by recomputing each via
+/// [`compute_blob_opening_commitment`] and comparing against the claimed value.
+///
+/// Matches the `EIP4844Repack` sub-circuit in Boojum
 /// (`zkevm_circuits/src/eip_4844/mod.rs`).
 pub fn verify_blob_opening_commitments(
     pubdata: &[u8],
@@ -270,10 +369,7 @@ pub fn verify_blob_opening_commitments(
     claimed_linear_hashes: &[H256],
     claimed_output_hashes: &[H256],
 ) -> anyhow::Result<()> {
-    use ark_bls12_381::Fr as Bls12_381Fr;
-    use ark_ff::{BigInteger, PrimeField, Zero};
-
-    ensure!(
+    anyhow::ensure!(
         versioned_hashes.len() == claimed_linear_hashes.len()
             && claimed_linear_hashes.len() == claimed_output_hashes.len(),
         "blob array length mismatch: versioned={}, linear={}, output={}",
@@ -282,15 +378,9 @@ pub fn verify_blob_opening_commitments(
         claimed_output_hashes.len()
     );
 
-    let num_blobs = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
-
-    // Scratch buffer for zero-padding a short last chunk. Reused across blobs to avoid
-    // per-blob allocation. Only touched for the (at most one) partial blob.
-    let mut padded_scratch: Option<Vec<u8>> = None;
-
     for i in 0..claimed_output_hashes.len() {
         if claimed_linear_hashes[i] == H256::zero() {
-            ensure!(
+            anyhow::ensure!(
                 claimed_output_hashes[i] == H256::zero(),
                 "blob {i}: linear hash is zero but output hash is non-zero"
             );
@@ -299,67 +389,16 @@ pub fn verify_blob_opening_commitments(
 
         // A non-zero claimed linear hash outside the pubdata range is caught by
         // `verify_blob_linear_hashes` before we get here; treat it as a bug if reached.
-        ensure!(
-            i < num_blobs,
-            "blob {i}: claimed linear hash is non-zero but no pubdata for this slot"
-        );
+        let blob = padded_blob_for(pubdata, i).with_context(|| {
+            format!("blob {i}: claimed linear hash is non-zero but no pubdata for this slot")
+        })?;
 
-        // View into the blob's bytes; zero-pad only if the last chunk is short.
-        let start = i * ZK_SYNC_BYTES_PER_BLOB;
-        let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
-        let raw = &pubdata[start..end];
-        let blob_bytes: &[u8] = if raw.len() == ZK_SYNC_BYTES_PER_BLOB {
-            raw
-        } else {
-            let scratch = padded_scratch.get_or_insert_with(|| vec![0u8; ZK_SYNC_BYTES_PER_BLOB]);
-            scratch[..raw.len()].copy_from_slice(raw);
-            scratch[raw.len()..].fill(0);
-            scratch.as_slice()
-        };
+        let computed =
+            compute_blob_opening_commitment(&blob, versioned_hashes[i], claimed_linear_hashes[i]);
 
-        // Step 1: Compute evaluation point = keccak256(linear_hash || versioned_hash)[16..32].
-        let evaluation_point_bytes = {
-            let mut preimage = [0u8; 64];
-            preimage[..32].copy_from_slice(claimed_linear_hashes[i].as_bytes());
-            preimage[32..].copy_from_slice(versioned_hashes[i].as_bytes());
-            let hash = keccak256(&preimage);
-            let mut buf = [0u8; 32];
-            buf[16..32].copy_from_slice(&hash[16..32]);
-            buf
-        };
-        let evaluation_point = Bls12_381Fr::from_be_bytes_mod_order(&evaluation_point_bytes);
-
-        // Step 2: Evaluate polynomial in-place via Horner's rule.
-        // Pubdata is 31-byte chunks treated as coefficients, highest-degree first
-        // (Boojum convention from `zksync-protocol`'s `eip_4844`). Forward iteration
-        // with `op = op * x + a` yields `a_n*x^n + ... + a_0`.
-        let mut opening_value = Bls12_381Fr::zero();
-        let mut buf = [0u8; 32];
-        for chunk in blob_bytes.chunks(BLOB_CHUNK_SIZE) {
-            buf[..BLOB_CHUNK_SIZE].copy_from_slice(chunk);
-            // 31 bytes LE is always below the BLS12-381 modulus.
-            let coeff = Bls12_381Fr::from_le_bytes_mod_order(&buf);
-            opening_value *= evaluation_point;
-            opening_value += coeff;
-        }
-
-        // Step 3: Serialize opening value as 32-byte big-endian.
-        let opening_value_bytes: [u8; 32] = opening_value
-            .into_bigint()
-            .to_bytes_be()
-            .try_into()
-            .expect("BLS12-381 Fr should be 32 bytes BE");
-
-        // Step 4: Compute expected output_hash = keccak256(versioned_hash || evaluation_point || opening_value).
-        let mut preimage = [0u8; 32 + 16 + 32];
-        preimage[..32].copy_from_slice(versioned_hashes[i].as_bytes());
-        preimage[32..48].copy_from_slice(&evaluation_point_bytes[16..32]);
-        preimage[48..].copy_from_slice(&opening_value_bytes);
-        let expected_output_hash = H256(keccak256(&preimage));
-
-        ensure!(
-            expected_output_hash == claimed_output_hashes[i],
-            "blob {i} opening commitment mismatch: computed {expected_output_hash:?}, claimed {:?}",
+        anyhow::ensure!(
+            computed == claimed_output_hashes[i],
+            "blob {i} opening commitment mismatch: computed {computed:?}, claimed {:?}",
             claimed_output_hashes[i]
         );
     }
@@ -427,10 +466,15 @@ mod tests {
         assert_eq!(result[0], 0xFF000000);
     }
 
+    /// Any post-1.5.0 protocol version yields the same metadata-hash byte
+    /// layout (97 bytes); pick a stable one for tests.
+    const TEST_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version28;
+
     fn make_test_commitment_data() -> CommitmentData {
         CommitmentData {
             new_state_root: H256([0xAB; 32]),
             new_enumeration_index: 42,
+            protocol_version: TEST_PROTOCOL_VERSION,
             zk_porter_available: false,
             bootloader_code_hash: H256([0x11; 32]),
             default_aa_code_hash: H256([0x22; 32]),
@@ -455,6 +499,7 @@ mod tests {
         let data = CommitmentData {
             new_state_root: H256([0xAB; 32]),
             new_enumeration_index: 42,
+            protocol_version: TEST_PROTOCOL_VERSION,
             zk_porter_available: false,
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),
