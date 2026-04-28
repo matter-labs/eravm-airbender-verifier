@@ -1,24 +1,15 @@
 //! Batch commitment computation for EraVM-on-Airbender.
 //!
-//! Computes the 3-layer Era VM commitment hash tree that matches
-//! `Committer.sol::_createBatchCommitment()` on L1:
+//! Computes the 3-layer Era VM commitment hash tree (matching
+//! `Committer.sol::_createBatchCommitment()` on L1) by delegating to upstream
+//! `L1BatchCommitment::hash()`. Airbender deviates from Boojum inside
+//! `auxiliaryOutputHash`:
+//! - `bootloaderHeapInitialContentsHash` uses Blake2s (vs Poseidon2-Goldilocks).
+//! - `eventsQueueStateHash` is `bytes32(0)`.
 //!
-//! ```text
-//! commitment = keccak256(abi.encode(passThroughDataHash, metadataHash, auxiliaryOutputHash))
-//! ```
-//!
-//! ## Relationship to `zksync_types::commitment::L1BatchCommitment`
-//!
-//! The vendored `zksync_types::commitment::L1BatchCommitment` from zksync-era
-//! computes the same 3-layer hash for Boojum. We don't reuse it directly
-//! because Airbender deviates inside `auxiliaryOutputHash`:
-//! - `bootloaderHeapInitialContentsHash` uses Blake2s instead of Poseidon2-Goldilocks.
-//! - `eventsQueueStateHash` is set to `bytes32(0)` (events are deterministic outputs
-//!   of proven-correct execution and don't need separate commitment).
-//!
-//! `pass_through_data_hash` and `metadata_hash` are otherwise identical to
-//! upstream and are cross-checked against `L1BatchCommitment::hash()` in
-//! `host::fri::crosscheck_commitment` for every CI batch.
+//! Both deviations are encoded as direct field values on
+//! `L1BatchAuxiliaryOutput::PostBoojum`, so upstream's `to_bytes()` emits the
+//! Airbender variant verbatim.
 
 use anyhow::Context;
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
@@ -34,12 +25,8 @@ use zksync_types::{
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 
-/// Compute the passthrough data hash for a batch.
-///
-/// This is used both for the current batch's commitment and for verifying
-/// the previous batch's commitment binding. Delegates to upstream
-/// `L1BatchPassThroughData::hash` so the encoding stays in lockstep with
-/// `Committer.sol::_batchPassThroughData()`.
+/// Compute the passthrough data hash for a batch. Used for the current
+/// batch's commitment and for the prev-batch binding check.
 pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) -> H256 {
     L1BatchPassThroughData {
         shared_states: vec![
@@ -47,8 +34,7 @@ pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) 
                 last_leaf_index: enumeration_index,
                 root_hash: state_root,
             },
-            // zkPorter shared state — `last_leaf_index` and `root_hash` are reserved
-            // and always zero.
+            // zkPorter shared state — reserved, always zero.
             RootState {
                 last_leaf_index: 0,
                 root_hash: H256::zero(),
@@ -59,16 +45,14 @@ pub fn compute_pass_through_data_hash(enumeration_index: u64, state_root: H256) 
     .expect("two RootStates must serialize to 80 bytes")
 }
 
-/// Compute the full batch commitment from its three sub-hashes.
-///
-/// Used for both current batch commitment and previous batch commitment
-/// reconstruction. Matches `Committer.sol::_createBatchCommitment()`.
+/// Compute the full batch commitment from its three sub-hashes. Matches
+/// `Committer.sol::_createBatchCommitment()`. Also used by the prev-batch
+/// binding check to reconstruct the previous commitment.
 pub fn compute_commitment(
     pass_through_data_hash: H256,
     metadata_hash: H256,
     auxiliary_output_hash: H256,
 ) -> H256 {
-    // abi.encode(bytes32, bytes32, bytes32) — 96 bytes, stack-allocated.
     let mut data = [0u8; 96];
     data[..32].copy_from_slice(pass_through_data_hash.as_bytes());
     data[32..64].copy_from_slice(metadata_hash.as_bytes());
@@ -80,29 +64,13 @@ pub fn compute_commitment(
 pub struct BatchCommitmentOutput {
     /// The batch commitment: `keccak256(abi.encode(passThrough, metadata, auxiliary))`.
     pub commitment: H256,
-    /// The proof public input preimage: `keccak256(prev_batch_commitment || current_commitment)`,
-    /// packed as 8 big-endian u32 words (`u32[0]` = bytes 0..4 of the hash, `u32[7]` = bytes 28..32).
+    /// `keccak256(prev_batch_commitment || current_commitment)`, packed as 8
+    /// big-endian u32 words. The on-chain SNARK wrapper drops the low 32 bits
+    /// (BN254 scalar field is ~254 bits) and feeds `keccak(...) >> 32` to L1's
+    /// `Executor.sol::_getBatchProofPublicInput`. We emit all 256 bits so the
+    /// guest stays shift-agnostic; the wrapper handles the truncation.
     ///
-    /// # Why the full 256 bits, and why the wrapper drops 32 of them
-    ///
-    /// The on-chain SNARK verifier takes a single BN254 scalar as public input, but
-    /// BN254's scalar field is ~254 bits — the full 256-bit `keccak(prev || curr)`
-    /// doesn't fit. L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT`
-    /// with `PUBLIC_INPUT_SHIFT = 32` (see `Executor.sol::_getBatchProofPublicInput`
-    /// and `Config.sol`), i.e. the high 224 bits.
-    ///
-    /// We expose all 256 bits here for two reasons: (a) the STARK public output is
-    /// byte-shaped, so the natural emission is the full hash; (b) keeping the unshifted
-    /// hash decouples the guest from the wrapper circuit's field-size constraint — if
-    /// the wrapper later switches curve or proving system, only the wrapper changes.
-    ///
-    /// The Airbender → PLONK SNARK wrapper drops the low 32 bits when forming the BN254
-    /// public input: treat `u32[0..7]` as a big-endian 224-bit integer and ignore
-    /// `u32[7]`. This mirrors Boojum's scheduler, which emits only the high 28 bytes.
-    /// (Airbender currently uses PLONK; an FFLONK wrapper variant may be added later.)
-    ///
-    /// `test_proof_public_input_matches_l1_shift` pins this relationship — any wrapper
-    /// or encoding change must update that test.
+    /// `test_proof_public_input_matches_l1_shift` pins the contract.
     pub proof_public_input: [u32; 8],
     /// Sub-hashes for debugging / cross-checking.
     pub pass_through_data_hash: H256,
@@ -136,14 +104,7 @@ pub struct CommitmentData {
 }
 
 impl CommitmentData {
-    /// Build a full upstream `L1BatchCommitment` and delegate to its `hash()`.
-    ///
-    /// All three sub-hashes (pass-through, metadata, auxiliary) and the final
-    /// commitment come from upstream, so the encoding stays in lockstep with
-    /// `Committer.sol`. Airbender deviations from Boojum (Blake2s bootloader
-    /// heap hash, zero events queue) are encoded as direct field values on
-    /// `L1BatchAuxiliaryOutput::PostBoojum` — `to_bytes()` emits whatever we
-    /// put in.
+    /// Build an upstream `L1BatchCommitment` and delegate to its `hash()`.
     pub fn compute(self) -> anyhow::Result<BatchCommitmentOutput> {
         let bootloader_heap_hash = Blake2Hasher.hash_bytes(&self.bootloader_initial_heap);
 
@@ -246,13 +207,9 @@ const ELEMENTS_PER_4844_BLOCK: usize = 4096;
 /// Total blob data size: 31 * 4096 = 126976 bytes.
 pub const ZK_SYNC_BYTES_PER_BLOB: usize = BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK;
 
-/// Return blob `i`'s bytes from `pubdata` as a fully-sized,
-/// zero-padded `Vec<u8>` (length `ZK_SYNC_BYTES_PER_BLOB`).
-/// Returns `None` when `i` is past pubdata's blob count.
-///
-/// Owned `Vec` rather than `Cow`/scratch keeps the API simple; the worst
-/// case is one full blob copy per slot, which is negligible next to the
-/// keccak / BLS12-381 work each caller does on the result.
+/// Return blob `i`'s bytes from `pubdata` zero-padded to
+/// `ZK_SYNC_BYTES_PER_BLOB`. Returns `None` when `i` is past pubdata's blob
+/// count.
 pub fn padded_blob_for(pubdata: &[u8], i: usize) -> Option<Vec<u8>> {
     let start = i * ZK_SYNC_BYTES_PER_BLOB;
     if start >= pubdata.len() {

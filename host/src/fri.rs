@@ -317,8 +317,8 @@ fn crosscheck_commitment(
     // Feed real logs/diffs/heap-hash/blob-hashes so `L1BatchCommitment::hash()`
     // covers passThrough + meta + auxiliaryOutput. The sequencer's
     // `bootloader_initial_content_commitment` is Poseidon2 in production, but
-    // the constructor doesn't recompute it — it just emits whatever we put in,
-    // so passing our Blake2s value reproduces the Airbender variant exactly.
+    // the constructor doesn't recompute it — passing our Blake2s value
+    // reproduces the Airbender variant exactly.
     let sequencer_input = SequencerCommitmentInput::PostBoojum {
         common: CommitmentCommonInput {
             l2_to_l1_logs: vec![],

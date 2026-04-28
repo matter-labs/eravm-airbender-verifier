@@ -4,8 +4,6 @@
 //! and verifying all the accessed memory slots by their merkle path, and
 //! computes the Era VM batch commitment together with the proof public input
 //! hash that the Airbender → PLONK SNARK wrapper feeds to L1 settlement.
-//! (Airbender currently supports PLONK only; an FFLONK variant may be added
-//! later — the public-input shape is the same either way.)
 
 pub mod commitment;
 #[doc(hidden)]
@@ -320,8 +318,6 @@ pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
         .count() as u64;
     let new_enumeration_index = enumeration_index + num_insertions;
 
-    // Expand the bootloader memory the VM actually executed; needed for the
-    // bootloader heap commitment downstream.
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
     let expanded_heap = expand_bootloader_heap(&final_bootloader_memory, bootloader_memory_size);
 
