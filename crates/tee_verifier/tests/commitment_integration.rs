@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use zksync_tee_verifier::test_utils::augment_with_synthetic_commitment;
+use zksync_tee_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
 use zksync_tee_verifier::types::TeeVerifierInput;
 use zksync_tee_verifier::Verify;
 
@@ -77,7 +77,8 @@ fn test_batch_506093_commitment() {
     // Synthesize a self-consistent V2 input (fake blob/prev-batch data — see
     // `test_utils` module docs) and run the production entry point.
     let v2 = augment_with_synthetic_commitment(input).expect("failed to build V2 input");
-    let result = v2.verify().expect("verification failed");
+    let result = v2.clone().verify().expect("verification failed");
+    crosscheck_commitment(&result, &v2).expect("crosscheck failed");
 
     assert_ne!(
         result.commitment,

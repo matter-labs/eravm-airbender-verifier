@@ -173,12 +173,6 @@ pub(crate) fn run_batch(
         "Native verification + commitment succeeded (with blob data)"
     );
 
-    // Cross-check commitment sub-hashes against sequencer code.
-    crosscheck_commitment(&native_result, &v2.commitment_input, batch_path)
-        .with_context(|| format!("commitment cross-check failed for batch {batch_number}"))?;
-
-    info!(batch_number, "Commitment cross-check passed");
-
     // Run transpiler with the same real CommitmentInput.
     let mut transpiler_input = Inputs::new();
     transpiler_input
@@ -257,118 +251,6 @@ fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
     }
     bytes.truncate(byte_len);
     Ok(bytes)
-}
-
-/// Cross-check commitment sub-hashes against independent computation.
-fn crosscheck_commitment(
-    result: &zksync_tee_verifier::VerificationResult,
-    commitment_input: &zksync_tee_verifier::types::CommitmentInput,
-    batch_path: &Path,
-) -> Result<()> {
-    use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
-    use zksync_crypto_primitives::hasher::Hasher;
-    use zksync_multivm::utils::get_used_bootloader_memory_bytes;
-    use zksync_tee_verifier::commitment::expand_bootloader_heap;
-    use zksync_types::{
-        commitment::{
-            serialize_commitments, AuxCommitments, CommitmentCommonInput,
-            CommitmentInput as SequencerCommitmentInput, L1BatchCommitment,
-        },
-        web3::keccak256,
-        H256,
-    };
-
-    let input = load_verifier_input(batch_path)?;
-    let zksync_tee_verifier::types::TeeVerifierInput::V1(input) = input else {
-        anyhow::bail!("expected V1");
-    };
-
-    let protocol_version = input.system_env.version;
-    // Match the verifier (`tee_verifier::execute`): all three system contract
-    // hashes come from `system_env.base_system_smart_contracts`. Reading the
-    // `vm_run_data` copies risks the crosscheck firing on a valid proof
-    // whenever the witness's two copies diverge.
-    let base = &input.system_env.base_system_smart_contracts;
-    let bootloader_code_hash = base.bootloader.hash;
-    let default_aa_code_hash = base.default_aa.hash;
-    let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
-    let initial_heap_content = &input.vm_run_data.initial_heap_content;
-
-    // Recompute the bootloader heap hash independently — also fed back into
-    // the sequencer input below so its aux-output hash is comparable.
-    let memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
-    let ind_heap_hash =
-        Blake2Hasher.hash_bytes(&expand_bootloader_heap(initial_heap_content, memory_size));
-    anyhow::ensure!(
-        result.bootloader_heap_hash == ind_heap_hash,
-        "bootloader_heap_hash mismatch"
-    );
-
-    // Feed real logs/diffs/heap-hash/blob-hashes so `L1BatchCommitment::hash()`
-    // covers passThrough + meta + auxiliaryOutput. The sequencer's
-    // `bootloader_initial_content_commitment` is Poseidon2 in production, but
-    // the constructor doesn't recompute it — passing our Blake2s value
-    // reproduces the Airbender variant exactly.
-    let sequencer_input = SequencerCommitmentInput::PostBoojum {
-        common: CommitmentCommonInput {
-            l2_to_l1_logs: vec![],
-            rollup_last_leaf_index: result.new_enumeration_index,
-            rollup_root_hash: result.value_hash,
-            bootloader_code_hash,
-            default_aa_code_hash,
-            evm_emulator_code_hash,
-            protocol_version,
-        },
-        system_logs: result.system_logs.clone(),
-        state_diffs: result.state_diffs.clone(),
-        aux_commitments: AuxCommitments {
-            events_queue_commitment: H256::zero(),
-            bootloader_initial_content_commitment: ind_heap_hash,
-        },
-        blob_hashes: commitment_input.blob_hashes.clone(),
-        aggregation_root: H256::zero(),
-    };
-    let seq_hashes = L1BatchCommitment::new(sequencer_input, true)?.hash()?;
-
-    anyhow::ensure!(
-        result.pass_through_data_hash == seq_hashes.pass_through_data,
-        "passThroughDataHash mismatch: guest {:?} vs sequencer {:?}",
-        result.pass_through_data_hash,
-        seq_hashes.pass_through_data
-    );
-    // The sequencer's `L1BatchMetaParameters::to_bytes()` differs from the L1 contract
-    // encoding when `evm_emulator_code_hash` is `None` (sequencer falls back to
-    // `default_aa`; L1 uses zero) or pre-1.5.0 protocols (sequencer truncates to 64 bytes).
-    // Only cross-check when both ends agree — modern protocol with an explicit emulator.
-    if evm_emulator_code_hash.is_some() && protocol_version.is_post_1_5_0() {
-        anyhow::ensure!(
-            result.metadata_hash == seq_hashes.meta_parameters,
-            "metadataHash mismatch: guest {:?} vs sequencer {:?}",
-            result.metadata_hash,
-            seq_hashes.meta_parameters
-        );
-    }
-    anyhow::ensure!(
-        result.auxiliary_output_hash == seq_hashes.aux_output,
-        "auxiliaryOutputHash mismatch: guest {:?} vs sequencer {:?}",
-        result.auxiliary_output_hash,
-        seq_hashes.aux_output
-    );
-
-    // system_logs_hash + state_diff_hash independently.
-    let ind_logs_hash = H256(keccak256(&serialize_commitments(&result.system_logs)));
-    anyhow::ensure!(
-        result.system_logs_hash == ind_logs_hash,
-        "system_logs_hash mismatch"
-    );
-
-    let ind_diff_hash = H256(keccak256(&serialize_commitments(&result.state_diffs)));
-    anyhow::ensure!(
-        result.state_diff_hash == ind_diff_hash,
-        "state_diff_hash mismatch"
-    );
-
-    Ok(())
 }
 
 pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {

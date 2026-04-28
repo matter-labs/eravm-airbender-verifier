@@ -12,6 +12,7 @@ pub mod types;
 
 use anyhow::{bail, Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
+use zksync_crypto_primitives::hasher::Hasher;
 use zksync_merkle_tree::{
     BlockOutputWithProofs, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof, ValueHash,
 };
@@ -25,7 +26,6 @@ use zksync_multivm::{
     utils::get_used_bootloader_memory_bytes,
     FastVmInstance,
 };
-use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
     block::L2BlockExecutionData,
     bytecode::{BytecodeHash, BytecodeMarker},
@@ -758,8 +758,8 @@ mod tests {
             commitment: H256::zero(),
         };
         let versioned_hashes = vec![H256::zero(); 16];
-        let err = commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes)
-            .unwrap_err();
+        let err =
+            commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes).unwrap_err();
         assert!(
             err.to_string().contains("linear hash mismatch"),
             "unexpected: {err}"
@@ -776,8 +776,8 @@ mod tests {
             commitment: H256::zero(),
         };
         let versioned_hashes = vec![H256::zero(); 16];
-        let err = commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes)
-            .unwrap_err();
+        let err =
+            commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes).unwrap_err();
         assert!(err.to_string().contains("no pubdata"), "unexpected: {err}");
     }
 

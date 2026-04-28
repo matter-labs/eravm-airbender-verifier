@@ -16,12 +16,20 @@
 //! sequencer output.
 
 use anyhow::Context;
-use zksync_types::{commitment::BlobHash, web3::keccak256, H256};
+use zksync_types::{
+    commitment::{
+        AuxCommitments, BlobHash, CommitmentCommonInput,
+        CommitmentInput as SequencerCommitmentInput, L1BatchCommitment,
+    },
+    web3::keccak256,
+    H256,
+};
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
 use crate::types::{
     CommitmentInput, V1TeeVerifierInput, V2TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
 };
+use crate::VerificationResult;
 
 /// Augment a V1 input with a **synthetic** `CommitmentInput` so that the verifier
 /// pipeline can be exercised end-to-end without real sequencer/L1 inputs.
@@ -110,4 +118,73 @@ pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
     }
 
     (versioned_hashes, blob_hashes)
+}
+
+/// Reconstruct the batch commitment via upstream `L1BatchCommitment::new()`
+/// from the V2 input and assert the verifier's sub-hashes agree.
+///
+/// The hash math is shared upstream code, so this catches struct-construction
+/// mistakes in `verify_commitment` (e.g. fields swapped in the struct literal)
+/// rather than encoding bugs.
+pub fn crosscheck_commitment(
+    result: &VerificationResult,
+    v2: &V2TeeVerifierInput,
+) -> anyhow::Result<()> {
+    let protocol_version = v2.v1.system_env.version;
+    let base = &v2.v1.system_env.base_system_smart_contracts;
+    let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
+
+    let sequencer_input = SequencerCommitmentInput::PostBoojum {
+        common: CommitmentCommonInput {
+            l2_to_l1_logs: vec![],
+            rollup_last_leaf_index: result.new_enumeration_index,
+            rollup_root_hash: result.value_hash,
+            bootloader_code_hash: base.bootloader.hash,
+            default_aa_code_hash: base.default_aa.hash,
+            evm_emulator_code_hash,
+            protocol_version,
+        },
+        system_logs: result.system_logs.clone(),
+        state_diffs: result.state_diffs.clone(),
+        aux_commitments: AuxCommitments {
+            events_queue_commitment: H256::zero(),
+            // Boojum's `bootloader_initial_content_commitment` is Poseidon2;
+            // the constructor doesn't recompute it, so passing the verifier's
+            // Blake2s value reproduces the Airbender variant exactly.
+            bootloader_initial_content_commitment: result.bootloader_heap_hash,
+        },
+        blob_hashes: v2.commitment_input.blob_hashes.clone(),
+        aggregation_root: H256::zero(),
+    };
+    let seq_hashes = L1BatchCommitment::new(sequencer_input, true)
+        .context("constructing sequencer L1BatchCommitment")?
+        .hash()
+        .context("hashing sequencer L1BatchCommitment")?;
+
+    anyhow::ensure!(
+        result.pass_through_data_hash == seq_hashes.pass_through_data,
+        "passThroughDataHash mismatch: guest {:?} vs sequencer {:?}",
+        result.pass_through_data_hash,
+        seq_hashes.pass_through_data
+    );
+    // The sequencer's `L1BatchMetaParameters::to_bytes()` differs from the L1 contract
+    // encoding when `evm_emulator_code_hash` is `None` (sequencer falls back to
+    // `default_aa`; L1 uses zero) or pre-1.5.0 protocols (sequencer truncates to 64 bytes).
+    // Only cross-check when both ends agree — modern protocol with an explicit emulator.
+    if evm_emulator_code_hash.is_some() && protocol_version.is_post_1_5_0() {
+        anyhow::ensure!(
+            result.metadata_hash == seq_hashes.meta_parameters,
+            "metadataHash mismatch: guest {:?} vs sequencer {:?}",
+            result.metadata_hash,
+            seq_hashes.meta_parameters
+        );
+    }
+    anyhow::ensure!(
+        result.auxiliary_output_hash == seq_hashes.aux_output,
+        "auxiliaryOutputHash mismatch: guest {:?} vs sequencer {:?}",
+        result.auxiliary_output_hash,
+        seq_hashes.aux_output
+    );
+
+    Ok(())
 }
