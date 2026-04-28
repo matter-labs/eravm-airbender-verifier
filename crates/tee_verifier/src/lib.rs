@@ -29,7 +29,7 @@ use zksync_multivm::{
 };
 use zksync_types::{
     block::L2BlockExecutionData,
-    bytecode::BytecodeHash,
+    bytecode::{BytecodeHash, BytecodeMarker},
     commitment::{serialize_commitments, PubdataParams},
     u256_to_h256,
     web3::keccak256,
@@ -405,8 +405,8 @@ pub fn verify_commitment(
         &commitment_input.blob_opening_commitments,
     )?;
 
-    let system_logs_hash = commitment::compute_system_logs_hash(&state.system_logs);
-    let state_diff_hash = compute_state_diff_hash(&state.state_diffs);
+    let system_logs_hash = H256(keccak256(&serialize_commitments(&state.system_logs)));
+    let state_diff_hash = H256(keccak256(&serialize_commitments(&state.state_diffs)));
 
     let commitment_data = CommitmentData {
         new_state_root: state.new_root_hash,
@@ -440,20 +440,6 @@ pub fn verify_commitment(
         state_diffs: state.state_diffs,
         pubdata_input: state.pubdata_input,
     })
-}
-
-/// Compute the state diff hash: `keccak256` of padded-encoded state diff records.
-///
-/// Each `StateDiffRecord` is serialized to 272 bytes (156 bytes of data, zero-padded
-/// to `PADDED_ENCODED_STORAGE_DIFF_LEN_BYTES` for keccak round alignment).
-/// All records are concatenated and hashed.
-///
-/// The storage snapshot must be set up with real enumeration indices (from the Merkle
-/// witness) so that `FinishedL1Batch.state_diffs` contains correct values.
-///
-/// Matches the sequencer's `L1BatchAuxiliaryOutput::state_diff_hash` derivation.
-fn compute_state_diff_hash(state_diffs: &[StateDiffRecord]) -> H256 {
-    H256(keccak256(&serialize_commitments(state_diffs)))
 }
 
 /// Verify that blob linear hashes match the pubdata produced by VM execution.
@@ -495,30 +481,24 @@ fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) -> anyhow:
 
 /// Verify that a bytecode's content matches its claimed hash.
 ///
-/// EraVM bytecode hashes are SHA256 with the first 4 bytes overwritten:
-/// `[marker, 0, len_hi, len_lo, sha256[4..]]`.
-/// We use `BytecodeHash::for_bytecode` for EraVM bytecodes and
-/// `BytecodeHash::for_evm_bytecode` for EVM bytecodes (marker-based dispatch).
+/// Dispatches on the marker byte via upstream `BytecodeHash::try_from`,
+/// which validates the marker and exposes the encoded length so we don't
+/// re-parse the hash by hand.
 fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Result<()> {
     let claimed_h256 = u256_to_h256(claimed_hash);
-    let marker = claimed_h256.as_bytes()[0];
+    let claimed = BytecodeHash::try_from(claimed_h256)?;
 
-    let computed = match marker {
-        1 => BytecodeHash::for_bytecode(flat_bytecode),
-        2 => {
-            // EVM bytecode: the length field encodes the raw (unpadded) length.
-            let raw_len =
-                u16::from_be_bytes([claimed_h256.as_bytes()[2], claimed_h256.as_bytes()[3]])
-                    as usize;
-            BytecodeHash::for_evm_bytecode(raw_len, flat_bytecode)
+    let computed = match claimed.marker() {
+        BytecodeMarker::EraVm => BytecodeHash::for_bytecode(flat_bytecode),
+        BytecodeMarker::Evm => {
+            BytecodeHash::for_evm_bytecode(claimed.len_in_bytes(), flat_bytecode)
         }
-        _ => anyhow::bail!("unknown bytecode marker {marker} in hash {claimed_h256:?}"),
     };
 
     anyhow::ensure!(
-        computed.value_u256() == claimed_hash,
+        computed == claimed,
         "bytecode hash mismatch: claimed {claimed_h256:?}, computed {:?}",
-        u256_to_h256(computed.value_u256()),
+        computed.value(),
     );
     Ok(())
 }
@@ -762,7 +742,7 @@ mod tests {
         fake_hash[0] = 0xFF;
         let err = verify_bytecode_hash(U256::from_big_endian(&fake_hash), &bytecode).unwrap_err();
         assert!(
-            err.to_string().contains("unknown bytecode marker"),
+            err.to_string().contains("unknown bytecode hash marker"),
             "unexpected error: {err}"
         );
     }
@@ -1014,7 +994,9 @@ mod tests {
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),
             evm_emulator_code_hash: H256::zero(),
-            system_logs_hash: commitment::compute_system_logs_hash(&[]),
+            system_logs_hash: H256(keccak256(&serialize_commitments::<
+                zksync_types::l2_to_l1_log::SystemL2ToL1Log,
+            >(&[]))),
             state_diff_hash: H256::zero(),
             bootloader_initial_heap: vec![],
             commitment_input: CommitmentInput {

@@ -25,20 +25,14 @@ use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
     commitment::{
-        serialize_commitments, AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput,
-        L1BatchAuxiliaryOutput, L1BatchMetaParameters, L1BatchPassThroughData, RootState,
+        AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput, L1BatchAuxiliaryOutput,
+        L1BatchMetaParameters, L1BatchPassThroughData, RootState,
     },
-    l2_to_l1_log::SystemL2ToL1Log,
     web3::keccak256,
     ProtocolVersionId, H256, U256,
 };
 
 use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
-
-/// `keccak256` of serialized system logs, matching L1's `keccak256(_batch.systemLogs)`.
-pub fn compute_system_logs_hash(system_logs: &[SystemL2ToL1Log]) -> H256 {
-    H256(keccak256(&serialize_commitments(system_logs)))
-}
 
 /// Compute the passthrough data hash for a batch.
 ///
@@ -435,6 +429,7 @@ fn bytes32_to_u32x8(hash: [u8; 32]) -> [u32; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zksync_types::{commitment::serialize_commitments, l2_to_l1_log::SystemL2ToL1Log};
 
     #[test]
     fn test_expand_bootloader_heap() {
@@ -479,7 +474,7 @@ mod tests {
             bootloader_code_hash: H256([0x11; 32]),
             default_aa_code_hash: H256([0x22; 32]),
             evm_emulator_code_hash: H256([0x33; 32]),
-            system_logs_hash: compute_system_logs_hash(&[]),
+            system_logs_hash: H256(keccak256(&serialize_commitments::<SystemL2ToL1Log>(&[]))),
             state_diff_hash: H256([0x44; 32]),
             bootloader_initial_heap: vec![0u8; 64], // 2 words of zeros
             commitment_input: CommitmentInput {
@@ -504,7 +499,7 @@ mod tests {
             bootloader_code_hash: H256::zero(),
             default_aa_code_hash: H256::zero(),
             evm_emulator_code_hash: H256::zero(),
-            system_logs_hash: compute_system_logs_hash(&[]),
+            system_logs_hash: H256(keccak256(&serialize_commitments::<SystemL2ToL1Log>(&[]))),
             state_diff_hash: H256::zero(),
             bootloader_initial_heap: vec![],
             commitment_input: CommitmentInput::default(),
