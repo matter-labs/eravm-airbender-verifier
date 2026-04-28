@@ -10,6 +10,11 @@
 //! Both deviations are encoded as direct field values on
 //! `L1BatchAuxiliaryOutput::PostBoojum`, so upstream's `to_bytes()` emits the
 //! Airbender variant verbatim.
+//!
+//! L1 reference: `era-contracts/l1-contracts/contracts/state-transition/chain-deps/facets/Executor.sol`
+//!
+//! Upstream Rust reference: `zksync_types::commitment::L1BatchCommitment` in
+//! `zksync-era/core/lib/types/src/commitment/mod.rs`.
 
 use zksync_types::{
     commitment::{BlobHash, L1BatchPassThroughData, RootState},
@@ -97,6 +102,10 @@ pub fn padded_blob_for(pubdata: &[u8], i: usize) -> Option<Vec<u8>> {
 /// Compute blob linear hashes from pubdata: keccak256 of each blob-sized chunk,
 /// zero-padded for the last partial chunk. Returns `TOTAL_BLOBS_IN_COMMITMENT`
 /// entries; unused slots are `H256::zero()`.
+///
+/// Mirrors `pubdata_to_blob_linear_hashes` in
+/// `zksync-era/core/node/commitment_generator/src/utils.rs` (`pub(crate)`
+/// there, so we can't reuse it directly).
 pub fn compute_blob_linear_hashes(pubdata: &[u8]) -> Vec<H256> {
     let mut result = vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT];
     for (i, slot) in result.iter_mut().enumerate() {
@@ -109,7 +118,8 @@ pub fn compute_blob_linear_hashes(pubdata: &[u8]) -> Vec<H256> {
 
 /// Compute the EIP-4844 opening commitment for a single padded blob.
 ///
-/// Steps (matching Boojum's `EIP4844Repack` and `zksync-protocol`'s `eip_4844`):
+/// Steps (matching Boojum's `EIP4844Repack` sub-circuit and the host-side
+/// reference in `zksync-protocol/crates/zkevm_circuits/src/eip_4844/mod.rs`):
 /// 1. evaluation_point = `keccak256(linear_hash || versioned_hash)[16..32]`
 /// 2. opening_value = `polynomial(evaluation_point)` over the BLS12-381 scalar
 ///    field, where the polynomial is the blob bytes interpreted as 31-byte
@@ -172,11 +182,12 @@ pub fn compute_blob_opening_commitment(
 /// Verify both linear hashes and opening commitments for every blob in a
 /// single pass, reusing one scratch buffer for the padded blob bytes.
 ///
-/// Mirrors Boojum's `EIP4844Repack` self-degeneration: a slot whose claimed
-/// `linear_hash` is zero is treated as "no blob in this slot" and skipped
-/// (this is what non-Rollup DA modes always look like). For non-zero claims
-/// we recompute both the linear hash and the opening commitment from the
-/// VM-emitted pubdata, requiring exact matches.
+/// Mirrors the self-degeneration in Boojum's `EIP4844Repack` sub-circuit
+/// (`zksync-protocol/crates/zkevm_circuits/src/eip_4844/mod.rs`): a slot
+/// whose claimed `linear_hash` is zero is treated as "no blob in this slot"
+/// and skipped — what non-Rollup DA modes always look like. For non-zero
+/// claims we recompute both the linear hash and the opening commitment from
+/// the VM-emitted pubdata, requiring exact matches.
 pub fn verify_blob_hashes(
     pubdata: &[u8],
     versioned_hashes: &[H256],
@@ -230,7 +241,9 @@ pub fn verify_blob_hashes(
 }
 
 /// Expand sparse bootloader heap content to a full byte buffer.
-/// Mirrors `expand_memory_contents` in `commitment_generator/utils.rs`.
+///
+/// Mirrors `expand_memory_contents` in
+/// `zksync-era/core/node/commitment_generator/src/utils.rs` (private there).
 pub fn expand_bootloader_heap(
     initial_heap_content: &[(usize, U256)],
     memory_size_bytes: usize,
