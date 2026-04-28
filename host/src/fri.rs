@@ -156,24 +156,26 @@ pub(crate) fn run_batch(
     batch_number: u64,
     batch_path: &Path,
 ) -> Result<()> {
-    // Load batch and compute real CommitmentInput (blob hashes from pubdata).
+    // Load batch and synthesize a self-consistent `CommitmentInput`. Linear
+    // blob hashes come from VM pubdata; versioned hashes, opening commitments,
+    // and prev_batch_commitment are fabricated — see `test_utils` module docs.
+    // **Not** L1-settlement-equivalent.
     let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
         .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
 
-    // Run native verification with real blob data.
     let native_result = v2
         .clone()
         .verify()
-        .context("native verification with real blob data failed")?;
+        .context("native verification failed")?;
 
     info!(
         batch_number,
         ?native_result.commitment,
         ?native_result.proof_public_input,
-        "Native verification + commitment succeeded (with blob data)"
+        "Native verification + commitment succeeded"
     );
 
-    // Run transpiler with the same real CommitmentInput.
+    // Run transpiler with the same synthetic `CommitmentInput`.
     let mut transpiler_input = Inputs::new();
     transpiler_input
         .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
