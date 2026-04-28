@@ -1,0 +1,2 @@
+[lfs]
+	fetchexclude = testdata/era_mainnet_batches/binary/**
