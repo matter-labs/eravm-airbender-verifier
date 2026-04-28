@@ -68,20 +68,21 @@ pub struct BatchCommitmentOutput {
     ///
     /// # Why the full 256 bits, and why the wrapper drops 32 of them
     ///
-    /// The FFLONK verifier on L1 takes a single BN254 scalar as public input, but BN254's
-    /// scalar field is ~254 bits — the full 256-bit `keccak(prev || curr)` doesn't fit.
-    /// L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` with
-    /// `PUBLIC_INPUT_SHIFT = 32` (see `Executor.sol::_getBatchProofPublicInput` and
-    /// `Config.sol`), i.e. the high 224 bits.
+    /// The on-chain SNARK verifier takes a single BN254 scalar as public input, but
+    /// BN254's scalar field is ~254 bits — the full 256-bit `keccak(prev || curr)`
+    /// doesn't fit. L1 passes `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT`
+    /// with `PUBLIC_INPUT_SHIFT = 32` (see `Executor.sol::_getBatchProofPublicInput`
+    /// and `Config.sol`), i.e. the high 224 bits.
     ///
     /// We expose all 256 bits here for two reasons: (a) the STARK public output is
     /// byte-shaped, so the natural emission is the full hash; (b) keeping the unshifted
     /// hash decouples the guest from the wrapper circuit's field-size constraint — if
-    /// the wrapper later switches curve or scalar size, only the wrapper changes.
+    /// the wrapper later switches curve or proving system, only the wrapper changes.
     ///
-    /// The Airbender → FFLONK wrapper drops the low 32 bits when forming the BN254
+    /// The Airbender → PLONK SNARK wrapper drops the low 32 bits when forming the BN254
     /// public input: treat `u32[0..7]` as a big-endian 224-bit integer and ignore
     /// `u32[7]`. This mirrors Boojum's scheduler, which emits only the high 28 bytes.
+    /// (Airbender currently uses PLONK; an FFLONK wrapper variant may be added later.)
     ///
     /// `test_proof_public_input_matches_l1_shift` pins this relationship — any wrapper
     /// or encoding change must update that test.

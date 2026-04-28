@@ -3,7 +3,9 @@
 //! Verifies that a L1Batch has the expected root hash after executing the VM
 //! and verifying all the accessed memory slots by their merkle path, and
 //! computes the Era VM batch commitment together with the proof public input
-//! hash that the Airbender → FFLONK wrapper feeds to L1 settlement.
+//! hash that the Airbender → PLONK SNARK wrapper feeds to L1 settlement.
+//! (Airbender currently supports PLONK only; an FFLONK variant may be added
+//! later — the public-input shape is the same either way.)
 
 pub mod commitment;
 #[cfg(any(test, feature = "test-utils"))]
