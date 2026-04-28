@@ -435,5 +435,12 @@ fn vk_cache_path(program: &Program) -> Result<PathBuf> {
 }
 
 fn dist_dir() -> PathBuf {
+    // Allow overriding via env var so a binary built on one machine can find
+    // the guest dist on another (the CI prove-batch flow builds host on a
+    // CPU runner and runs it on the GPU runner). Falls back to the
+    // workspace-relative path baked in at compile time.
+    if let Ok(p) = std::env::var("ERAVM_PROVER_HOST_GUEST_DIR") {
+        return PathBuf::from(p);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
 }
