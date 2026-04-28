@@ -25,20 +25,25 @@ use zksync_multivm::{
     utils::get_used_bootloader_memory_bytes,
     FastVmInstance,
 };
+use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
     block::L2BlockExecutionData,
     bytecode::{BytecodeHash, BytecodeMarker},
-    commitment::{serialize_commitments, PubdataParams},
+    commitment::{
+        serialize_commitments, AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput,
+        L1BatchAuxiliaryOutput, L1BatchCommitment, L1BatchMetaParameters, L1BatchPassThroughData,
+        PubdataParams, RootState,
+    },
     u256_to_h256,
     web3::keccak256,
     writes::StateDiffRecord,
     L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue, Transaction, H256, U256,
 };
 
-use crate::commitment::{expand_bootloader_heap, CommitmentData, ZK_SYNC_BYTES_PER_BLOB};
+use crate::commitment::{expand_bootloader_heap, ZK_SYNC_BYTES_PER_BLOB};
 use crate::types::{
     CommitmentInput, StorageLogMetadata, V1TeeVerifierInput, V2TeeVerifierInput,
-    WitnessInputMerklePaths,
+    WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
 /// A structure to hold the result of verification.
@@ -403,35 +408,88 @@ pub fn verify_commitment(
 
     let system_logs_hash = H256(keccak256(&serialize_commitments(&state.system_logs)));
     let state_diff_hash = H256(keccak256(&serialize_commitments(&state.state_diffs)));
+    let bootloader_heap_hash = Blake2Hasher.hash_bytes(&state.expanded_heap);
 
-    let commitment_data = CommitmentData {
-        new_state_root: state.new_root_hash,
-        new_enumeration_index: state.new_enumeration_index,
-        protocol_version: state.protocol_version,
-        zk_porter_available: state.zk_porter_available,
-        bootloader_code_hash: state.bootloader_code_hash,
-        default_aa_code_hash: state.default_aa_code_hash,
-        evm_emulator_code_hash: state.evm_emulator_code_hash,
-        system_logs_hash,
-        state_diff_hash,
-        bootloader_initial_heap: state.expanded_heap,
-        commitment_input,
+    anyhow::ensure!(
+        commitment_input.blob_linear_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
+        "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+        commitment_input.blob_linear_hashes.len()
+    );
+    anyhow::ensure!(
+        commitment_input.blob_opening_commitments.len() == TOTAL_BLOBS_IN_COMMITMENT,
+        "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+        commitment_input.blob_opening_commitments.len()
+    );
+    let blob_hashes: Vec<BlobHash> = commitment_input
+        .blob_linear_hashes
+        .iter()
+        .zip(commitment_input.blob_opening_commitments.iter())
+        .map(|(&linear_hash, &commitment)| BlobHash {
+            linear_hash,
+            commitment,
+        })
+        .collect();
+
+    // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
+    // `aggregation_root`, and `local_root`, so we fill them with zeros.
+    let commitment = L1BatchCommitment {
+        pass_through_data: L1BatchPassThroughData {
+            shared_states: vec![
+                RootState {
+                    last_leaf_index: state.new_enumeration_index,
+                    root_hash: state.new_root_hash,
+                },
+                // zkPorter shared state — reserved, always zero.
+                RootState {
+                    last_leaf_index: 0,
+                    root_hash: H256::zero(),
+                },
+            ],
+        },
+        meta_parameters: L1BatchMetaParameters {
+            zkporter_is_available: state.zk_porter_available,
+            bootloader_code_hash: state.bootloader_code_hash,
+            default_aa_code_hash: state.default_aa_code_hash,
+            evm_emulator_code_hash: Some(state.evm_emulator_code_hash),
+            protocol_version: Some(state.protocol_version),
+        },
+        auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
+            common: L1BatchAuxiliaryCommonOutput {
+                l2_l1_logs_merkle_root: H256::zero(),
+                protocol_version: state.protocol_version,
+            },
+            system_logs_linear_hash: system_logs_hash,
+            state_diffs_compressed: vec![],
+            state_diffs_hash: state_diff_hash,
+            aux_commitments: AuxCommitments {
+                events_queue_commitment: H256::zero(),
+                bootloader_initial_content_commitment: bootloader_heap_hash,
+            },
+            blob_hashes,
+            aggregation_root: H256::zero(),
+            local_root: H256::zero(),
+        },
     };
-
-    let commitment_output = commitment_data.compute()?;
+    let hashes = commitment
+        .hash()
+        .expect("L1BatchCommitment with two RootStates always succeeds");
+    let proof_public_input = commitment::compute_proof_public_input(
+        commitment_input.prev_batch_commitment,
+        hashes.commitment,
+    );
 
     Ok(VerificationResult {
         value_hash: state.new_root_hash,
         batch_number: state.batch_number,
-        proof_public_input: commitment_output.proof_public_input,
-        commitment: commitment_output.commitment,
+        proof_public_input,
+        commitment: hashes.commitment,
         new_enumeration_index: state.new_enumeration_index,
-        pass_through_data_hash: commitment_output.pass_through_data_hash,
-        metadata_hash: commitment_output.metadata_hash,
-        auxiliary_output_hash: commitment_output.auxiliary_output_hash,
-        system_logs_hash: commitment_output.system_logs_hash,
-        state_diff_hash: commitment_output.state_diff_hash,
-        bootloader_heap_hash: commitment_output.bootloader_heap_hash,
+        pass_through_data_hash: hashes.pass_through_data,
+        metadata_hash: hashes.meta_parameters,
+        auxiliary_output_hash: hashes.aux_output,
+        system_logs_hash,
+        state_diff_hash,
+        bootloader_heap_hash,
         system_logs: state.system_logs,
         state_diffs: state.state_diffs,
         pubdata_input: state.pubdata_input,
@@ -961,64 +1019,6 @@ mod tests {
             bincode_v1::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
 
         assert_eq!(tvi, deserialized);
-    }
-
-    #[test]
-    fn test_prev_commitment_binding_recomputation() {
-        use crate::commitment::{
-            compute_commitment, compute_pass_through_data_hash, CommitmentData,
-        };
-        use crate::types::CommitmentInput;
-
-        // Simulate a "previous batch" by computing its commitment.
-        let prev_state_root = H256([0xAA; 32]);
-        let prev_enum_index: u64 = 42;
-        let prev_meta_hash = H256([0xBB; 32]);
-        let prev_aux_hash = H256([0xCC; 32]);
-
-        // Compute prev_passthrough and commitment using the shared functions
-        // (the same ones used by the binding check in verify_with_vm).
-        let prev_passthrough = compute_pass_through_data_hash(prev_enum_index, prev_state_root);
-        let prev_commitment = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
-
-        // Verify CommitmentData::compute() produces the same passthrough hash.
-        let commitment_data = CommitmentData {
-            new_state_root: prev_state_root,
-            new_enumeration_index: prev_enum_index,
-            protocol_version: ProtocolVersionId::Version28,
-            zk_porter_available: false,
-            bootloader_code_hash: H256::zero(),
-            default_aa_code_hash: H256::zero(),
-            evm_emulator_code_hash: H256::zero(),
-            system_logs_hash: H256(keccak256(&serialize_commitments::<
-                zksync_types::l2_to_l1_log::SystemL2ToL1Log,
-            >(&[]))),
-            state_diff_hash: H256::zero(),
-            bootloader_initial_heap: vec![],
-            commitment_input: CommitmentInput {
-                prev_batch_commitment: H256::zero(),
-                prev_meta_hash: H256::zero(),
-                prev_aux_hash: H256::zero(),
-                blob_linear_hashes: vec![H256::zero(); 16],
-                blob_versioned_hashes: vec![H256::zero(); 16],
-                blob_opening_commitments: vec![H256::zero(); 16],
-            },
-        };
-        let output = commitment_data.compute().unwrap();
-
-        // The passthrough hash must match — both paths use the same shared function.
-        assert_eq!(
-            output.pass_through_data_hash, prev_passthrough,
-            "passthrough hash mismatch between CommitmentData and shared function"
-        );
-
-        // The full commitment must match when using the same meta + aux hashes.
-        let reconstructed =
-            compute_commitment(output.pass_through_data_hash, prev_meta_hash, prev_aux_hash);
-        assert_eq!(
-            reconstructed, prev_commitment,
-            "reconstructed commitment doesn't match — encoding mismatch"
-        );
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:

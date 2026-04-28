@@ -12,18 +12,13 @@
 //! Airbender variant verbatim.
 
 use anyhow::Context;
-use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
-use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
-    commitment::{
-        AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput, L1BatchAuxiliaryOutput,
-        L1BatchCommitment, L1BatchMetaParameters, L1BatchPassThroughData, RootState,
-    },
+    commitment::{L1BatchPassThroughData, RootState},
     web3::keccak256,
-    ProtocolVersionId, H256, U256,
+    H256, U256,
 };
 
-use crate::types::{CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
+use crate::types::TOTAL_BLOBS_IN_COMMITMENT;
 
 /// Compute the passthrough data hash for a batch. Used for the current
 /// batch's commitment and for the prev-batch binding check.
@@ -60,142 +55,21 @@ pub fn compute_commitment(
     H256(keccak256(&data))
 }
 
-/// Result of the batch commitment computation.
-pub struct BatchCommitmentOutput {
-    /// The batch commitment: `keccak256(abi.encode(passThrough, metadata, auxiliary))`.
-    pub commitment: H256,
-    /// `keccak256(prev_batch_commitment || current_commitment)`, packed as 8
-    /// big-endian u32 words. The on-chain SNARK wrapper drops the low 32 bits
-    /// (BN254 scalar field is ~254 bits) and feeds `keccak(...) >> 32` to L1's
-    /// `Executor.sol::_getBatchProofPublicInput`. We emit all 256 bits so the
-    /// guest stays shift-agnostic; the wrapper handles the truncation.
-    ///
-    /// `test_proof_public_input_matches_l1_shift` pins the contract.
-    pub proof_public_input: [u32; 8],
-    /// Sub-hashes for debugging / cross-checking.
-    pub pass_through_data_hash: H256,
-    pub metadata_hash: H256,
-    pub auxiliary_output_hash: H256,
-    pub system_logs_hash: H256,
-    pub state_diff_hash: H256,
-    pub bootloader_heap_hash: H256,
-}
-
-/// All data needed to compute the batch commitment, collected after verification.
-pub struct CommitmentData {
-    // passThroughData components
-    pub new_state_root: H256,
-    pub new_enumeration_index: u64,
-
-    // metadataHash components
-    pub protocol_version: ProtocolVersionId,
-    pub zk_porter_available: bool,
-    pub bootloader_code_hash: H256,
-    pub default_aa_code_hash: H256,
-    pub evm_emulator_code_hash: H256,
-
-    // auxiliaryOutput components
-    pub system_logs_hash: H256,
-    pub state_diff_hash: H256,
-    pub bootloader_initial_heap: Vec<u8>,
-
-    // External inputs (from CommitmentInput)
-    pub commitment_input: CommitmentInput,
-}
-
-impl CommitmentData {
-    /// Build an upstream `L1BatchCommitment` and delegate to its `hash()`.
-    pub fn compute(self) -> anyhow::Result<BatchCommitmentOutput> {
-        let bootloader_heap_hash = Blake2Hasher.hash_bytes(&self.bootloader_initial_heap);
-
-        let linear_hashes = &self.commitment_input.blob_linear_hashes;
-        let opening_commitments = &self.commitment_input.blob_opening_commitments;
-        anyhow::ensure!(
-            linear_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            linear_hashes.len()
-        );
-        anyhow::ensure!(
-            opening_commitments.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            opening_commitments.len()
-        );
-        let blob_hashes: Vec<BlobHash> = linear_hashes
-            .iter()
-            .zip(opening_commitments.iter())
-            .map(|(&linear_hash, &commitment)| BlobHash {
-                linear_hash,
-                commitment,
-            })
-            .collect();
-
-        // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
-        // `aggregation_root`, and `local_root`, so we fill them with zeros.
-        let commitment = L1BatchCommitment {
-            pass_through_data: L1BatchPassThroughData {
-                shared_states: vec![
-                    RootState {
-                        last_leaf_index: self.new_enumeration_index,
-                        root_hash: self.new_state_root,
-                    },
-                    // zkPorter shared state — reserved, always zero.
-                    RootState {
-                        last_leaf_index: 0,
-                        root_hash: H256::zero(),
-                    },
-                ],
-            },
-            meta_parameters: L1BatchMetaParameters {
-                zkporter_is_available: self.zk_porter_available,
-                bootloader_code_hash: self.bootloader_code_hash,
-                default_aa_code_hash: self.default_aa_code_hash,
-                evm_emulator_code_hash: Some(self.evm_emulator_code_hash),
-                protocol_version: Some(self.protocol_version),
-            },
-            auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
-                common: L1BatchAuxiliaryCommonOutput {
-                    l2_l1_logs_merkle_root: H256::zero(),
-                    protocol_version: self.protocol_version,
-                },
-                system_logs_linear_hash: self.system_logs_hash,
-                state_diffs_compressed: vec![],
-                state_diffs_hash: self.state_diff_hash,
-                aux_commitments: AuxCommitments {
-                    events_queue_commitment: H256::zero(),
-                    bootloader_initial_content_commitment: bootloader_heap_hash,
-                },
-                blob_hashes,
-                aggregation_root: H256::zero(),
-                local_root: H256::zero(),
-            },
-        };
-        let hashes = commitment
-            .hash()
-            .expect("L1BatchCommitment with two RootStates always succeeds");
-
-        // Matches `Executor.sol::_getBatchProofPublicInput`:
-        //   uint256(keccak256(abi.encodePacked(prev, curr))) >> PUBLIC_INPUT_SHIFT
-        // The shift is the wrapper's responsibility — see the doc comment on
-        // `BatchCommitmentOutput::proof_public_input`.
-        let prev = self.commitment_input.prev_batch_commitment;
-        let proof_public_input = {
-            let mut data = [0u8; 64];
-            data[..32].copy_from_slice(prev.as_bytes());
-            data[32..].copy_from_slice(hashes.commitment.as_bytes());
-            bytes32_to_u32x8(keccak256(&data))
-        };
-
-        Ok(BatchCommitmentOutput {
-            commitment: hashes.commitment,
-            proof_public_input,
-            pass_through_data_hash: hashes.pass_through_data,
-            metadata_hash: hashes.meta_parameters,
-            auxiliary_output_hash: hashes.aux_output,
-            system_logs_hash: self.system_logs_hash,
-            state_diff_hash: self.state_diff_hash,
-            bootloader_heap_hash,
-        })
-    }
+/// Compute the proof public input: `keccak256(prev || current)` packed as 8
+/// big-endian u32 words. The on-chain SNARK wrapper drops the low 32 bits
+/// (BN254 scalar field is ~254 bits) and feeds `keccak(...) >> 32` to L1's
+/// `Executor.sol::_getBatchProofPublicInput`. We emit all 256 bits so the
+/// guest stays shift-agnostic; the wrapper handles the truncation.
+///
+/// `test_proof_public_input_matches_l1_shift` pins the contract.
+pub fn compute_proof_public_input(
+    prev_batch_commitment: H256,
+    current_commitment: H256,
+) -> [u32; 8] {
+    let mut data = [0u8; 64];
+    data[..32].copy_from_slice(prev_batch_commitment.as_bytes());
+    data[32..].copy_from_slice(current_commitment.as_bytes());
+    bytes32_to_u32x8(keccak256(&data))
 }
 
 /// Size of a single blob chunk in ZKsync's encoding (31 bytes per field element).
@@ -373,7 +247,6 @@ fn bytes32_to_u32x8(hash: [u8; 32]) -> [u32; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zksync_types::{commitment::serialize_commitments, l2_to_l1_log::SystemL2ToL1Log};
 
     #[test]
     fn test_expand_bootloader_heap() {
@@ -381,150 +254,12 @@ mod tests {
         let expanded = expand_bootloader_heap(&content, 128);
         assert_eq!(expanded.len(), 128);
 
-        // First word (offset 0) should be 42 in big-endian
         let mut expected = [0u8; 32];
         U256::from(42).to_big_endian(&mut expected);
         assert_eq!(&expanded[0..32], &expected);
-
-        // Second word (offset 1) should be all zeros
         assert_eq!(&expanded[32..64], &[0u8; 32]);
-
-        // Third word (offset 2) should be 100
         U256::from(100).to_big_endian(&mut expected);
         assert_eq!(&expanded[64..96], &expected);
-    }
-
-    #[test]
-    fn test_bytes32_to_u32x8() {
-        let hash = [0u8; 32];
-        assert_eq!(bytes32_to_u32x8(hash), [0u32; 8]);
-
-        let mut hash = [0u8; 32];
-        hash[0] = 0xFF;
-        let result = bytes32_to_u32x8(hash);
-        assert_eq!(result[0], 0xFF000000);
-    }
-
-    /// Any post-1.5.0 protocol version yields the same metadata-hash byte
-    /// layout (97 bytes); pick a stable one for tests.
-    const TEST_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version28;
-
-    fn make_test_commitment_data() -> CommitmentData {
-        CommitmentData {
-            new_state_root: H256([0xAB; 32]),
-            new_enumeration_index: 42,
-            protocol_version: TEST_PROTOCOL_VERSION,
-            zk_porter_available: false,
-            bootloader_code_hash: H256([0x11; 32]),
-            default_aa_code_hash: H256([0x22; 32]),
-            evm_emulator_code_hash: H256([0x33; 32]),
-            system_logs_hash: H256(keccak256(&serialize_commitments::<SystemL2ToL1Log>(&[]))),
-            state_diff_hash: H256([0x44; 32]),
-            bootloader_initial_heap: vec![0u8; 64], // 2 words of zeros
-            commitment_input: CommitmentInput {
-                prev_batch_commitment: H256([0x55; 32]),
-                prev_meta_hash: H256::zero(),
-                prev_aux_hash: H256::zero(),
-                blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
-                blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
-                blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
-            },
-        }
-    }
-
-    #[test]
-    fn test_pass_through_data_hash_encoding() {
-        // Verify the encoding matches abi.encodePacked(uint64, bytes32, uint64, bytes32)
-        let data = CommitmentData {
-            new_state_root: H256([0xAB; 32]),
-            new_enumeration_index: 42,
-            protocol_version: TEST_PROTOCOL_VERSION,
-            zk_porter_available: false,
-            bootloader_code_hash: H256::zero(),
-            default_aa_code_hash: H256::zero(),
-            evm_emulator_code_hash: H256::zero(),
-            system_logs_hash: H256(keccak256(&serialize_commitments::<SystemL2ToL1Log>(&[]))),
-            state_diff_hash: H256::zero(),
-            bootloader_initial_heap: vec![],
-            commitment_input: CommitmentInput::default(),
-        };
-
-        let hash = compute_pass_through_data_hash(data.new_enumeration_index, data.new_state_root);
-        // Should be keccak256 of: 8 bytes (42 as u64 BE) + 32 bytes (0xAB...) + 8 bytes (0) + 32 bytes (0)
-        let mut expected_input = Vec::new();
-        expected_input.extend_from_slice(&42u64.to_be_bytes());
-        expected_input.extend_from_slice(&[0xAB; 32]);
-        expected_input.extend_from_slice(&0u64.to_be_bytes());
-        expected_input.extend_from_slice(&[0u8; 32]);
-        assert_eq!(hash, H256(keccak256(&expected_input)));
-    }
-
-    #[test]
-    fn test_metadata_hash_encoding() {
-        let data = make_test_commitment_data();
-        let hash = data.compute().unwrap().metadata_hash;
-        // abi.encodePacked(bool, bytes32, bytes32, bytes32)
-        let mut expected = Vec::new();
-        expected.push(0u8); // zkPorterAvailable = false
-        expected.extend_from_slice(&[0x11; 32]); // bootloader
-        expected.extend_from_slice(&[0x22; 32]); // default AA
-        expected.extend_from_slice(&[0x33; 32]); // EVM emulator
-        assert_eq!(hash, H256(keccak256(&expected)));
-    }
-
-    #[test]
-    fn test_full_commitment_deterministic() {
-        // Two identical CommitmentData must produce identical outputs.
-        let data1 = make_test_commitment_data();
-        let data2 = make_test_commitment_data();
-        let out1 = data1.compute().unwrap();
-        let out2 = data2.compute().unwrap();
-        assert_eq!(out1.commitment, out2.commitment);
-        assert_eq!(out1.proof_public_input, out2.proof_public_input);
-    }
-
-    #[test]
-    fn test_commitment_changes_with_state_root() {
-        let data1 = make_test_commitment_data();
-        let mut data2 = make_test_commitment_data();
-        data2.new_state_root = H256([0xCD; 32]);
-        let out1 = data1.compute().unwrap();
-        let out2 = data2.compute().unwrap();
-        assert_ne!(out1.commitment, out2.commitment);
-    }
-
-    #[test]
-    fn test_commitment_changes_with_bootloader_heap() {
-        let data1 = make_test_commitment_data();
-        let mut data2 = make_test_commitment_data();
-        data2.bootloader_initial_heap = vec![0xFF; 64];
-        let out1 = data1.compute().unwrap();
-        let out2 = data2.compute().unwrap();
-        assert_ne!(out1.commitment, out2.commitment);
-    }
-
-    #[test]
-    fn test_proof_public_input_depends_on_prev_commitment() {
-        let data1 = make_test_commitment_data();
-        let mut data2 = make_test_commitment_data();
-        data2.commitment_input.prev_batch_commitment = H256([0xEE; 32]);
-        let out1 = data1.compute().unwrap();
-        let out2 = data2.compute().unwrap();
-        // Same current commitment, different prev → different proof public input.
-        assert_eq!(out1.commitment, out2.commitment);
-        assert_ne!(out1.proof_public_input, out2.proof_public_input);
-    }
-
-    #[test]
-    fn test_proof_public_input_encoding() {
-        let data = make_test_commitment_data();
-        let out = data.compute().unwrap();
-        // Manually compute: keccak256(prev || commitment)
-        let mut preimage = [0u8; 64];
-        preimage[..32].copy_from_slice(&[0x55; 32]); // prev_batch_commitment
-        preimage[32..].copy_from_slice(out.commitment.as_bytes());
-        let expected = keccak256(&preimage);
-        assert_eq!(out.proof_public_input, bytes32_to_u32x8(expected));
     }
 
     #[test]
@@ -534,27 +269,57 @@ mod tests {
         expand_bootloader_heap(&content, 128);
     }
 
-    /// Pins the wrapper contract described on `BatchCommitmentOutput::proof_public_input`:
-    /// the big-endian integer formed by the high 7 u32 words must equal
-    /// `uint256(keccak(prev || curr)) >> PUBLIC_INPUT_SHIFT` (PUBLIC_INPUT_SHIFT = 32).
-    ///
-    /// If this test breaks, either the on-wire `[u32; 8]` encoding changed or the L1
-    /// shift contract changed — both require coordinated changes in the SNARK wrapper.
+    #[test]
+    fn test_bytes32_to_u32x8() {
+        assert_eq!(bytes32_to_u32x8([0u8; 32]), [0u32; 8]);
+        let mut hash = [0u8; 32];
+        hash[0] = 0xFF;
+        assert_eq!(bytes32_to_u32x8(hash)[0], 0xFF000000);
+    }
+
+    #[test]
+    fn test_pass_through_data_hash_encoding() {
+        // abi.encodePacked(uint64, bytes32, uint64, bytes32)
+        let hash = compute_pass_through_data_hash(42, H256([0xAB; 32]));
+        let mut expected_input = Vec::new();
+        expected_input.extend_from_slice(&42u64.to_be_bytes());
+        expected_input.extend_from_slice(&[0xAB; 32]);
+        expected_input.extend_from_slice(&0u64.to_be_bytes());
+        expected_input.extend_from_slice(&[0u8; 32]);
+        assert_eq!(hash, H256(keccak256(&expected_input)));
+    }
+
+    #[test]
+    fn test_proof_public_input_encoding() {
+        let prev = H256([0x55; 32]);
+        let current = H256([0xAB; 32]);
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(prev.as_bytes());
+        preimage[32..].copy_from_slice(current.as_bytes());
+        assert_eq!(
+            compute_proof_public_input(prev, current),
+            bytes32_to_u32x8(keccak256(&preimage)),
+        );
+    }
+
+    /// Pins the wrapper contract: the big-endian integer formed by the high 7 u32 words
+    /// of `compute_proof_public_input` must equal `uint256(keccak(prev || curr)) >> 32`.
+    /// If this breaks, the on-wire `[u32; 8]` encoding or L1's shift constant changed —
+    /// both require coordinated changes in the SNARK wrapper.
     #[test]
     fn test_proof_public_input_matches_l1_shift() {
         const PUBLIC_INPUT_SHIFT: u32 = 32;
-        let out = make_test_commitment_data().compute().unwrap();
+        let prev = H256([0x55; 32]);
+        let current = H256([0xAB; 32]);
 
-        // Reconstruct L1's value: keccak(prev || curr) >> 32, as a U256.
         let mut preimage = [0u8; 64];
-        preimage[..32].copy_from_slice(&[0x55; 32]);
-        preimage[32..].copy_from_slice(out.commitment.as_bytes());
+        preimage[..32].copy_from_slice(prev.as_bytes());
+        preimage[32..].copy_from_slice(current.as_bytes());
         let l1_input = U256::from_big_endian(&keccak256(&preimage)) >> PUBLIC_INPUT_SHIFT;
 
-        // Reconstruct what the wrapper should feed into L1:
-        // the high 7 u32 words of `proof_public_input`, big-endian-combined into a u256.
+        let words = compute_proof_public_input(prev, current);
         let mut wrapper_bytes = [0u8; 32];
-        for (i, word) in out.proof_public_input[..7].iter().enumerate() {
+        for (i, word) in words[..7].iter().enumerate() {
             wrapper_bytes[4 + i * 4..4 + (i + 1) * 4].copy_from_slice(&word.to_be_bytes());
         }
         let wrapper_input = U256::from_big_endian(&wrapper_bytes);
