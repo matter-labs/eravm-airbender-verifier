@@ -11,7 +11,6 @@
 //! `L1BatchAuxiliaryOutput::PostBoojum`, so upstream's `to_bytes()` emits the
 //! Airbender variant verbatim.
 
-use anyhow::Context;
 use zksync_types::{
     commitment::{BlobHash, L1BatchPassThroughData, RootState},
     web3::keccak256,
@@ -170,12 +169,15 @@ pub fn compute_blob_opening_commitment(
     H256(keccak256(&preimage))
 }
 
-/// Verify blob opening commitments by recomputing each via
-/// [`compute_blob_opening_commitment`] and comparing against the claimed value.
+/// Verify both linear hashes and opening commitments for every blob in a
+/// single pass, reusing one scratch buffer for the padded blob bytes.
 ///
-/// Matches the `EIP4844Repack` sub-circuit in Boojum
-/// (`zkevm_circuits/src/eip_4844/mod.rs`).
-pub fn verify_blob_opening_commitments(
+/// Mirrors Boojum's `EIP4844Repack` self-degeneration: a slot whose claimed
+/// `linear_hash` is zero is treated as "no blob in this slot" and skipped
+/// (this is what non-Rollup DA modes always look like). For non-zero claims
+/// we recompute both the linear hash and the opening commitment from the
+/// VM-emitted pubdata, requiring exact matches.
+pub fn verify_blob_hashes(
     pubdata: &[u8],
     versioned_hashes: &[H256],
     blob_hashes: &[BlobHash],
@@ -187,6 +189,9 @@ pub fn verify_blob_opening_commitments(
         blob_hashes.len(),
     );
 
+    let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
+    let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
+
     for (i, blob_hash) in blob_hashes.iter().enumerate() {
         if blob_hash.linear_hash == H256::zero() {
             anyhow::ensure!(
@@ -195,19 +200,29 @@ pub fn verify_blob_opening_commitments(
             );
             continue;
         }
-
-        // A non-zero claimed linear hash outside the pubdata range is caught by
-        // `verify_blob_linear_hashes` before we get here; treat it as a bug if reached.
-        let blob = padded_blob_for(pubdata, i).with_context(|| {
-            format!("blob {i}: claimed linear hash is non-zero but no pubdata for this slot")
-        })?;
-
-        let computed =
-            compute_blob_opening_commitment(&blob, versioned_hashes[i], blob_hash.linear_hash);
-
         anyhow::ensure!(
-            computed == blob_hash.commitment,
-            "blob {i} opening commitment mismatch: computed {computed:?}, claimed {:?}",
+            i < num_blobs_from_pubdata,
+            "blob {i}: claimed non-zero linear hash but no pubdata for this slot"
+        );
+
+        // Pad blob `i` into the scratch buffer.
+        let start = i * ZK_SYNC_BYTES_PER_BLOB;
+        let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
+        padded[..end - start].copy_from_slice(&pubdata[start..end]);
+        padded[end - start..].fill(0);
+
+        let computed_linear = H256(keccak256(&padded));
+        anyhow::ensure!(
+            blob_hash.linear_hash == computed_linear,
+            "blob {i} linear hash mismatch: computed {computed_linear:?}, claimed {:?}",
+            blob_hash.linear_hash
+        );
+
+        let computed_commitment =
+            compute_blob_opening_commitment(&padded, versioned_hashes[i], blob_hash.linear_hash);
+        anyhow::ensure!(
+            blob_hash.commitment == computed_commitment,
+            "blob {i} opening commitment mismatch: computed {computed_commitment:?}, claimed {:?}",
             blob_hash.commitment
         );
     }

@@ -30,7 +30,7 @@ use zksync_types::{
     block::L2BlockExecutionData,
     bytecode::{BytecodeHash, BytecodeMarker},
     commitment::{
-        serialize_commitments, AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput,
+        serialize_commitments, AuxCommitments, L1BatchAuxiliaryCommonOutput,
         L1BatchAuxiliaryOutput, L1BatchCommitment, L1BatchMetaParameters, L1BatchPassThroughData,
         PubdataParams, RootState,
     },
@@ -40,7 +40,7 @@ use zksync_types::{
     L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue, Transaction, H256, U256,
 };
 
-use crate::commitment::{expand_bootloader_heap, ZK_SYNC_BYTES_PER_BLOB};
+use crate::commitment::expand_bootloader_heap;
 use crate::types::{
     CommitmentInput, StorageLogMetadata, V1TeeVerifierInput, V2TeeVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
@@ -383,14 +383,12 @@ pub fn verify_commitment(
 
     // Verify blob hashes against pubdata produced by execution.
     //
-    // The blob slots self-degenerate for non-Rollup DA modes the same way
-    // Boojum's `EIP4844Repack` does: when a chain uses Validium / NoDA /
-    // external DA, the L2 DA validator emits zero blob hashes for every
-    // slot. `verify_blob_linear_hashes` skips slots whose claimed hash is
-    // zero, and `verify_blob_opening_commitments` skips slots whose claimed
-    // linear hash is zero — so for non-Rollup modes both functions trivially
-    // pass while the auxiliary-output hash still includes the (zero) blob
-    // slots, matching what L1 expects.
+    // Slots self-degenerate for non-Rollup DA modes the same way Boojum's
+    // `EIP4844Repack` does: when a chain uses Validium / NoDA / external DA,
+    // the L2 DA validator emits zero `linear_hash` for every slot.
+    // `verify_blob_hashes` skips those slots — both checks trivially pass
+    // while the auxiliary-output hash still includes the (zero) blob slots,
+    // matching what L1 expects.
     //
     // Post-gateway VMs always populate `pubdata_input`; if it is missing
     // here, treat it as a malformed input.
@@ -398,8 +396,7 @@ pub fn verify_commitment(
         .pubdata_input
         .as_deref()
         .context("VM output is missing pubdata_input — required for blob verification")?;
-    verify_blob_linear_hashes(pubdata, &commitment_input.blob_hashes)?;
-    commitment::verify_blob_opening_commitments(
+    commitment::verify_blob_hashes(
         pubdata,
         &commitment_input.blob_versioned_hashes,
         &commitment_input.blob_hashes,
@@ -479,44 +476,6 @@ pub fn verify_commitment(
         state_diffs: state.state_diffs,
         pubdata_input: state.pubdata_input,
     })
-}
-
-/// Verify that blob linear hashes match the pubdata produced by VM execution.
-///
-/// Mirrors Boojum's `EIP4844Repack` self-degeneration: a slot whose claimed
-/// hash is zero is treated as "no blob in this slot" and skipped (this is
-/// what non-Rollup DA modes always look like). For non-zero claims we
-/// recompute via [`commitment::compute_blob_linear_hashes`] and require an
-/// exact match, plus that pubdata actually has a blob's worth of bytes for
-/// the slot — i.e. we don't accept a non-zero claim on a slot the pubdata
-/// can't back.
-fn verify_blob_linear_hashes(pubdata: &[u8], blob_hashes: &[BlobHash]) -> anyhow::Result<()> {
-    let computed = commitment::compute_blob_linear_hashes(pubdata);
-    anyhow::ensure!(
-        blob_hashes.len() <= computed.len(),
-        "claimed blob_hashes length {} exceeds capacity {}",
-        blob_hashes.len(),
-        computed.len(),
-    );
-    let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
-    for (i, blob_hash) in blob_hashes.iter().enumerate() {
-        if blob_hash.linear_hash == H256::zero() {
-            // Slot empty. Mode-specific DA validation (e.g. NoDA's state-diff
-            // hash, Validium's committee root) is L1's `IL1DAValidator` job.
-            continue;
-        }
-        anyhow::ensure!(
-            i < num_blobs_from_pubdata,
-            "blob {i}: claimed non-zero linear hash but no pubdata for this slot"
-        );
-        anyhow::ensure!(
-            blob_hash.linear_hash == computed[i],
-            "blob {i} linear hash mismatch: computed {:?}, claimed {:?}",
-            computed[i],
-            blob_hash.linear_hash,
-        );
-    }
-    Ok(())
 }
 
 /// Verify that a bytecode's content matches its claimed hash.
@@ -750,8 +709,10 @@ where
 mod tests {
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
+    use zksync_types::commitment::BlobHash;
 
     use super::*;
+    use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
     use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
 
     #[test]
@@ -787,41 +748,18 @@ mod tests {
         );
     }
 
-    fn blob_hash_with_linear(linear_hash: H256) -> BlobHash {
-        BlobHash {
-            linear_hash,
+    #[test]
+    fn test_verify_blob_hashes_linear_tampered() {
+        // Wrong linear hash → fails on linear check before commitment check.
+        let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
+        let mut blob_hashes = vec![BlobHash::default(); 16];
+        blob_hashes[0] = BlobHash {
+            linear_hash: H256([0xFF; 32]),
             commitment: H256::zero(),
-        }
-    }
-
-    #[test]
-    fn test_verify_blob_hashes_valid() {
-        // One blob worth of pubdata.
-        let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
-        let expected_hash = H256(keccak256(&pubdata));
-        let mut claimed = vec![BlobHash::default(); 16];
-        claimed[0] = blob_hash_with_linear(expected_hash);
-        verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
-    }
-
-    #[test]
-    fn test_verify_blob_hashes_partial_blob() {
-        // Less than one blob — gets zero-padded.
-        let pubdata = vec![0xCD_u8; 1000];
-        let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
-        padded[..1000].copy_from_slice(&pubdata);
-        let expected_hash = H256(keccak256(&padded));
-        let mut claimed = vec![BlobHash::default(); 16];
-        claimed[0] = blob_hash_with_linear(expected_hash);
-        verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
-    }
-
-    #[test]
-    fn test_verify_blob_hashes_tampered() {
-        let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
-        let mut claimed = vec![BlobHash::default(); 16];
-        claimed[0] = blob_hash_with_linear(H256([0xFF; 32]));
-        let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
+        };
+        let versioned_hashes = vec![H256::zero(); 16];
+        let err = commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes)
+            .unwrap_err();
         assert!(
             err.to_string().contains("linear hash mismatch"),
             "unexpected: {err}"
@@ -829,17 +767,23 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_blob_hashes_extra_blob() {
+    fn test_verify_blob_hashes_no_pubdata() {
+        // Non-zero claim but no pubdata → fails before hash checks.
         let pubdata = vec![];
-        let mut claimed = vec![BlobHash::default(); 16];
-        claimed[0] = blob_hash_with_linear(H256([0xFF; 32]));
-        let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
+        let mut blob_hashes = vec![BlobHash::default(); 16];
+        blob_hashes[0] = BlobHash {
+            linear_hash: H256([0xFF; 32]),
+            commitment: H256::zero(),
+        };
+        let versioned_hashes = vec![H256::zero(); 16];
+        let err = commitment::verify_blob_hashes(&pubdata, &versioned_hashes, &blob_hashes)
+            .unwrap_err();
         assert!(err.to_string().contains("no pubdata"), "unexpected: {err}");
     }
 
     #[test]
-    fn test_verify_blob_opening_commitment() {
-        use crate::commitment::{verify_blob_opening_commitments, ZK_SYNC_BYTES_PER_BLOB};
+    fn test_verify_blob_hashes_valid() {
+        use crate::commitment::{verify_blob_hashes, ZK_SYNC_BYTES_PER_BLOB};
         use ark_bls12_381::Fr as Bls12_381Fr;
         use ark_ff::{BigInteger, PrimeField, Zero};
 
@@ -856,7 +800,7 @@ mod tests {
         let mut versioned_hash = H256(keccak256(b"test_versioned_hash"));
         versioned_hash.0[0] = 0x01; // EIP-4844 version byte
 
-        // Step 1: Parse polynomial (same logic as verify_blob_opening_commitments).
+        // Step 1: Parse polynomial (same logic as verify_blob_hashes).
         let poly: Vec<Bls12_381Fr> = blob_data
             .chunks(31)
             .rev()
@@ -916,12 +860,12 @@ mod tests {
         let mut versioned_hashes = vec![H256::zero(); 16];
         versioned_hashes[0] = versioned_hash;
 
-        verify_blob_opening_commitments(&blob_data, &versioned_hashes, &blob_hashes).unwrap();
+        verify_blob_hashes(&blob_data, &versioned_hashes, &blob_hashes).unwrap();
     }
 
     #[test]
-    fn test_verify_blob_opening_commitment_tampered() {
-        use crate::commitment::{verify_blob_opening_commitments, ZK_SYNC_BYTES_PER_BLOB};
+    fn test_verify_blob_hashes_commitment_tampered() {
+        use crate::commitment::{verify_blob_hashes, ZK_SYNC_BYTES_PER_BLOB};
 
         let blob_data = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
         let linear_hash = H256(keccak256(&blob_data));
@@ -935,8 +879,7 @@ mod tests {
         let mut versioned_hashes = vec![H256::zero(); 16];
         versioned_hashes[0] = versioned_hash;
 
-        let err = verify_blob_opening_commitments(&blob_data, &versioned_hashes, &blob_hashes)
-            .unwrap_err();
+        let err = verify_blob_hashes(&blob_data, &versioned_hashes, &blob_hashes).unwrap_err();
         assert!(
             err.to_string().contains("opening commitment mismatch"),
             "unexpected: {err}"
