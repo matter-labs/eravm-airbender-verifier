@@ -80,6 +80,8 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
+        // TODO: long term, the upstream dump should ship V2 directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize loop.
+        // The current approach is a workaround until either the producer emits V2 or we pre-process the LFS corpus into V2.
         let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
             .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
         let mut prover_input = Inputs::new();
