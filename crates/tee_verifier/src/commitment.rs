@@ -13,7 +13,7 @@
 
 use anyhow::Context;
 use zksync_types::{
-    commitment::{L1BatchPassThroughData, RootState},
+    commitment::{BlobHash, L1BatchPassThroughData, RootState},
     web3::keccak256,
     H256, U256,
 };
@@ -178,23 +178,20 @@ pub fn compute_blob_opening_commitment(
 pub fn verify_blob_opening_commitments(
     pubdata: &[u8],
     versioned_hashes: &[H256],
-    claimed_linear_hashes: &[H256],
-    claimed_output_hashes: &[H256],
+    blob_hashes: &[BlobHash],
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        versioned_hashes.len() == claimed_linear_hashes.len()
-            && claimed_linear_hashes.len() == claimed_output_hashes.len(),
-        "blob array length mismatch: versioned={}, linear={}, output={}",
+        versioned_hashes.len() == blob_hashes.len(),
+        "blob array length mismatch: versioned={}, blob_hashes={}",
         versioned_hashes.len(),
-        claimed_linear_hashes.len(),
-        claimed_output_hashes.len()
+        blob_hashes.len(),
     );
 
-    for i in 0..claimed_output_hashes.len() {
-        if claimed_linear_hashes[i] == H256::zero() {
+    for (i, blob_hash) in blob_hashes.iter().enumerate() {
+        if blob_hash.linear_hash == H256::zero() {
             anyhow::ensure!(
-                claimed_output_hashes[i] == H256::zero(),
-                "blob {i}: linear hash is zero but output hash is non-zero"
+                blob_hash.commitment == H256::zero(),
+                "blob {i}: linear hash is zero but opening commitment is non-zero"
             );
             continue;
         }
@@ -206,12 +203,12 @@ pub fn verify_blob_opening_commitments(
         })?;
 
         let computed =
-            compute_blob_opening_commitment(&blob, versioned_hashes[i], claimed_linear_hashes[i]);
+            compute_blob_opening_commitment(&blob, versioned_hashes[i], blob_hash.linear_hash);
 
         anyhow::ensure!(
-            computed == claimed_output_hashes[i],
+            computed == blob_hash.commitment,
             "blob {i} opening commitment mismatch: computed {computed:?}, claimed {:?}",
-            claimed_output_hashes[i]
+            blob_hash.commitment
         );
     }
     Ok(())

@@ -316,8 +316,7 @@ pub struct L1BatchAuxiliaryCommonOutput {
     pub protocol_version: ProtocolVersionId,
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
-#[cfg_attr(test, derive(Serialize, Deserialize))]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BlobHash {
     pub commitment: H256,
     pub linear_hash: H256,

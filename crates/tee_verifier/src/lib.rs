@@ -398,12 +398,11 @@ pub fn verify_commitment(
         .pubdata_input
         .as_deref()
         .context("VM output is missing pubdata_input — required for blob verification")?;
-    verify_blob_linear_hashes(pubdata, &commitment_input.blob_linear_hashes)?;
+    verify_blob_linear_hashes(pubdata, &commitment_input.blob_hashes)?;
     commitment::verify_blob_opening_commitments(
         pubdata,
         &commitment_input.blob_versioned_hashes,
-        &commitment_input.blob_linear_hashes,
-        &commitment_input.blob_opening_commitments,
+        &commitment_input.blob_hashes,
     )?;
 
     let system_logs_hash = H256(keccak256(&serialize_commitments(&state.system_logs)));
@@ -411,24 +410,10 @@ pub fn verify_commitment(
     let bootloader_heap_hash = Blake2Hasher.hash_bytes(&state.expanded_heap);
 
     anyhow::ensure!(
-        commitment_input.blob_linear_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
-        "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-        commitment_input.blob_linear_hashes.len()
+        commitment_input.blob_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
+        "blob_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+        commitment_input.blob_hashes.len()
     );
-    anyhow::ensure!(
-        commitment_input.blob_opening_commitments.len() == TOTAL_BLOBS_IN_COMMITMENT,
-        "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-        commitment_input.blob_opening_commitments.len()
-    );
-    let blob_hashes: Vec<BlobHash> = commitment_input
-        .blob_linear_hashes
-        .iter()
-        .zip(commitment_input.blob_opening_commitments.iter())
-        .map(|(&linear_hash, &commitment)| BlobHash {
-            linear_hash,
-            commitment,
-        })
-        .collect();
 
     // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
     // `aggregation_root`, and `local_root`, so we fill them with zeros.
@@ -465,7 +450,7 @@ pub fn verify_commitment(
                 events_queue_commitment: H256::zero(),
                 bootloader_initial_content_commitment: bootloader_heap_hash,
             },
-            blob_hashes,
+            blob_hashes: commitment_input.blob_hashes,
             aggregation_root: H256::zero(),
             local_root: H256::zero(),
         },
@@ -505,17 +490,17 @@ pub fn verify_commitment(
 /// exact match, plus that pubdata actually has a blob's worth of bytes for
 /// the slot — i.e. we don't accept a non-zero claim on a slot the pubdata
 /// can't back.
-fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) -> anyhow::Result<()> {
+fn verify_blob_linear_hashes(pubdata: &[u8], blob_hashes: &[BlobHash]) -> anyhow::Result<()> {
     let computed = commitment::compute_blob_linear_hashes(pubdata);
     anyhow::ensure!(
-        claimed_hashes.len() <= computed.len(),
-        "claimed blob_linear_hashes length {} exceeds capacity {}",
-        claimed_hashes.len(),
+        blob_hashes.len() <= computed.len(),
+        "claimed blob_hashes length {} exceeds capacity {}",
+        blob_hashes.len(),
         computed.len(),
     );
     let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
-    for (i, claimed) in claimed_hashes.iter().enumerate() {
-        if *claimed == H256::zero() {
+    for (i, blob_hash) in blob_hashes.iter().enumerate() {
+        if blob_hash.linear_hash == H256::zero() {
             // Slot empty. Mode-specific DA validation (e.g. NoDA's state-diff
             // hash, Validium's committee root) is L1's `IL1DAValidator` job.
             continue;
@@ -525,9 +510,10 @@ fn verify_blob_linear_hashes(pubdata: &[u8], claimed_hashes: &[H256]) -> anyhow:
             "blob {i}: claimed non-zero linear hash but no pubdata for this slot"
         );
         anyhow::ensure!(
-            *claimed == computed[i],
-            "blob {i} linear hash mismatch: computed {:?}, claimed {claimed:?}",
+            blob_hash.linear_hash == computed[i],
+            "blob {i} linear hash mismatch: computed {:?}, claimed {:?}",
             computed[i],
+            blob_hash.linear_hash,
         );
     }
     Ok(())
@@ -801,13 +787,20 @@ mod tests {
         );
     }
 
+    fn blob_hash_with_linear(linear_hash: H256) -> BlobHash {
+        BlobHash {
+            linear_hash,
+            commitment: H256::zero(),
+        }
+    }
+
     #[test]
     fn test_verify_blob_hashes_valid() {
         // One blob worth of pubdata.
         let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
         let expected_hash = H256(keccak256(&pubdata));
-        let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = expected_hash;
+        let mut claimed = vec![BlobHash::default(); 16];
+        claimed[0] = blob_hash_with_linear(expected_hash);
         verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
     }
 
@@ -818,16 +811,16 @@ mod tests {
         let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
         padded[..1000].copy_from_slice(&pubdata);
         let expected_hash = H256(keccak256(&padded));
-        let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = expected_hash;
+        let mut claimed = vec![BlobHash::default(); 16];
+        claimed[0] = blob_hash_with_linear(expected_hash);
         verify_blob_linear_hashes(&pubdata, &claimed).unwrap();
     }
 
     #[test]
     fn test_verify_blob_hashes_tampered() {
         let pubdata = vec![0xAB_u8; ZK_SYNC_BYTES_PER_BLOB];
-        let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = H256([0xFF; 32]);
+        let mut claimed = vec![BlobHash::default(); 16];
+        claimed[0] = blob_hash_with_linear(H256([0xFF; 32]));
         let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
         assert!(
             err.to_string().contains("linear hash mismatch"),
@@ -838,8 +831,8 @@ mod tests {
     #[test]
     fn test_verify_blob_hashes_extra_blob() {
         let pubdata = vec![];
-        let mut claimed = vec![H256::zero(); 16];
-        claimed[0] = H256([0xFF; 32]);
+        let mut claimed = vec![BlobHash::default(); 16];
+        claimed[0] = blob_hash_with_linear(H256([0xFF; 32]));
         let err = verify_blob_linear_hashes(&pubdata, &claimed).unwrap_err();
         assert!(err.to_string().contains("no pubdata"), "unexpected: {err}");
     }
@@ -915,20 +908,15 @@ mod tests {
         };
 
         // Now verify — should pass.
-        let mut linear_hashes = vec![H256::zero(); 16];
-        linear_hashes[0] = linear_hash;
+        let mut blob_hashes = vec![BlobHash::default(); 16];
+        blob_hashes[0] = BlobHash {
+            linear_hash,
+            commitment: output_hash,
+        };
         let mut versioned_hashes = vec![H256::zero(); 16];
         versioned_hashes[0] = versioned_hash;
-        let mut output_hashes = vec![H256::zero(); 16];
-        output_hashes[0] = output_hash;
 
-        verify_blob_opening_commitments(
-            &blob_data,
-            &versioned_hashes,
-            &linear_hashes,
-            &output_hashes,
-        )
-        .unwrap();
+        verify_blob_opening_commitments(&blob_data, &versioned_hashes, &blob_hashes).unwrap();
     }
 
     #[test]
@@ -939,20 +927,16 @@ mod tests {
         let linear_hash = H256(keccak256(&blob_data));
         let versioned_hash = H256([0x01; 32]);
 
-        let mut linear_hashes = vec![H256::zero(); 16];
-        linear_hashes[0] = linear_hash;
+        let mut blob_hashes = vec![BlobHash::default(); 16];
+        blob_hashes[0] = BlobHash {
+            linear_hash,
+            commitment: H256([0xFF; 32]), // wrong commitment
+        };
         let mut versioned_hashes = vec![H256::zero(); 16];
         versioned_hashes[0] = versioned_hash;
-        let mut output_hashes = vec![H256::zero(); 16];
-        output_hashes[0] = H256([0xFF; 32]); // wrong hash
 
-        let err = verify_blob_opening_commitments(
-            &blob_data,
-            &versioned_hashes,
-            &linear_hashes,
-            &output_hashes,
-        )
-        .unwrap_err();
+        let err = verify_blob_opening_commitments(&blob_data, &versioned_hashes, &blob_hashes)
+            .unwrap_err();
         assert!(
             err.to_string().contains("opening commitment mismatch"),
             "unexpected: {err}"

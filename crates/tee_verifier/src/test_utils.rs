@@ -16,7 +16,7 @@
 //! sequencer output.
 
 use anyhow::Context;
-use zksync_types::{web3::keccak256, H256};
+use zksync_types::{commitment::BlobHash, web3::keccak256, H256};
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
 use crate::types::{
@@ -27,10 +27,10 @@ use crate::types::{
 /// pipeline can be exercised end-to-end without real sequencer/L1 inputs.
 ///
 /// What's produced:
-/// - `blob_linear_hashes` are derived from the VM's pubdata (real, in the sense that
-///   they match what the VM actually emitted).
-/// - `blob_versioned_hashes` and `blob_opening_commitments` are fabricated
-///   deterministically so the blob opening check passes.
+/// - `blob_hashes` carry real linear hashes (derived from the VM's pubdata) and
+///   fabricated opening commitments derived from synthetic versioned hashes.
+/// - `blob_versioned_hashes` are fabricated deterministically so the blob
+///   opening check passes.
 /// - `prev_meta_hash` / `prev_aux_hash` are forced to zero, and `prev_batch_commitment`
 ///   is derived from those zeros so the binding check is satisfied tautologically.
 ///
@@ -43,9 +43,7 @@ pub fn augment_with_synthetic_commitment(
     // we still need a fresh execution after `commitment_input` is filled in.
     let preliminary = crate::execute(v1.clone())?;
     let pubdata = preliminary.pubdata();
-    let blob_linear_hashes = compute_blob_linear_hashes(pubdata);
-    let (blob_versioned_hashes, blob_opening_commitments) =
-        compute_blob_opening_data(pubdata, &blob_linear_hashes);
+    let (blob_versioned_hashes, blob_hashes) = compute_blob_opening_data(pubdata);
 
     // Compute a self-consistent prev_batch_commitment from old_root_hash and
     // enumeration_index so that the prev_batch_commitment binding check passes.
@@ -65,28 +63,25 @@ pub fn augment_with_synthetic_commitment(
             prev_batch_commitment,
             prev_meta_hash,
             prev_aux_hash,
-            blob_linear_hashes,
+            blob_hashes,
             blob_versioned_hashes,
-            blob_opening_commitments,
         },
     })
 }
 
-// `compute_blob_linear_hashes` lives in `crate::commitment`; re-exported via
-// `crate::commitment::compute_blob_linear_hashes` for callers that don't want
-// to touch the production module.
-pub use crate::commitment::compute_blob_linear_hashes;
-
-/// Compute self-consistent blob versioned hashes and opening commitments for testing.
+/// Compute self-consistent blob versioned hashes and `BlobHash` (linear +
+/// opening commitment) pairs for testing.
 ///
-/// In production, versioned hashes come from L1 blob transactions. For tests, we
-/// generate deterministic fake versioned hashes and call the same
-/// [`crate::commitment::compute_blob_opening_commitment`] the verifier uses,
-/// so the resulting `opening_commitments` pass the verifier's check by
-/// construction.
-pub fn compute_blob_opening_data(pubdata: &[u8], linear_hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
+/// In production, versioned hashes come from L1 blob transactions and opening
+/// commitments are computed by the sequencer. For tests, we derive linear
+/// hashes from the VM's pubdata, fabricate deterministic versioned hashes,
+/// and call the same [`crate::commitment::compute_blob_opening_commitment`]
+/// the verifier uses, so the resulting commitments pass the verifier's check
+/// by construction.
+pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
+    let linear_hashes = crate::commitment::compute_blob_linear_hashes(pubdata);
     let mut versioned_hashes = vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT];
-    let mut opening_commitments = vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT];
+    let mut blob_hashes = vec![BlobHash::default(); TOTAL_BLOBS_IN_COMMITMENT];
 
     for i in 0..TOTAL_BLOBS_IN_COMMITMENT {
         if linear_hashes[i] == H256::zero() {
@@ -103,12 +98,16 @@ pub fn compute_blob_opening_data(pubdata: &[u8], linear_hashes: &[H256]) -> (Vec
         vh.0[0] = 0x01; // EIP-4844 version byte
         versioned_hashes[i] = vh;
 
-        opening_commitments[i] = crate::commitment::compute_blob_opening_commitment(
+        let commitment = crate::commitment::compute_blob_opening_commitment(
             &blob,
             versioned_hashes[i],
             linear_hashes[i],
         );
+        blob_hashes[i] = BlobHash {
+            linear_hash: linear_hashes[i],
+            commitment,
+        };
     }
 
-    (versioned_hashes, opening_commitments)
+    (versioned_hashes, blob_hashes)
 }

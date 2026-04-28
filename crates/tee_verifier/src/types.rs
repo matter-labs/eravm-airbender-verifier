@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use zksync_types::{
-    block::L2BlockExecutionData, commitment::PubdataParams,
-    witness_block_state::WitnessStorageState, L1BatchNumber, ProtocolVersionId, H256, U256,
+    block::L2BlockExecutionData,
+    commitment::{BlobHash, PubdataParams},
+    witness_block_state::WitnessStorageState,
+    L1BatchNumber, ProtocolVersionId, H256, U256,
 };
 use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
@@ -59,15 +61,14 @@ pub struct CommitmentInput {
     pub prev_meta_hash: H256,
     /// The auxiliary output hash of the previous batch.
     pub prev_aux_hash: H256,
-    /// EIP-4844 blob linear hashes for the auxiliary output.
-    /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are `H256::zero()`.
-    pub blob_linear_hashes: Vec<H256>,
+    /// `(linear_hash, opening_commitment)` pairs that go into the auxiliary
+    /// output. Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are
+    /// `BlobHash::default()`.
+    pub blob_hashes: Vec<BlobHash>,
     /// EIP-4844 versioned hashes for each blob (from the L1 blob transaction).
-    /// Used to verify blob opening commitments.
+    /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`. Used to derive opening
+    /// points; not part of the auxiliary-output bytes.
     pub blob_versioned_hashes: Vec<H256>,
-    /// Blob opening commitment hashes: `keccak256(versioned_hash || opening_point || opening_value)`.
-    /// Verified by evaluating the blob polynomial at the opening point.
-    pub blob_opening_commitments: Vec<H256>,
 }
 
 impl Default for CommitmentInput {
@@ -76,9 +77,8 @@ impl Default for CommitmentInput {
             prev_batch_commitment: H256::zero(),
             prev_meta_hash: H256::zero(),
             prev_aux_hash: H256::zero(),
-            blob_linear_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+            blob_hashes: vec![BlobHash::default(); TOTAL_BLOBS_IN_COMMITMENT],
             blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
-            blob_opening_commitments: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
         }
     }
 }

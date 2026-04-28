@@ -271,7 +271,7 @@ fn crosscheck_commitment(
     use zksync_tee_verifier::commitment::expand_bootloader_heap;
     use zksync_types::{
         commitment::{
-            serialize_commitments, AuxCommitments, BlobHash, CommitmentCommonInput,
+            serialize_commitments, AuxCommitments, CommitmentCommonInput,
             CommitmentInput as SequencerCommitmentInput, L1BatchCommitment,
         },
         web3::keccak256,
@@ -304,16 +304,6 @@ fn crosscheck_commitment(
         "bootloader_heap_hash mismatch"
     );
 
-    let blob_hashes: Vec<BlobHash> = commitment_input
-        .blob_linear_hashes
-        .iter()
-        .zip(commitment_input.blob_opening_commitments.iter())
-        .map(|(&linear_hash, &commitment)| BlobHash {
-            linear_hash,
-            commitment,
-        })
-        .collect();
-
     // Feed real logs/diffs/heap-hash/blob-hashes so `L1BatchCommitment::hash()`
     // covers passThrough + meta + auxiliaryOutput. The sequencer's
     // `bootloader_initial_content_commitment` is Poseidon2 in production, but
@@ -335,7 +325,7 @@ fn crosscheck_commitment(
             events_queue_commitment: H256::zero(),
             bootloader_initial_content_commitment: ind_heap_hash,
         },
-        blob_hashes,
+        blob_hashes: commitment_input.blob_hashes.clone(),
         aggregation_root: H256::zero(),
     };
     let seq_hashes = L1BatchCommitment::new(sequencer_input, true)?.hash()?;
