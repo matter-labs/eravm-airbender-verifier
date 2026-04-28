@@ -26,7 +26,7 @@ use zksync_crypto_primitives::hasher::Hasher;
 use zksync_types::{
     commitment::{
         AuxCommitments, BlobHash, L1BatchAuxiliaryCommonOutput, L1BatchAuxiliaryOutput,
-        L1BatchMetaParameters, L1BatchPassThroughData, RootState,
+        L1BatchCommitment, L1BatchMetaParameters, L1BatchPassThroughData, RootState,
     },
     web3::keccak256,
     ProtocolVersionId, H256, U256,
@@ -136,17 +136,81 @@ pub struct CommitmentData {
 }
 
 impl CommitmentData {
+    /// Build a full upstream `L1BatchCommitment` and delegate to its `hash()`.
+    ///
+    /// All three sub-hashes (pass-through, metadata, auxiliary) and the final
+    /// commitment come from upstream, so the encoding stays in lockstep with
+    /// `Committer.sol`. Airbender deviations from Boojum (Blake2s bootloader
+    /// heap hash, zero events queue) are encoded as direct field values on
+    /// `L1BatchAuxiliaryOutput::PostBoojum` — `to_bytes()` emits whatever we
+    /// put in.
     pub fn compute(self) -> anyhow::Result<BatchCommitmentOutput> {
-        let pass_through_data_hash =
-            compute_pass_through_data_hash(self.new_enumeration_index, self.new_state_root);
-        let metadata_hash = self.compute_metadata_hash();
-        let system_logs_hash = self.system_logs_hash;
-        let bootloader_heap_hash = self.compute_bootloader_heap_hash();
-        let state_diff_hash = self.state_diff_hash;
-        let auxiliary_output_hash = self.compute_auxiliary_output_hash()?;
+        let bootloader_heap_hash = Blake2Hasher.hash_bytes(&self.bootloader_initial_heap);
 
-        let commitment =
-            compute_commitment(pass_through_data_hash, metadata_hash, auxiliary_output_hash);
+        let linear_hashes = &self.commitment_input.blob_linear_hashes;
+        let opening_commitments = &self.commitment_input.blob_opening_commitments;
+        anyhow::ensure!(
+            linear_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
+            "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+            linear_hashes.len()
+        );
+        anyhow::ensure!(
+            opening_commitments.len() == TOTAL_BLOBS_IN_COMMITMENT,
+            "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
+            opening_commitments.len()
+        );
+        let blob_hashes: Vec<BlobHash> = linear_hashes
+            .iter()
+            .zip(opening_commitments.iter())
+            .map(|(&linear_hash, &commitment)| BlobHash {
+                linear_hash,
+                commitment,
+            })
+            .collect();
+
+        // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
+        // `aggregation_root`, and `local_root`, so we fill them with zeros.
+        let commitment = L1BatchCommitment {
+            pass_through_data: L1BatchPassThroughData {
+                shared_states: vec![
+                    RootState {
+                        last_leaf_index: self.new_enumeration_index,
+                        root_hash: self.new_state_root,
+                    },
+                    // zkPorter shared state — reserved, always zero.
+                    RootState {
+                        last_leaf_index: 0,
+                        root_hash: H256::zero(),
+                    },
+                ],
+            },
+            meta_parameters: L1BatchMetaParameters {
+                zkporter_is_available: self.zk_porter_available,
+                bootloader_code_hash: self.bootloader_code_hash,
+                default_aa_code_hash: self.default_aa_code_hash,
+                evm_emulator_code_hash: Some(self.evm_emulator_code_hash),
+                protocol_version: Some(self.protocol_version),
+            },
+            auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
+                common: L1BatchAuxiliaryCommonOutput {
+                    l2_l1_logs_merkle_root: H256::zero(),
+                    protocol_version: self.protocol_version,
+                },
+                system_logs_linear_hash: self.system_logs_hash,
+                state_diffs_compressed: vec![],
+                state_diffs_hash: self.state_diff_hash,
+                aux_commitments: AuxCommitments {
+                    events_queue_commitment: H256::zero(),
+                    bootloader_initial_content_commitment: bootloader_heap_hash,
+                },
+                blob_hashes,
+                aggregation_root: H256::zero(),
+                local_root: H256::zero(),
+            },
+        };
+        let hashes = commitment
+            .hash()
+            .expect("L1BatchCommitment with two RootStates always succeeds");
 
         // Matches `Executor.sol::_getBatchProofPublicInput`:
         //   uint256(keccak256(abi.encodePacked(prev, curr))) >> PUBLIC_INPUT_SHIFT
@@ -156,97 +220,20 @@ impl CommitmentData {
         let proof_public_input = {
             let mut data = [0u8; 64];
             data[..32].copy_from_slice(prev.as_bytes());
-            data[32..].copy_from_slice(commitment.as_bytes());
+            data[32..].copy_from_slice(hashes.commitment.as_bytes());
             bytes32_to_u32x8(keccak256(&data))
         };
 
         Ok(BatchCommitmentOutput {
-            commitment,
+            commitment: hashes.commitment,
             proof_public_input,
-            pass_through_data_hash,
-            metadata_hash,
-            auxiliary_output_hash,
-            system_logs_hash,
-            state_diff_hash,
+            pass_through_data_hash: hashes.pass_through_data,
+            metadata_hash: hashes.meta_parameters,
+            auxiliary_output_hash: hashes.aux_output,
+            system_logs_hash: self.system_logs_hash,
+            state_diff_hash: self.state_diff_hash,
             bootloader_heap_hash,
         })
-    }
-
-    /// Delegates to upstream `L1BatchMetaParameters::hash`, which matches
-    /// `Executor.sol::_batchMetaParameters()` for protocol versions ≥ 1.5.0
-    /// (the only ones supported by this verifier — see
-    /// `is_supported_by_fast_vm` in `lib.rs`).
-    ///
-    /// `zk_porter_available` is sourced from the witness (`SystemEnv`); the
-    /// sequencer must set it to match L1's `ZKPORTER_IS_AVAILABLE` constant
-    /// or the commitment will mismatch.
-    fn compute_metadata_hash(&self) -> H256 {
-        L1BatchMetaParameters {
-            zkporter_is_available: self.zk_porter_available,
-            bootloader_code_hash: self.bootloader_code_hash,
-            default_aa_code_hash: self.default_aa_code_hash,
-            evm_emulator_code_hash: Some(self.evm_emulator_code_hash),
-            protocol_version: Some(self.protocol_version),
-        }
-        .hash()
-    }
-
-    /// Delegates to upstream `L1BatchAuxiliaryOutput::hash` (PostBoojum variant)
-    /// so the encoding stays in lockstep with `Committer.sol::_batchAuxiliaryOutput()`.
-    ///
-    /// Airbender deviations from Boojum (documented in the module preamble) are
-    /// encoded as direct field values:
-    /// - `bootloader_initial_content_commitment`: Blake2s of the expanded heap
-    ///   (vs Boojum's Poseidon2-Goldilocks sponge).
-    /// - `events_queue_commitment`: `H256::zero()` (events are deterministic
-    ///   outputs of proven-correct execution).
-    fn compute_auxiliary_output_hash(&self) -> anyhow::Result<H256> {
-        let hashes = &self.commitment_input.blob_linear_hashes;
-        let commits = &self.commitment_input.blob_opening_commitments;
-        anyhow::ensure!(
-            hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_linear_hashes length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            hashes.len()
-        );
-        anyhow::ensure!(
-            commits.len() == TOTAL_BLOBS_IN_COMMITMENT,
-            "blob_opening_commitments length mismatch: got {}, expected {TOTAL_BLOBS_IN_COMMITMENT}",
-            commits.len()
-        );
-        let blob_hashes: Vec<BlobHash> = hashes
-            .iter()
-            .zip(commits.iter())
-            .map(|(&linear_hash, &commitment)| BlobHash {
-                linear_hash,
-                commitment,
-            })
-            .collect();
-
-        // `to_bytes()` for `PostBoojum` ignores `common`, `state_diffs_compressed`,
-        // `aggregation_root`, and `local_root`, so we fill them with zeros.
-        Ok(L1BatchAuxiliaryOutput::PostBoojum {
-            common: L1BatchAuxiliaryCommonOutput {
-                l2_l1_logs_merkle_root: H256::zero(),
-                protocol_version: self.protocol_version,
-            },
-            system_logs_linear_hash: self.system_logs_hash,
-            state_diffs_compressed: vec![],
-            state_diffs_hash: self.state_diff_hash,
-            aux_commitments: AuxCommitments {
-                events_queue_commitment: H256::zero(),
-                bootloader_initial_content_commitment: self.compute_bootloader_heap_hash(),
-            },
-            blob_hashes,
-            aggregation_root: H256::zero(),
-            local_root: H256::zero(),
-        }
-        .hash())
-    }
-
-    /// Blake2s hash of the full expanded bootloader heap.
-    /// Replaces Boojum's Poseidon2-Goldilocks sponge over `MemoryQuery` entries.
-    fn compute_bootloader_heap_hash(&self) -> H256 {
-        Blake2Hasher.hash_bytes(&self.bootloader_initial_heap)
     }
 }
 
@@ -518,7 +505,7 @@ mod tests {
     #[test]
     fn test_metadata_hash_encoding() {
         let data = make_test_commitment_data();
-        let hash = data.compute_metadata_hash();
+        let hash = data.compute().unwrap().metadata_hash;
         // abi.encodePacked(bool, bytes32, bytes32, bytes32)
         let mut expected = Vec::new();
         expected.push(0u8); // zkPorterAvailable = false

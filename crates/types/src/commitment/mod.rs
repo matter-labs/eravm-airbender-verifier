@@ -635,7 +635,7 @@ impl L1BatchPassThroughData {
 
 #[derive(Debug, Clone)]
 pub struct L1BatchCommitment {
-    pass_through_data: L1BatchPassThroughData,
+    pub pass_through_data: L1BatchPassThroughData,
     pub auxiliary_output: L1BatchAuxiliaryOutput,
     pub meta_parameters: L1BatchMetaParameters,
 }
