@@ -163,10 +163,7 @@ pub(crate) fn run_batch(
     let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
         .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
 
-    let native_result = v2
-        .clone()
-        .verify()
-        .context("native verification failed")?;
+    let native_result = v2.clone().verify().context("native verification failed")?;
 
     info!(
         batch_number,
