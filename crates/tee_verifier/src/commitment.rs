@@ -104,8 +104,7 @@ pub fn padded_blob_for(pubdata: &[u8], i: usize) -> Option<Vec<u8>> {
 /// entries; unused slots are `H256::zero()`.
 ///
 /// Mirrors `pubdata_to_blob_linear_hashes` in
-/// `zksync-era/core/node/commitment_generator/src/utils.rs` (`pub(crate)`
-/// there, so we can't reuse it directly).
+/// `zksync-era/core/node/commitment_generator/src/utils.rs`.
 pub fn compute_blob_linear_hashes(pubdata: &[u8]) -> Vec<H256> {
     let mut result = vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT];
     for (i, slot) in result.iter_mut().enumerate() {
