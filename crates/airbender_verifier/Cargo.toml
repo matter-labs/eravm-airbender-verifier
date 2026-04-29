@@ -1,6 +1,6 @@
 [package]
-name = "zksync_tee_verifier"
-description = "ZKsync library for TEE verification"
+name = "zksync_airbender_verifier"
+description = "ZKsync library for Airbender verification"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

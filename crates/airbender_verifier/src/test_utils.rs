@@ -27,7 +27,7 @@ use zksync_types::{
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
 use crate::types::{
-    CommitmentInput, V1TeeVerifierInput, V2TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
+    CommitmentInput, V1AirbenderVerifierInput, V2AirbenderVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
 };
 use crate::VerificationResult;
 
@@ -45,8 +45,8 @@ use crate::VerificationResult;
 /// See the module-level docs for why this is **not** L1-settlement-equivalent.
 /// Only use this for testing the verifier pipeline.
 pub fn augment_with_synthetic_commitment(
-    v1: V1TeeVerifierInput,
-) -> anyhow::Result<V2TeeVerifierInput> {
+    v1: V1AirbenderVerifierInput,
+) -> anyhow::Result<V2AirbenderVerifierInput> {
     // Run the VM once to obtain pubdata; the resulting state is dropped because
     // we still need a fresh execution after `commitment_input` is filled in.
     let preliminary = crate::execute(v1.clone())?;
@@ -65,7 +65,7 @@ pub fn augment_with_synthetic_commitment(
     let prev_passthrough = compute_pass_through_data_hash(enumeration_index, old_root_hash);
     let prev_batch_commitment = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
 
-    Ok(V2TeeVerifierInput {
+    Ok(V2AirbenderVerifierInput {
         v1,
         commitment_input: CommitmentInput {
             prev_batch_commitment,
@@ -128,7 +128,7 @@ pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
 /// rather than encoding bugs.
 pub fn crosscheck_commitment(
     result: &VerificationResult,
-    v2: &V2TeeVerifierInput,
+    v2: &V2AirbenderVerifierInput,
 ) -> anyhow::Result<()> {
     let protocol_version = v2.v1.system_env.version;
     let base = &v2.v1.system_env.base_system_smart_contracts;

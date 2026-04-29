@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
-use zksync_tee_verifier::types::TeeVerifierInput;
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
 #[derive(Debug, Parser)]
@@ -77,13 +77,15 @@ fn main() -> Result<()> {
 
 fn compare_batch(
     batch_input: &BatchInputFile,
-    input: TeeVerifierInput,
+    input: AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<bool> {
     let batch_number = batch_input.number;
     let batch_file = batch_input.path.display();
-    let TeeVerifierInput::V1(input) = input else {
-        anyhow::bail!("batch {batch_number} from {batch_file} must contain TeeVerifierInput::V1");
+    let AirbenderVerifierInput::V1(input) = input else {
+        anyhow::bail!(
+            "batch {batch_number} from {batch_file} must contain AirbenderVerifierInput::V1"
+        );
     };
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {

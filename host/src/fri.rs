@@ -7,7 +7,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
-use zksync_tee_verifier::Verify;
+use zksync_airbender_verifier::Verify;
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
 /// We no longer check against a fixed expected output; any non-zero output
@@ -85,8 +85,8 @@ impl FriPipeline {
             .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
         let mut prover_input = Inputs::new();
         prover_input
-            .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
-            .context("failed to encode V2 TeeVerifierInput")?;
+            .push(&zksync_airbender_verifier::types::AirbenderVerifierInput::V2(v2))
+            .context("failed to encode V2 AirbenderVerifierInput")?;
 
         let proving_started_at = Instant::now();
         let prove_result = self.prover.prove(prover_input.words()).with_context(|| {
@@ -174,8 +174,8 @@ pub(crate) fn run_batch(
     // Run transpiler with the same synthetic `CommitmentInput`.
     let mut transpiler_input = Inputs::new();
     transpiler_input
-        .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
-        .context("failed to encode V2 TeeVerifierInput")?;
+        .push(&zksync_airbender_verifier::types::AirbenderVerifierInput::V2(v2))
+        .context("failed to encode V2 AirbenderVerifierInput")?;
 
     let execution = runner
         .run(transpiler_input.words())
@@ -205,7 +205,7 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Load and deserialize a TeeVerifierInput from a batch file.
+/// Load and deserialize a AirbenderVerifierInput from a batch file.
 ///
 // TODO: long term, the upstream dump should ship V2 directly so we can avoid
 // the deserialize-(synthesise-CommitmentInput)-reserialize loop. The current
@@ -213,7 +213,7 @@ pub(crate) fn run_batch(
 // pre-process the LFS corpus into V2.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
-) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
     let parent_dir = batch_path.parent().with_context(|| {
         format!(
             "batch path {} has no parent directory",

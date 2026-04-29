@@ -43,7 +43,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    CommitmentInput, StorageLogMetadata, V1TeeVerifierInput, V2TeeVerifierInput,
+    CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput, V2AirbenderVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
@@ -81,7 +81,7 @@ pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
 
-impl Verify for V2TeeVerifierInput {
+impl Verify for V2AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     fn verify(self) -> anyhow::Result<VerificationResult> {
         let state = execute(self.v1)?;
@@ -125,7 +125,7 @@ impl VmExecutionState {
 /// This does not run any commitment-input-dependent checks (prev binding,
 /// blob verification). Test code can call this to obtain pubdata, then build
 /// a `CommitmentInput` and pass the state to [`verify_commitment`].
-pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -588,7 +588,7 @@ where
         for tx in &l2_block_data.txs {
             tracing::trace!("Started execution of tx: {tx:?}");
             execute_tx(tx, &mut vm)
-                .context("failed to execute transaction in TeeVerifierInputProducer")?;
+                .context("failed to execute transaction in AirbenderVerifierInputProducer")?;
             tracing::trace!("Finished execution of tx: {tx:?}");
         }
 
@@ -708,7 +708,7 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
+    use crate::types::{AirbenderVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_v1_serialization() {
-        let tvi = V1TeeVerifierInput::new(
+        let tvi = V1AirbenderVerifierInput::new(
             VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
@@ -934,11 +934,11 @@ mod tests {
             },
             Default::default(),
         );
-        let tvi = TeeVerifierInput::new(tvi);
+        let tvi = AirbenderVerifierInput::new(tvi);
         let serialized =
-            bincode_v1::serialize(&tvi).expect("Failed to serialize TeeVerifierInput.");
-        let deserialized: TeeVerifierInput =
-            bincode_v1::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
+            bincode_v1::serialize(&tvi).expect("Failed to serialize AirbenderVerifierInput.");
+        let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
+            .expect("Failed to deserialize AirbenderVerifierInput.");
 
         assert_eq!(tvi, deserialized);
     }

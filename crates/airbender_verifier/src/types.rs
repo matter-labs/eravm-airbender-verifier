@@ -83,9 +83,9 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Version 1 of the data used as input for the TEE verifier.
+/// Version 1 of the data used as input for the Airbender verifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1TeeVerifierInput {
+pub struct V1AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
@@ -94,7 +94,7 @@ pub struct V1TeeVerifierInput {
     pub pubdata_params: PubdataParams,
 }
 
-impl V1TeeVerifierInput {
+impl V1AirbenderVerifierInput {
     pub fn new(
         vm_run_data: VMRunWitnessInputData,
         merkle_paths: WitnessInputMerklePaths,
@@ -116,24 +116,24 @@ impl V1TeeVerifierInput {
 
 /// Version 2: V1 + CommitmentInput for Airbender settlement.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V2TeeVerifierInput {
-    pub v1: V1TeeVerifierInput,
+pub struct V2AirbenderVerifierInput {
+    pub v1: V1AirbenderVerifierInput,
     pub commitment_input: CommitmentInput,
 }
 
-/// Data used as input for the TEE verifier.
+/// Data used as input for the Airbender verifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
-pub enum TeeVerifierInput {
+pub enum AirbenderVerifierInput {
     /// `V0` suppresses warning about irrefutable `let...else` pattern.
     V0,
-    V1(V1TeeVerifierInput),
-    V2(V2TeeVerifierInput),
+    V1(V1AirbenderVerifierInput),
+    V2(V2AirbenderVerifierInput),
 }
 
-impl TeeVerifierInput {
-    pub fn new(input: V1TeeVerifierInput) -> Self {
+impl AirbenderVerifierInput {
+    pub fn new(input: V1AirbenderVerifierInput) -> Self {
         Self::V1(input)
     }
 }
