@@ -43,37 +43,41 @@ pub fn resolve_batch_inputs(
         .collect()
 }
 
-/// Load the framed hex words expected by the existing host and compare tooling.
+/// Load and deserialize a `TeeVerifierInput` from a batch file.
 ///
-/// The inputs may live as plain `.bin` files or as compressed `.bin.gz` files
-/// tracked in Git LFS. The CLI callers care about the logical words, not the
-/// storage format, so this helper hides the file-format details.
-pub fn load_batch_words(batch_input: &BatchInputFile) -> Result<Vec<u32>> {
-    let raw = read_batch_text(&batch_input.path)
-        .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
-    parse_hex_words(&raw).with_context(|| {
-        format!(
-            "while attempting to parse hex words for batch {} from {}",
-            batch_input.number,
-            batch_input.path.display()
-        )
-    })
-}
-
-/// Load and deserialize a `TeeVerifierInput` from a batch file. Combines
-/// [`load_batch_words`] with the framed-words → bincode pipeline used by the
-/// host, integration tests, and the prover server.
+/// Inputs are stored as hex-encoded framed bytes — first 4 bytes (big-endian
+/// `u32`) are the bincode payload length, followed by the payload itself
+/// padded out to a multiple of 4 bytes. The files may live as plain `.bin`
+/// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
+/// from callers.
 pub fn load_batch(
     batch_input: &BatchInputFile,
 ) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
-    let words = load_batch_words(batch_input)?;
-    let bytes = frame_words_to_bytes(&words).with_context(|| {
+    let raw = read_batch_text(&batch_input.path)
+        .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
+    let mut bytes = parse_hex_bytes(&raw).with_context(|| {
         format!(
-            "while attempting to unframe words for batch {} from {}",
+            "while attempting to parse hex bytes for batch {} from {}",
             batch_input.number,
             batch_input.path.display()
         )
     })?;
+    anyhow::ensure!(
+        bytes.len() >= 4,
+        "batch {}: framed payload too short ({} bytes)",
+        batch_input.number,
+        bytes.len()
+    );
+    let byte_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    bytes.drain(..4);
+    anyhow::ensure!(
+        bytes.len() >= byte_len,
+        "batch {}: declared length {byte_len} exceeds available bytes {}",
+        batch_input.number,
+        bytes.len()
+    );
+    bytes.truncate(byte_len);
+
     let (input, decoded_len) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
@@ -84,19 +88,6 @@ pub fn load_batch(
         bytes.len(),
     );
     Ok(input)
-}
-
-fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) =
-        words.split_first().context("frame has no length word")?;
-    let byte_len = byte_len_word as usize;
-
-    let mut bytes = Vec::with_capacity(byte_len);
-    for word in payload_words {
-        bytes.extend_from_slice(&word.to_be_bytes());
-    }
-    bytes.truncate(byte_len);
-    Ok(bytes)
 }
 
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
@@ -229,7 +220,7 @@ fn read_gzip_batch_text(batch_path: &Path) -> Result<String> {
     Ok(raw)
 }
 
-fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
+fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>> {
     let mut compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
     if let Some(stripped) = compact.strip_prefix("0x") {
         compact = stripped.to_owned();
@@ -238,6 +229,8 @@ fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
     if compact.is_empty() {
         anyhow::bail!("batch payload is empty");
     }
+    // Files are stored in 8-hex-char (= 4-byte) words; require alignment so we
+    // catch truncated files early.
     if !compact.len().is_multiple_of(8) {
         anyhow::bail!(
             "batch payload length must be a multiple of 8 hex characters (got {})",
@@ -245,13 +238,12 @@ fn parse_hex_words(raw: &str) -> Result<Vec<u32>> {
         );
     }
 
-    let mut words = Vec::with_capacity(compact.len() / 8);
-    for chunk in compact.as_bytes().chunks(8) {
-        let chunk_str =
-            std::str::from_utf8(chunk).context("while attempting to decode hex chunk as UTF-8")?;
-        let word = u32::from_str_radix(chunk_str, 16)
-            .with_context(|| format!("while attempting to parse hex word `{chunk_str}`"))?;
-        words.push(word);
+    let mut bytes = Vec::with_capacity(compact.len() / 2);
+    for chunk in compact.as_bytes().chunks(2) {
+        let s = std::str::from_utf8(chunk).context("while decoding hex chunk as UTF-8")?;
+        let byte =
+            u8::from_str_radix(s, 16).with_context(|| format!("while parsing hex byte `{s}`"))?;
+        bytes.push(byte);
     }
-    Ok(words)
+    Ok(bytes)
 }

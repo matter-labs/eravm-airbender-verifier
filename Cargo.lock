@@ -5701,7 +5701,6 @@ name = "zksync_vm_compare"
 version = "29.7.1-non-semver-compat"
 dependencies = [
  "anyhow",
- "bincode 2.0.1",
  "clap 4.5.57",
  "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
  "zksync_cli_utils",
