@@ -209,7 +209,8 @@ pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
     // state-diff hash. A key that appears in multiple merkle-path entries (read+write
     // in the same batch) must agree on its enum index — disagreement means a malformed
     // witness.
-    let mut enum_index_map: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
+    let mut enum_index_map: std::collections::BTreeMap<H256, u64> =
+        std::collections::BTreeMap::new();
     for log in input
         .merkle_paths
         .merkle_paths
@@ -274,7 +275,7 @@ pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
             verify_bytecode_hash(claimed_hash, &flat_bytes)?;
             Ok((u256_to_h256(claimed_hash), flat_bytes))
         })
-        .collect::<anyhow::Result<std::collections::HashMap<H256, Vec<u8>>>>()?;
+        .collect::<anyhow::Result<std::collections::BTreeMap<H256, Vec<u8>>>>()?;
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();

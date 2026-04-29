@@ -25,8 +25,7 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+zksync_cli_utils.workspace = true
 zksync_contracts.workspace = true
 
 bincode_v1 = { package = "bincode", version = "1" }
-bincode_v2 = { package = "bincode", version = "2", features = ["serde"] }
-flate2.workspace = true

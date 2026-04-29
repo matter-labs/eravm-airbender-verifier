@@ -7,7 +7,6 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
-use zksync_cli_utils::load_batch_words;
 use zksync_tee_verifier::Verify;
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
@@ -221,35 +220,15 @@ pub(crate) fn load_verifier_input(
             batch_path.display()
         )
     })?;
-    let framed_words = load_batch_words(
-        &zksync_cli_utils::resolve_batch_inputs(
-            parent_dir,
-            Some(&[batch_path.to_path_buf()]),
-            false,
-        )?[0],
-    )?;
-
-    let payload = frame_words_to_bytes(&framed_words)?;
-    let (input, decoded_len): (zksync_tee_verifier::types::TeeVerifierInput, usize) =
-        bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-            .context("bincode decode failed")?;
-    if decoded_len != payload.len() {
-        anyhow::bail!("trailing bytes: decoded {decoded_len} of {}", payload.len());
-    }
-    Ok(input)
-}
-
-fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) =
-        words.split_first().context("frame has no length word")?;
-    let byte_len = byte_len_word as usize;
-
-    let mut bytes = Vec::with_capacity(byte_len);
-    for word in payload_words {
-        bytes.extend_from_slice(&word.to_be_bytes());
-    }
-    bytes.truncate(byte_len);
-    Ok(bytes)
+    let batch_input = zksync_cli_utils::resolve_batch_inputs(
+        parent_dir,
+        Some(&[batch_path.to_path_buf()]),
+        false,
+    )?
+    .into_iter()
+    .next()
+    .context("resolve_batch_inputs returned no entries")?;
+    zksync_cli_utils::load_batch(&batch_input)
 }
 
 pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {

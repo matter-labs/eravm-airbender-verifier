@@ -5,50 +5,14 @@
 
 use std::path::Path;
 
+use zksync_cli_utils::{load_batch, BatchInputFile};
 use zksync_tee_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
 use zksync_tee_verifier::types::TeeVerifierInput;
 use zksync_tee_verifier::Verify;
 
-/// Load a batch from the framed-hex-words format used by the test corpus.
-/// Uses bincode v2 (matching the host and vm_compare tooling).
-fn load_batch(path: &Path) -> TeeVerifierInput {
-    // Decompress if .gz
-    let raw_text = if path.extension().and_then(|e| e.to_str()) == Some("gz") {
-        let compressed = std::fs::read(path).expect("failed to read batch file");
-        let mut decoder = flate2::read::GzDecoder::new(&compressed[..]);
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut decoder, &mut text).expect("failed to decompress");
-        text
-    } else {
-        std::fs::read_to_string(path).expect("failed to read batch file")
-    };
-
-    // Parse hex words
-    let compact: String = raw_text.chars().filter(|ch| !ch.is_whitespace()).collect();
-    let compact = compact.strip_prefix("0x").unwrap_or(&compact);
-    let words: Vec<u32> = compact
-        .as_bytes()
-        .chunks(8)
-        .map(|chunk| {
-            let s = std::str::from_utf8(chunk).unwrap();
-            u32::from_str_radix(s, 16).unwrap()
-        })
-        .collect();
-
-    // Extract framed payload (first word = byte length)
-    let payload_byte_len = words[0] as usize;
-    let payload_bytes: Vec<u8> = words[1..].iter().flat_map(|w| w.to_be_bytes()).collect();
-    let payload = &payload_bytes[..payload_byte_len];
-
-    // Deserialize with bincode v2 (matching host/vm_compare tooling)
-    let (input, _): (TeeVerifierInput, usize) =
-        bincode_v2::serde::decode_from_slice(payload, bincode_v2::config::standard())
-            .expect("failed to deserialize TeeVerifierInput");
-    input
-}
-
 #[test]
 fn test_batch_506093_commitment() {
+    const BATCH_NUMBER: u64 = 506093;
     let batch_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../testdata/era_mainnet_batches/binary/506093.bin.gz");
     if !batch_path.exists() {
@@ -65,7 +29,11 @@ fn test_batch_506093_commitment() {
         return;
     }
 
-    let input = load_batch(&batch_path);
+    let input = load_batch(&BatchInputFile {
+        number: BATCH_NUMBER,
+        path: batch_path.clone(),
+    })
+    .expect("failed to load batch");
     let TeeVerifierInput::V1(input) = input else {
         panic!("expected TeeVerifierInput::V1");
     };

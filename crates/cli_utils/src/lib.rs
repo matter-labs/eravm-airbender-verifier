@@ -60,6 +60,45 @@ pub fn load_batch_words(batch_input: &BatchInputFile) -> Result<Vec<u32>> {
     })
 }
 
+/// Load and deserialize a `TeeVerifierInput` from a batch file. Combines
+/// [`load_batch_words`] with the framed-words → bincode pipeline used by the
+/// host, integration tests, and the prover server.
+pub fn load_batch(
+    batch_input: &BatchInputFile,
+) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+    let words = load_batch_words(batch_input)?;
+    let bytes = frame_words_to_bytes(&words).with_context(|| {
+        format!(
+            "while attempting to unframe words for batch {} from {}",
+            batch_input.number,
+            batch_input.path.display()
+        )
+    })?;
+    let (input, decoded_len) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
+    anyhow::ensure!(
+        decoded_len == bytes.len(),
+        "batch {}: trailing bytes after bincode decode ({decoded_len} of {})",
+        batch_input.number,
+        bytes.len(),
+    );
+    Ok(input)
+}
+
+fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
+    let (&byte_len_word, payload_words) =
+        words.split_first().context("frame has no length word")?;
+    let byte_len = byte_len_word as usize;
+
+    let mut bytes = Vec::with_capacity(byte_len);
+    for word in payload_words {
+        bytes.extend_from_slice(&word.to_be_bytes());
+    }
+    bytes.truncate(byte_len);
+    Ok(bytes)
+}
+
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
     let entries = std::fs::read_dir(batches_dir)
         .with_context(|| format!("while attempting to read {}", batches_dir.display()))?;
