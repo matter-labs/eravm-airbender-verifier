@@ -200,7 +200,9 @@ pub fn verify_blob_hashes(
     );
 
     let num_blobs_from_pubdata = pubdata.len().div_ceil(ZK_SYNC_BYTES_PER_BLOB);
-    let mut padded = vec![0u8; ZK_SYNC_BYTES_PER_BLOB];
+    // Scratch buffer for the (at most one) partial blob; allocated lazily so
+    // the typical all-full-blobs case does no padding work at all.
+    let mut padded_scratch: Option<Vec<u8>> = None;
 
     for (i, blob_hash) in blob_hashes.iter().enumerate() {
         if blob_hash.linear_hash == H256::zero() {
@@ -215,13 +217,20 @@ pub fn verify_blob_hashes(
             "blob {i}: claimed non-zero linear hash but no pubdata for this slot"
         );
 
-        // Pad blob `i` into the scratch buffer.
         let start = i * ZK_SYNC_BYTES_PER_BLOB;
         let end = ((i + 1) * ZK_SYNC_BYTES_PER_BLOB).min(pubdata.len());
-        padded[..end - start].copy_from_slice(&pubdata[start..end]);
-        padded[end - start..].fill(0);
+        let blob_bytes: &[u8] = if end - start == ZK_SYNC_BYTES_PER_BLOB {
+            // Full slot — hash directly from pubdata, no copy.
+            &pubdata[start..end]
+        } else {
+            // Partial slot — pad into scratch.
+            let buf = padded_scratch.get_or_insert_with(|| vec![0u8; ZK_SYNC_BYTES_PER_BLOB]);
+            buf[..end - start].copy_from_slice(&pubdata[start..end]);
+            buf[end - start..].fill(0);
+            buf.as_slice()
+        };
 
-        let computed_linear = H256(keccak256(&padded));
+        let computed_linear = H256(keccak256(blob_bytes));
         anyhow::ensure!(
             blob_hash.linear_hash == computed_linear,
             "blob {i} linear hash mismatch: computed {computed_linear:?}, claimed {:?}",
@@ -229,7 +238,7 @@ pub fn verify_blob_hashes(
         );
 
         let computed_commitment =
-            compute_blob_opening_commitment(&padded, versioned_hashes[i], blob_hash.linear_hash);
+            compute_blob_opening_commitment(blob_bytes, versioned_hashes[i], blob_hash.linear_hash);
         anyhow::ensure!(
             blob_hash.commitment == computed_commitment,
             "blob {i} opening commitment mismatch: computed {computed_commitment:?}, claimed {:?}",
