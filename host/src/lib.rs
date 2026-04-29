@@ -12,7 +12,7 @@ pub use crate::snark::SnarkOptions;
 use crate::fri::{
     build_runner, load_raw_proof, run_batch, save_raw_proof, FriPipeline, FRI_PROOF_FILE_NAME,
 };
-use crate::snark::prove_snark;
+use crate::snark::SnarkPipeline;
 use crate::statistics::StatisticsCollector;
 
 // ==============================================================================
@@ -97,11 +97,13 @@ pub fn wrap_to_snark(
     output_root: &Path,
     snark_options: &SnarkOptions,
 ) -> Result<()> {
+    let mut pipeline = SnarkPipeline::new(snark_options)?;
+
     for (index, proof_file) in proof_files.iter().enumerate() {
         let raw_proof = load_raw_proof(proof_file)
             .with_context(|| format!("while attempting to load {}", proof_file.display()))?;
         let output_dir = proof_file_output_dir(output_root, proof_file)?;
-        prove_snark(raw_proof, snark_options, &output_dir).with_context(|| {
+        pipeline.prove(raw_proof, &output_dir).with_context(|| {
             format!(
                 "while attempting to wrap raw proof {} into a SNARK",
                 proof_file.display()
