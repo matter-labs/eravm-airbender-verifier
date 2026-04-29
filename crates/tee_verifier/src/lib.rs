@@ -19,6 +19,7 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
+        utils::compress_value_and_index,
         FinishedL1Batch, L2BlockEnv, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
@@ -244,19 +245,12 @@ pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
         .is_write_initial
         .into_iter();
 
-    // Reads of never-written zero slots must be encoded as `None`, not `Some((0, 0))`,
-    // or `StorageSnapshot::new` will violate its own invariants and bloat with phantoms.
     let storage =
         read_storage_ops
             .map(|(key, value)| {
                 let hashed = key.hashed_key();
-                let enum_idx = enum_index_map.get(&hashed).copied().unwrap_or(0);
-                let entry = if enum_idx == 0 && value == H256::zero() {
-                    None
-                } else {
-                    Some((value, enum_idx))
-                };
-                (hashed, entry)
+                let enum_idx = enum_index_map.get(&hashed).copied();
+                (hashed, compress_value_and_index(value, enum_idx))
             })
             .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
                 initial_write.then_some((key.hashed_key(), None))
