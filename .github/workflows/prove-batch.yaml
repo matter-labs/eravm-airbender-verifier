@@ -1,0 +1,307 @@
+name: prove-batch
+
+# Builds the Airbender guest on a non-GPU runner, then runs the FRI + SNARK
+# pipeline on the GPU runner with the prebuilt guest. Triggered on PR events;
+# can also be invoked manually with a custom batch.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Batch number from testdata/era_mainnet_batches/binary (without .bin.gz)"
+        required: false
+        default: "506093"
+
+run-name: "Prove batch ${{ inputs.batch || '506093' }}"
+
+permissions:
+  contents: read
+
+# Cancel rapid PR pushes to save GPU time.
+concurrency:
+  group: prove-batch-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# `pipefail` so a failure in `cargo run … | tee …` propagates instead of being
+# masked by tee's success exit code.
+defaults:
+  run:
+    shell: 'bash -eo pipefail {0}'
+
+env:
+  GUEST_ARTIFACT_NAME: airbender-guest-${{ github.run_id }}-${{ github.run_attempt }}
+  HOST_ARTIFACT_NAME: eravm-prover-host-${{ github.run_id }}-${{ github.run_attempt }}
+  BELLMAN_CUDA_ARTIFACT_NAME: bellman-cuda-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  # -----------------------------------------------------------------------------
+  # Build the guest on a CPU runner. The guest is RISC-V; no CUDA needed. Output
+  # lives at guest/dist/app/ — host/src/fri.rs::dist_dir() loads from that path.
+  # -----------------------------------------------------------------------------
+  build-guest:
+    name: build-guest
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      # `cc-rs` uses `clang` to cross-compile C deps (e.g. `secp256k1-sys`) to
+      # riscv32. The runner-setup composite installs `libclang-dev` but not
+      # the `clang` binary itself.
+      - name: Install clang
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+          ${SUDO} apt-get update
+          ${SUDO} apt-get install -y clang
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          path: airbender-platform
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: ${{ env.GUEST_ARTIFACT_NAME }}
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # -----------------------------------------------------------------------------
+  # Build the host binary inside the official nvidia/cuda devel container so
+  # the runner doesn't need its own CUDA toolkit.
+  # -----------------------------------------------------------------------------
+  build-host:
+    name: build-host
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    container:
+      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+    env:
+      # The hetzner runner is an RTX 6000 Ada (sm_89).
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # Same composite as build-guest: handles cmake (4.1.1, satisfies
+      # gpu_prover's ≥3.28), Rust toolchain via moonrepo/setup-rust (reads
+      # rust-toolchain.toml), and sccache wired to matterlabs's GCS bucket
+      # (RUSTC_WRAPPER=sccache). The composite skips its own CUDA-on-PATH
+      # step on this runner (gate is `contains(runner.name, 'gpu')`) but
+      # the nvidia/cuda image already exposes /usr/local/cuda/bin in PATH.
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      # The cuda devel image is minimal: it has nvcc but not these.
+      - name: Install extra apt packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y clang build-essential git curl
+
+      - name: Inspect toolchain
+        run: |
+          nvcc --version
+          cmake --version
+          rustc --version
+
+      # Build era-bellman-cuda so we can link the host with `--features snark_gpu`.
+      # NB: zksync-crypto-gpu's `gpu-ffi` build script reads `BELLMAN_CUDA_DIR`,
+      # not the `BELLMAN_DIR` in our top-level README.
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
+
+      - name: Build eravm-prover-host (snark_gpu)
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo build --release -p eravm-prover-host --locked --features snark_gpu
+          ls -lh target/release/eravm-prover-host
+
+      - name: Upload host binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: ${{ env.HOST_ARTIFACT_NAME }}
+          path: target/release/eravm-prover-host
+          if-no-files-found: error
+          retention-days: 1
+
+      # Stage the runtime shared libraries the host needs on the GPU runner:
+      #   - bellman-cuda's own outputs (it isn't in any system path)
+      #   - libcudart from the container's CUDA toolkit (the GPU runner has the
+      #     driver — `libcuda.so` — but no toolkit, so `libcudart.so.13` is
+      #     missing without us shipping it)
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+          ls -lh bellman-cuda-stage/
+
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: ${{ env.BELLMAN_CUDA_ARTIFACT_NAME }}
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # -----------------------------------------------------------------------------
+  # GPU job. Pulls prebuilt guest + host binary, runs FRI on GPU and SNARK on
+  # CPU. No compilation here — `cargo` is not invoked, no toolchain installed.
+  # -----------------------------------------------------------------------------
+  prove:
+    name: prove-batch
+    needs: [build-guest, build-host]
+    runs-on: matterlabs-ci-hetzner-rtx6000-gpu
+    timeout-minutes: 180
+    env:
+      BATCHES_DIR: testdata/era_mainnet_batches/binary
+      BATCH: ${{ inputs.batch || '506093' }}
+      ARTIFACT_DIR: ./artifacts/proofs
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # Light setup — no toolchain, no CMake. We're not compiling anything.
+      - name: Install git-lfs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+          ${SUDO} apt-get update
+          ${SUDO} apt-get install -y git-lfs
+          git lfs install --local
+
+      - name: Add CUDA to PATH
+        run: echo "/usr/local/nvidia/bin:/usr/local/cuda/bin" >> "${GITHUB_PATH}"
+
+      - name: Pull batch from LFS
+        run: ./scripts/fetch_lfs_batches.sh "${BATCH}.bin.gz"
+
+      - name: Download prebuilt guest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ env.GUEST_ARTIFACT_NAME }}
+          path: guest/dist/app
+
+      - name: Download prebuilt host binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ env.HOST_ARTIFACT_NAME }}
+          path: bin
+
+      - name: Make host binary executable
+        run: chmod +x bin/eravm-prover-host
+
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ env.BELLMAN_CUDA_ARTIFACT_NAME }}
+          path: bellman-cuda-libs
+
+      - name: Inspect CUDA driver
+        run: |
+          nvidia-smi
+
+      # Hetzner runners are EU-located; fetch CRS from the EU bucket. GPU PLONK
+      # wrapping uses the smaller setup_compact.key (Airbender supports PLONK).
+      - name: Download PLONK CRS key (GPU)
+        run: |
+          curl -fsSL -o setup.key \
+            'https://storage.googleapis.com/matterlabs-setup-keys-europe/setup-keys/setup_compact.key'
+          ls -lh setup.key
+
+      - name: Prepare artifact dir
+        run: mkdir -p "${ARTIFACT_DIR}/batch-${BATCH}"
+
+      - name: Generate FRI proof (GPU)
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+          # `dist_dir()` was baked at build time on a different runner; point
+          # it at the artifact we just downloaded.
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/guest/dist/app
+          # bellman-cuda is dynamically linked from the build container's
+          # output. /usr/local/cuda/lib64 is included as a fallback in case
+          # the runner's libcuda.so isn't on the default loader path.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/bellman-cuda-libs:/usr/local/cuda/lib64
+        run: |
+          ulimit -s 300000
+          ./bin/eravm-prover-host \
+            prove-fri \
+            --batches-dir "$BATCHES_DIR" \
+            --batch-files "${BATCH}.bin.gz" \
+            --output-dir "${ARTIFACT_DIR}" \
+            2>&1 | tee "${ARTIFACT_DIR}/batch-${BATCH}/fri.log"
+
+      - name: Generate SNARK proof + verification key (GPU)
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: info
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/guest/dist/app
+          LD_LIBRARY_PATH: ${{ github.workspace }}/bellman-cuda-libs
+        run: |
+          ulimit -s 300000
+          ./bin/eravm-prover-host \
+            prove-snark \
+            --proof-files "${ARTIFACT_DIR}/batch-${BATCH}/fri_proof.json" \
+            --output-dir "${ARTIFACT_DIR}" \
+            --trusted-setup setup.key \
+            --save-intermediates \
+            2>&1 | tee "${ARTIFACT_DIR}/batch-${BATCH}/snark.log"
+
+      - name: List generated artifacts
+        if: always()
+        run: ls -la "${ARTIFACT_DIR}/batch-${BATCH}/" || true
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: proof-batch-${{ env.BATCH }}
+          path: ./artifacts/proofs/batch-${{ env.BATCH }}/
+          retention-days: 14
+          if-no-files-found: warn
+
+      # Surface sccache effectiveness so we can tell at a glance whether the
+      # GCS cache is hitting on subsequent runs.
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true

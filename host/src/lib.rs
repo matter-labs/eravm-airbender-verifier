@@ -1,11 +1,12 @@
 mod fri;
 mod snark;
 mod statistics;
+mod test_utils;
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::info;
-use zksync_cli_utils::{load_batch_words, BatchInputFile};
+use zksync_cli_utils::BatchInputFile;
 
 pub use crate::snark::SnarkOptions;
 
@@ -28,14 +29,7 @@ pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
     let runner = build_runner(jit)?;
 
     for batch_input in batch_inputs {
-        let input_words = load_batch_words(batch_input).with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
-        run_batch(&runner, batch_input.number, &input_words).with_context(|| {
+        run_batch(&runner, batch_input.number, &batch_input.path).with_context(|| {
             format!(
                 "while attempting to run batch {} from {} in transpiler",
                 batch_input.number,
@@ -56,15 +50,8 @@ pub fn prove_batches_fri(
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {
-        let input_words = load_batch_words(batch_input).with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
         let proof_artifact = pipeline
-            .prove_batch(batch_input.number, &input_words)
+            .prove_batch(batch_input.number, &batch_input.path)
             .with_context(|| {
                 format!(
                     "while attempting to prove batch {} from {}",

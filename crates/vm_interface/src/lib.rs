@@ -42,4 +42,5 @@ pub use crate::{
 pub mod pubdata;
 pub mod storage;
 mod types;
+pub mod utils;
 mod vm;

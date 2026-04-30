@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use zksync_types::{web3, StorageKey, StorageValue, H256};
@@ -12,9 +12,9 @@ use super::ReadStorage;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StorageSnapshot {
     // `Option` encompasses entire map value for more efficient serialization
-    storage: HashMap<H256, Option<(H256, u64)>>,
+    storage: BTreeMap<H256, Option<(H256, u64)>>,
     // `Bytes` are used to have efficient serialization
-    factory_deps: HashMap<H256, web3::Bytes>,
+    factory_deps: BTreeMap<H256, web3::Bytes>,
 }
 
 impl StorageSnapshot {
@@ -27,8 +27,8 @@ impl StorageSnapshot {
     ///   and 0 values. There may be slots w/o an index and non-zero value if the snapshot captures execution from a middle of batch;
     ///   in this case, you should supply `Some(_, 0)`.
     pub fn new(
-        storage: HashMap<H256, Option<(H256, u64)>>,
-        factory_deps: HashMap<H256, Vec<u8>>,
+        storage: BTreeMap<H256, Option<(H256, u64)>>,
+        factory_deps: BTreeMap<H256, Vec<u8>>,
     ) -> Self {
         Self {
             storage,

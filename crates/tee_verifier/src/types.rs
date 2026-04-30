@@ -2,14 +2,33 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use zksync_types::{
-    block::L2BlockExecutionData, commitment::PubdataParams,
-    witness_block_state::WitnessStorageState, L1BatchNumber, ProtocolVersionId, U256,
+    block::L2BlockExecutionData,
+    commitment::{BlobHash, PubdataParams},
+    witness_block_state::WitnessStorageState,
+    L1BatchNumber, ProtocolVersionId, H256, U256,
 };
 use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
 const HASH_LEN: usize = 32;
+
+/// Number of blob hash/commitment pairs in the auxiliary output.
+///
+/// Must stay in sync with the L1 source of truth: `IExecutor.sol`'s
+/// `TOTAL_BLOBS_IN_COMMITMENT`. `test_total_blobs_in_commitment_matches_l1`
+/// pins the value.
+pub const TOTAL_BLOBS_IN_COMMITMENT: usize = 16;
+
+#[cfg(test)]
+mod blob_constant_tests {
+    /// Change detector: if L1's `TOTAL_BLOBS_IN_COMMITMENT` ever changes, this constant
+    /// must be updated in lockstep with the contract and the sequencer.
+    #[test]
+    fn test_total_blobs_in_commitment_matches_l1() {
+        assert_eq!(super::TOTAL_BLOBS_IN_COMMITMENT, 16);
+    }
+}
 
 /// VM execution witness used by verifier input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -25,6 +44,43 @@ pub struct VMRunWitnessInputData {
     pub storage_refunds: Vec<u32>,
     pub pubdata_costs: Vec<i32>,
     pub witness_block_state: WitnessStorageState,
+}
+
+/// Data required for L1 batch commitment computation that is not produced by
+/// VM execution and must be provided externally.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommitmentInput {
+    /// The `storedBatchInfo.commitment` of the previous batch (stored on L1).
+    /// Used to construct the proof public input: `keccak256(prev || curr) >> 32`.
+    /// If the operator provides the wrong value, the proof will not match L1's
+    /// reconstruction and will be rejected.
+    pub prev_batch_commitment: H256,
+    /// The metadata hash of the previous batch. Together with `prev_aux_hash`,
+    /// used to verify that `prev_batch_commitment` is consistent with the
+    /// previous state root (old_root_hash).
+    pub prev_meta_hash: H256,
+    /// The auxiliary output hash of the previous batch.
+    pub prev_aux_hash: H256,
+    /// `(linear_hash, opening_commitment)` pairs that go into the auxiliary
+    /// output. Length must equal `TOTAL_BLOBS_IN_COMMITMENT`; unused slots are
+    /// `BlobHash::default()`.
+    pub blob_hashes: Vec<BlobHash>,
+    /// EIP-4844 versioned hashes for each blob (from the L1 blob transaction).
+    /// Length must equal `TOTAL_BLOBS_IN_COMMITMENT`. Used to derive opening
+    /// points; not part of the auxiliary-output bytes.
+    pub blob_versioned_hashes: Vec<H256>,
+}
+
+impl Default for CommitmentInput {
+    fn default() -> Self {
+        Self {
+            prev_batch_commitment: H256::zero(),
+            prev_meta_hash: H256::zero(),
+            prev_aux_hash: H256::zero(),
+            blob_hashes: vec![BlobHash::default(); TOTAL_BLOBS_IN_COMMITMENT],
+            blob_versioned_hashes: vec![H256::zero(); TOTAL_BLOBS_IN_COMMITMENT],
+        }
+    }
 }
 
 /// Version 1 of the data used as input for the TEE verifier.
@@ -58,6 +114,13 @@ impl V1TeeVerifierInput {
     }
 }
 
+/// Version 2: V1 + CommitmentInput for Airbender settlement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V2TeeVerifierInput {
+    pub v1: V1TeeVerifierInput,
+    pub commitment_input: CommitmentInput,
+}
+
 /// Data used as input for the TEE verifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
@@ -66,6 +129,7 @@ pub enum TeeVerifierInput {
     /// `V0` suppresses warning about irrefutable `let...else` pattern.
     V0,
     V1(V1TeeVerifierInput),
+    V2(V2TeeVerifierInput),
 }
 
 impl TeeVerifierInput {

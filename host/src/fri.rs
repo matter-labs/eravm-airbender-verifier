@@ -1,5 +1,5 @@
 use airbender_host::{
-    GpuProver, Program, Proof, Prover, ProverLevel, RealVerifier, Runner, TranspilerRunner,
+    GpuProver, Inputs, Program, Proof, Prover, ProverLevel, RealVerifier, Runner, TranspilerRunner,
     VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
@@ -7,8 +7,12 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
+use zksync_tee_verifier::Verify;
 
-pub(crate) const EXPECTED_OUTPUT: u32 = 1;
+/// The guest returns `[u32; 8]` — the proof public input hash.
+/// We no longer check against a fixed expected output; any non-zero output
+/// indicates successful execution + commitment computation.
+/// The actual value is batch-specific and verified by L1 against stored commitments.
 pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
 pub(crate) type RawFriProof = airbender_host::raw::UnrolledProgramProof;
@@ -73,27 +77,36 @@ impl FriPipeline {
     pub(crate) fn prove_batch(
         &self,
         batch_number: u64,
-        input_words: &[u32],
+        batch_path: &Path,
     ) -> Result<FriProofArtifact> {
+        // TODO: long term, the upstream dump should ship V2 directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize loop.
+        // The current approach is a workaround until either the producer emits V2 or we pre-process the LFS corpus into V2.
+        let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
+            .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+        let mut prover_input = Inputs::new();
+        prover_input
+            .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
+            .context("failed to encode V2 TeeVerifierInput")?;
+
         let proving_started_at = Instant::now();
-        let prove_result = self.prover.prove(input_words).with_context(|| {
+        let prove_result = self.prover.prove(prover_input.words()).with_context(|| {
             format!("while attempting to generate proof for batch {batch_number}")
         })?;
         let proving_time = proving_started_at.elapsed();
         let cycles = prove_result.cycles;
-        let output = prove_result.receipt.output[0];
+        let output = prove_result.receipt.output;
 
         info!(
             batch_number,
             cycles,
             proving_time_secs = proving_time.as_secs_f64(),
-            output,
+            ?output,
             "Finished FRI proof generation"
         );
 
-        if output != EXPECTED_OUTPUT {
+        if output == [0u32; 8] {
             anyhow::bail!(
-                "batch {batch_number} proof output {output} does not match expected {EXPECTED_OUTPUT}"
+                "batch {batch_number} proof returned zero output — verification or commitment failed"
             );
         }
 
@@ -101,7 +114,7 @@ impl FriPipeline {
             .verify(
                 &prove_result.proof,
                 &self.vk,
-                VerificationRequest::real(&EXPECTED_OUTPUT),
+                VerificationRequest::real(&output),
             )
             .with_context(|| {
                 format!("while attempting to verify proof for batch {batch_number}")
@@ -140,28 +153,82 @@ pub(crate) fn build_runner(jit: bool) -> Result<TranspilerRunner> {
 pub(crate) fn run_batch(
     runner: &TranspilerRunner,
     batch_number: u64,
-    input_words: &[u32],
+    batch_path: &Path,
 ) -> Result<()> {
+    // Load batch and synthesize a self-consistent `CommitmentInput`. Linear
+    // blob hashes come from VM pubdata; versioned hashes, opening commitments,
+    // and prev_batch_commitment are fabricated — see `test_utils` module docs.
+    // **Not** L1-settlement-equivalent.
+    let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
+        .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+
+    let native_result = v2.clone().verify().context("native verification failed")?;
+
+    info!(
+        batch_number,
+        ?native_result.commitment,
+        ?native_result.proof_public_input,
+        "Native verification + commitment succeeded"
+    );
+
+    // Run transpiler with the same synthetic `CommitmentInput`.
+    let mut transpiler_input = Inputs::new();
+    transpiler_input
+        .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
+        .context("failed to encode V2 TeeVerifierInput")?;
+
     let execution = runner
-        .run(input_words)
+        .run(transpiler_input.words())
         .with_context(|| format!("while attempting to execute batch {batch_number}"))?;
-    let output = execution.receipt.output[0];
+    let output = execution.receipt.output;
 
     info!(
         batch_number,
         cycles = execution.cycles_executed,
         reached_end = execution.reached_end,
-        output,
+        ?output,
         "Finished transpiler run"
     );
 
-    if output != EXPECTED_OUTPUT {
-        anyhow::bail!(
-            "batch {batch_number} returned unexpected output {output}, expected {EXPECTED_OUTPUT}"
-        );
-    }
+    // Verify transpiler output matches native verification.
+    anyhow::ensure!(
+        output == native_result.proof_public_input,
+        "batch {batch_number}: transpiler output {output:?} doesn't match native {0:?}",
+        native_result.proof_public_input
+    );
+
+    info!(
+        batch_number,
+        "Transpiler output matches native verification"
+    );
 
     Ok(())
+}
+
+/// Load and deserialize a TeeVerifierInput from a batch file.
+///
+// TODO: long term, the upstream dump should ship V2 directly so we can avoid
+// the deserialize-(synthesise-CommitmentInput)-reserialize loop. The current
+// approach is a workaround until either the producer emits V2 or we
+// pre-process the LFS corpus into V2.
+pub(crate) fn load_verifier_input(
+    batch_path: &Path,
+) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
+    let parent_dir = batch_path.parent().with_context(|| {
+        format!(
+            "batch path {} has no parent directory",
+            batch_path.display()
+        )
+    })?;
+    let batch_input = zksync_cli_utils::resolve_batch_inputs(
+        parent_dir,
+        Some(&[batch_path.to_path_buf()]),
+        false,
+    )?
+    .into_iter()
+    .next()
+    .context("resolve_batch_inputs returned no entries")?;
+    zksync_cli_utils::load_batch(&batch_input)
 }
 
 pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {
@@ -234,5 +301,12 @@ fn vk_cache_path(program: &Program) -> Result<PathBuf> {
 }
 
 fn dist_dir() -> PathBuf {
+    // Allow overriding via env var so a binary built on one machine can find
+    // the guest dist on another (the CI prove-batch flow builds host on a
+    // CPU runner and runs it on the GPU runner). Falls back to the
+    // workspace-relative path baked in at compile time.
+    if let Ok(p) = std::env::var("ERAVM_PROVER_HOST_GUEST_DIR") {
+        return PathBuf::from(p);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
 }

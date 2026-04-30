@@ -12,5 +12,7 @@ categories.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bincode = { version = "2", features = ["serde"] }
 flate2.workspace = true
 tracing.workspace = true
+zksync_tee_verifier.workspace = true

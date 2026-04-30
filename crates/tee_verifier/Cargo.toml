@@ -14,15 +14,18 @@ categories.workspace = true
 zksync_crypto_primitives.workspace = true
 zksync_merkle_tree = { workspace = true, default-features = false }
 zksync_multivm.workspace = true
+zksync_system_constants.workspace = true
 zksync_types.workspace = true
 zksync_vm_interface.workspace = true
 
 anyhow.workspace = true
+ark-ff.workspace = true
+ark-bls12-381.workspace = true
 serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+zksync_cli_utils.workspace = true
 zksync_contracts.workspace = true
-serde_json.workspace = true
 
-bincode.workspace = true
+bincode_v1 = { package = "bincode", version = "1" }
