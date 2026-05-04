@@ -1,12 +1,11 @@
 use std::sync::mpsc::{Receiver, SyncSender};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "gpu")]
 use airbender_host::Prover as _;
-#[cfg(feature = "gpu")]
-use std::time::{Duration, Instant};
-#[cfg(feature = "gpu")]
+#[cfg(not(feature = "gpu"))]
+use airbender_host::Runner as _;
 use tracing::{error, info};
-#[cfg(feature = "gpu")]
 use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
 
 use crate::types::{CompletedProof, Job};
@@ -79,12 +78,44 @@ fn prove_job(prover: &ProverImpl, job: &Job) -> Option<CompletedProof> {
 }
 
 #[cfg(not(feature = "gpu"))]
-fn prove_job(_prover: &ProverImpl, _job: &Job) -> Option<CompletedProof> {
-    // Filled in by Task 2 (TDD).
-    unimplemented!("simulator prove_job — implemented in task 2")
+fn prove_job(prover: &ProverImpl, job: &Job) -> Option<CompletedProof> {
+    info!(batch_number = job.batch_number, "Starting simulation...");
+    let started_at = Instant::now();
+
+    match prover.run(&job.input_words) {
+        Err(err) => {
+            record_metrics(job, ProofStatus::Failure, started_at.elapsed());
+            error!(
+                batch_number = job.batch_number,
+                ?err,
+                "Simulator failed"
+            );
+            None
+        }
+        Ok(execution) => {
+            if !execution.reached_end {
+                record_metrics(job, ProofStatus::Failure, started_at.elapsed());
+                error!(
+                    batch_number = job.batch_number,
+                    cycles = execution.cycles_executed,
+                    "Simulator did not reach end of program"
+                );
+                return None;
+            }
+            record_metrics(job, ProofStatus::Success, started_at.elapsed());
+            info!(
+                batch_number = job.batch_number,
+                cycles = execution.cycles_executed,
+                "Simulation complete (no proof generated, submitting empty bytes)"
+            );
+            Some(CompletedProof {
+                batch_number: job.batch_number,
+                proof_bytes: vec![],
+            })
+        }
+    }
 }
 
-#[cfg(feature = "gpu")]
 fn record_metrics(job: &Job, status: ProofStatus, elapsed: Duration) {
     let labels = ProofLabels {
         batch_number: job.batch_number,
