@@ -213,8 +213,6 @@ jobs:
 
   server-integration-test:
     name: server-integration-test
-    # TODO: re-enable once the test is stable; currently hangs indefinitely on the GPU runner.
-    if: false
     runs-on: matterlabs-ci-gpu-runner
     timeout-minutes: 120
     env:
@@ -283,6 +281,7 @@ jobs:
       - vm-compare-batches
       - host-run-batches
       - server-simulator-build
+      - server-integration-test
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2

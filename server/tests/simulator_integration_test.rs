@@ -6,9 +6,8 @@
 #![cfg(not(feature = "gpu"))]
 
 use std::path::PathBuf;
-use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -17,6 +16,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use tokio::process::Command;
 use tokio::sync::oneshot;
 
 use zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment;
@@ -24,6 +24,7 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(900); // 15 min — simulator is slower than GPU
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct TestServerState {
@@ -80,14 +81,6 @@ fn batch_file_path(filename: &str) -> PathBuf {
         .join(filename)
 }
 
-struct ChildGuard(Child);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn simulator_processes_one_batch_and_submits_empty_proof() {
     let dist_dir = guest_dist_dir();
@@ -135,7 +128,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
 
     let prover_bin = env!("CARGO_BIN_EXE_eravm-prover-server");
     println!("[test] Spawning simulator prover server: {prover_bin}");
-    let child = Command::new(prover_bin)
+    let mut child = Command::new(prover_bin)
         .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
         .env(
             "PROVER_GUEST_DIST_DIR",
@@ -143,14 +136,40 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
         )
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "simulator-integration-test")
+        .kill_on_drop(true)
         .spawn()
         .expect("failed to spawn eravm-prover-server");
-    let _child_guard = ChildGuard(child);
 
-    let proof_bytes = tokio::time::timeout(TEST_TIMEOUT, proof_rx)
-        .await
-        .expect("timed out waiting for submit_proofs")
-        .expect("proof channel closed without receiving a proof");
+    let started_at = Instant::now();
+
+    let proof_bytes = tokio::time::timeout(TEST_TIMEOUT, async {
+        let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+        interval.tick().await; // first tick fires immediately, skip it
+        let mut proof_rx = std::pin::pin!(proof_rx);
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut proof_rx => {
+                    return result.expect("proof channel closed without receiving a proof");
+                }
+                exit_status = child.wait() => {
+                    let status = exit_status.expect("failed to wait on prover-server child");
+                    panic!(
+                        "prover-server exited prematurely with {status} after {:.0}s",
+                        started_at.elapsed().as_secs_f64()
+                    );
+                }
+                _ = interval.tick() => {
+                    println!(
+                        "[test] Still waiting for proof... elapsed: {:.0}s",
+                        started_at.elapsed().as_secs_f64()
+                    );
+                }
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for submit_proofs");
 
     assert!(
         proof_bytes.is_empty(),
