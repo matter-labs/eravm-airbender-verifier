@@ -1,18 +1,29 @@
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::time::{Duration, Instant};
 
-use airbender_host::{GpuProver, Prover};
+#[cfg(feature = "gpu")]
+use airbender_host::Prover as _;
+#[cfg(feature = "gpu")]
+use std::time::{Duration, Instant};
+#[cfg(feature = "gpu")]
 use tracing::{error, info};
+#[cfg(feature = "gpu")]
 use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
 
 use crate::types::{CompletedProof, Job};
 
-/// Receives jobs, proves them, and sends completed proofs back to the network worker.
+/// The concrete prover used by `prover_worker`. GPU build links the FRI prover;
+/// non-GPU build uses the RISC-V transpiler/interpreter (no real proof produced).
+#[cfg(feature = "gpu")]
+pub type ProverImpl = airbender_host::GpuProver;
+#[cfg(not(feature = "gpu"))]
+pub type ProverImpl = airbender_host::TranspilerRunner;
+
+/// Receives jobs, proves (or simulates) them, and sends completed proofs back to the network worker.
 ///
 /// Runs independently so the network worker can submit the previous proof and pre-fetch
-/// the next job while this thread is busy proving.
+/// the next job while this thread is busy.
 pub fn prover_worker(
-    prover: GpuProver,
+    prover: ProverImpl,
     job_rx: Receiver<Job>,
     result_tx: SyncSender<CompletedProof>,
 ) {
@@ -25,7 +36,8 @@ pub fn prover_worker(
     }
 }
 
-fn prove_job(prover: &GpuProver, job: &Job) -> Option<CompletedProof> {
+#[cfg(feature = "gpu")]
+fn prove_job(prover: &ProverImpl, job: &Job) -> Option<CompletedProof> {
     info!(batch_number = job.batch_number, "Starting proof...");
     let started_at = Instant::now();
 
@@ -66,6 +78,13 @@ fn prove_job(prover: &GpuProver, job: &Job) -> Option<CompletedProof> {
     }
 }
 
+#[cfg(not(feature = "gpu"))]
+fn prove_job(_prover: &ProverImpl, _job: &Job) -> Option<CompletedProof> {
+    // Filled in by Task 2 (TDD).
+    unimplemented!("simulator prove_job — implemented in task 2")
+}
+
+#[cfg(feature = "gpu")]
 fn record_metrics(job: &Job, status: ProofStatus, elapsed: Duration) {
     let labels = ProofLabels {
         batch_number: job.batch_number,

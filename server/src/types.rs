@@ -1,4 +1,5 @@
 /// A proving job received from the server.
+#[allow(dead_code)]
 pub struct Job {
     pub batch_number: u32,
     pub protocol_version: u16,

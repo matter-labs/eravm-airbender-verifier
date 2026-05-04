@@ -3,8 +3,12 @@ name = "eravm-prover-server"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["gpu"]
+gpu = ["airbender-host/gpu-prover"]
+
 [dependencies]
-airbender-host = { workspace = true, features = ["gpu-prover"] }
+airbender-host = { workspace = true, default-features = false }
 anyhow.workspace = true
 ctrlc.workspace = true
 bincode.workspace = true
