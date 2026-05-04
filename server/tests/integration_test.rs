@@ -43,7 +43,7 @@ async fn handle_proof_inputs(State(state): State<TestServerState>) -> impl IntoR
     {
         return StatusCode::NO_CONTENT.into_response();
     }
-    println!("[test-server] Serving job to prover");
+    eprintln!("[test-server] Serving job to prover");
     Json((*state.verifier_input).clone()).into_response()
 }
 
@@ -65,7 +65,7 @@ async fn handle_submit_proofs(
         Ok(bytes) => bytes,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    println!(
+    eprintln!(
         "[test-server] Received proof for batch {} ({} bytes)",
         body.l1_batch_number,
         proof_bytes.len()
@@ -88,19 +88,19 @@ fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
                 .expect("failed to decode VK cache");
         assert_eq!(decoded_len, bytes.len(), "VK cache has trailing bytes");
-        println!(
+        eprintln!(
             "[test] Loaded verification key from cache: {}",
             cache_path.display()
         );
         return vk;
     }
 
-    println!("[test] Generating verification key (this may take a while)...");
+    eprintln!("[test] Generating verification key (this may take a while)...");
     let vk = verifier.generate_vk().expect("failed to generate VK");
     let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
         .expect("failed to encode VK for caching");
     std::fs::write(cache_path, &encoded).expect("failed to write VK cache");
-    println!(
+    eprintln!(
         "[test] Verification key cached at: {}",
         cache_path.display()
     );
@@ -153,33 +153,31 @@ fn prover_server_bin() -> PathBuf {
 async fn prover_server_proves_one_batch() {
     // --- 1. Load batch and build verifier input ---
     let dist_dir = guest_dist_dir();
-    println!("[test] Guest dist dir: {}", dist_dir.display());
+    eprintln!("[test] Guest dist dir: {}", dist_dir.display());
 
     let batch_path = batch_file_path("506093.bin.gz");
-    println!("[test] Loading batch from: {}", batch_path.display());
+    eprintln!("[test] Loading batch from: {}", batch_path.display());
     let batch_input = BatchInputFile {
         number: 506093,
         path: batch_path,
     };
-    // The on-disk corpus stores V1 inputs, but the guest requires V2 (with
-    // a `commitment_input`). Synthesize a self-consistent value so the test
-    // pipeline is end-to-end runnable without a sequencer / L1.
-    // TODO: drop this once the upstream job producer ships V2 directly.
-    let AirbenderVerifierInput::V1(v1) = load_batch(&batch_input).expect("failed to load batch")
-    else {
-        panic!("expected AirbenderVerifierInput::V1 from disk");
-    };
-    let v2 = augment_with_synthetic_commitment(v1).expect("failed to synthesize commitment input");
+    // The on-disk corpus has no `commitment_input`, but the verifier guest
+    // requires one. Synthesize a self-consistent value so the test pipeline
+    // is end-to-end runnable without a sequencer / L1.
+    // TODO: drop this once the upstream job producer ships `commitment_input` directly.
+    let raw = load_batch(&batch_input).expect("failed to load batch");
+    let augmented =
+        augment_with_synthetic_commitment(raw).expect("failed to synthesize commitment input");
 
     // Compute the expected proof public input natively. The prover's
-    // `proof_public_input` for the same V2 input must match this.
-    let expected_public_input = v2
+    // `proof_public_input` for the same input must match this.
+    let expected_public_input = augmented
         .clone()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
-    println!("[test] Native verify produced public input: {expected_public_input:?}");
-    let verifier_input = AirbenderVerifierInput::V2(v2);
+    eprintln!("[test] Native verify produced public input: {expected_public_input:?}");
+    let verifier_input = augmented;
 
     // --- 2. Set up test HTTP server ---
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();
@@ -203,7 +201,7 @@ async fn prover_server_proves_one_batch() {
     let server_addr = listener
         .local_addr()
         .expect("failed to get test server address");
-    println!("[test] Test HTTP server listening on http://{server_addr}");
+    eprintln!("[test] Test HTTP server listening on http://{server_addr}");
 
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -213,7 +211,7 @@ async fn prover_server_proves_one_batch() {
 
     // --- 3. Start the prover server binary ---
     let prover_bin = prover_server_bin();
-    println!("[test] Spawning prover server: {}", prover_bin.display());
+    eprintln!("[test] Spawning prover server: {}", prover_bin.display());
     let mut child = Command::new(&prover_bin)
         .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
         .env(
@@ -225,7 +223,7 @@ async fn prover_server_proves_one_batch() {
         .kill_on_drop(true)
         .spawn()
         .expect("failed to spawn eravm-prover-server");
-    println!(
+    eprintln!(
         "[test] Prover server spawned (pid {})",
         child.id().unwrap_or_default()
     );
@@ -255,7 +253,7 @@ async fn prover_server_proves_one_batch() {
                     );
                 }
                 _ = interval.tick() => {
-                    println!(
+                    eprintln!(
                         "[test] Still waiting for proof... elapsed: {:.0}s",
                         started_at.elapsed().as_secs_f64()
                     );
@@ -266,14 +264,14 @@ async fn prover_server_proves_one_batch() {
     .await
     .expect("timed out waiting for proof");
 
-    println!(
+    eprintln!(
         "[test] Proof received after {:.1}s ({} bytes)",
         started_at.elapsed().as_secs_f64(),
         proof_bytes.len()
     );
 
     // --- 5. Verify the proof ---
-    println!("[test] Loading guest program for verification...");
+    eprintln!("[test] Loading guest program for verification...");
     let program = Program::load(&dist_dir).expect("failed to load guest program");
     let verifier = program
         .real_verifier(ProverLevel::RecursionUnified)
@@ -288,12 +286,12 @@ async fn prover_server_proves_one_batch() {
     let vk_cache = PathBuf::from(format!("vk-{manifest_sha256}.bin"));
     let vk = load_or_generate_vk(&verifier, &vk_cache);
 
-    println!("[test] Deserializing proof...");
+    eprintln!("[test] Deserializing proof...");
     let (proof, _): (Proof, usize) =
         bincode::serde::decode_from_slice(&proof_bytes, bincode::config::standard())
             .expect("failed to deserialize proof bytes");
 
-    println!("[test] Verifying proof...");
+    eprintln!("[test] Verifying proof...");
     verifier
         .verify(
             &proof,
@@ -302,5 +300,5 @@ async fn prover_server_proves_one_batch() {
         )
         .expect("proof verification failed");
 
-    println!("[test] Proof verified successfully!");
+    eprintln!("[test] Proof verified successfully!");
 }

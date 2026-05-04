@@ -207,7 +207,17 @@ jobs:
         run: cargo build -p eravm-prover-server --no-default-features --release --locked
 
       - name: Run simulator integration test
+        shell: 'bash -e {0}'
         run: |
+          # Backgrounded ticker prints elapsed time every 30s so the captured log
+          # is never silent for long. The simulator test usually finishes in <1m,
+          # but the ticker makes any future stall immediately visible.
+          ( start=$SECONDS; while true; do sleep 30; \
+              echo "[ci-tick] elapsed: $((SECONDS-start))s"; \
+            done ) &
+          TICKER_PID=$!
+          trap 'kill $TICKER_PID 2>/dev/null || true' EXIT
+
           cargo test -p eravm-prover-server --no-default-features --release --locked \
             --test simulator_integration_test -- --nocapture
 
