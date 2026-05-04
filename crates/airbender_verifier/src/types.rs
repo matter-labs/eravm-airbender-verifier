@@ -126,16 +126,7 @@ pub struct V2AirbenderVerifierInput {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
-    /// `V0` suppresses warning about irrefutable `let...else` pattern.
-    V0,
-    V1(V1AirbenderVerifierInput),
     V2(V2AirbenderVerifierInput),
-}
-
-impl AirbenderVerifierInput {
-    pub fn new(input: V1AirbenderVerifierInput) -> Self {
-        Self::V1(input)
-    }
 }
 
 #[cfg(test)]

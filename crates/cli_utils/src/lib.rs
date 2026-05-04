@@ -43,16 +43,34 @@ pub fn resolve_batch_inputs(
         .collect()
 }
 
-/// Load and deserialize a `AirbenderVerifierInput` from a batch file.
+/// Private shim that mirrors the pre-cutover wire enum so we can still read
+/// the on-disk corpus. The corpus serializes the bincode variant tag, which
+/// differs between the old (V0/V1/V2) and new (V2-only) enum layouts. Bincode
+/// uses positional variant indices, so without this shim the old V1 tag
+/// would resolve to the new enum's V2 (or fail outright).
+#[derive(serde::Deserialize)]
+#[allow(clippy::large_enum_variant)]
+enum LegacyAirbenderVerifierInput {
+    V0,
+    V1(zksync_airbender_verifier::types::V1AirbenderVerifierInput),
+    #[allow(dead_code)]
+    V2(zksync_airbender_verifier::types::V2AirbenderVerifierInput),
+}
+
+/// Load and deserialize a `V1AirbenderVerifierInput` from a batch file.
 ///
 /// Inputs are stored as hex-encoded framed bytes — first 4 bytes (big-endian
 /// `u32`) are the bincode payload length, followed by the payload itself
 /// padded out to a multiple of 4 bytes. The files may live as plain `.bin`
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
+///
+/// The on-disk format predates the V2 cutover, so we deserialize through
+/// `LegacyAirbenderVerifierInput` and return the inner V1. Callers that need
+/// V2 wrap with `airbender_verifier::test_utils::augment_with_synthetic_commitment`.
 pub fn load_batch(
     batch_input: &BatchInputFile,
-) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
+) -> Result<zksync_airbender_verifier::types::V1AirbenderVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
     let mut bytes = parse_hex_bytes(&raw).with_context(|| {
@@ -78,7 +96,7 @@ pub fn load_batch(
     );
     bytes.truncate(byte_len);
 
-    let (input, decoded_len) =
+    let (legacy, decoded_len): (LegacyAirbenderVerifierInput, usize) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
     anyhow::ensure!(
@@ -87,7 +105,19 @@ pub fn load_batch(
         batch_input.number,
         bytes.len(),
     );
-    Ok(input)
+
+    match legacy {
+        LegacyAirbenderVerifierInput::V1(v1) => Ok(v1),
+        LegacyAirbenderVerifierInput::V0 => anyhow::bail!(
+            "batch {}: corpus contains legacy V0 input (unsupported)",
+            batch_input.number
+        ),
+        LegacyAirbenderVerifierInput::V2(_) => anyhow::bail!(
+            "batch {}: corpus contains V2 input — load_batch returns the inner V1 only; \
+             callers wrap with augment_with_synthetic_commitment",
+            batch_input.number
+        ),
+    }
 }
 
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {

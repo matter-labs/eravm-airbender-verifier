@@ -213,7 +213,7 @@ pub(crate) fn run_batch(
 // pre-process the LFS corpus into V2.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
-) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
+) -> Result<zksync_airbender_verifier::types::V1AirbenderVerifierInput> {
     let parent_dir = batch_path.parent().with_context(|| {
         format!(
             "batch path {} has no parent directory",
