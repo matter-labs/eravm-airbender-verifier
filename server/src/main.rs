@@ -15,7 +15,9 @@ use tracing::info;
 use network::{network_worker, NetworkWorkerConfig};
 use worker::prover_worker;
 
-use airbender_host::{Program, ProverLevel};
+use airbender_host::Program;
+#[cfg(feature = "gpu")]
+use airbender_host::ProverLevel;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -65,15 +67,31 @@ fn main() -> Result<()> {
 
     let dist_dir = cli.guest_dist_dir.unwrap_or_else(default_dist_dir);
     let program = Program::load(&dist_dir).context("while loading guest program")?;
-    let mut prover_builder = program
-        .gpu_prover()
-        .with_level(ProverLevel::RecursionUnified);
-    if let Some(threads) = cli.worker_threads {
-        prover_builder = prover_builder.with_worker_threads(threads);
-    }
-    let prover = prover_builder
-        .build()
-        .context("while building GPU prover")?;
+
+    #[cfg(feature = "gpu")]
+    let prover = {
+        let mut builder = program
+            .gpu_prover()
+            .with_level(ProverLevel::RecursionUnified);
+        if let Some(threads) = cli.worker_threads {
+            builder = builder.with_worker_threads(threads);
+        }
+        builder
+            .build()
+            .context("while building GPU prover")?
+    };
+
+    #[cfg(not(feature = "gpu"))]
+    let prover = {
+        // `worker_threads` is GPU-only and intentionally ignored in simulator mode
+        // so deployment configs are interchangeable.
+        let _ = cli.worker_threads;
+        program
+            .transpiler_runner()
+            .with_cycles(usize::MAX)
+            .build()
+            .context("while building transpiler runner")?
+    };
 
     let client = reqwest::blocking::Client::new();
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
@@ -93,7 +111,8 @@ fn main() -> Result<()> {
     })
     .context("while setting Ctrl-C handler")?;
 
-    info!(server_url = %cli.server_url, "Starting prover server");
+    let mode = if cfg!(feature = "gpu") { "GPU" } else { "SIMULATOR" };
+    info!(server_url = %cli.server_url, mode, "Starting prover server");
 
     let prover_handle = std::thread::spawn(move || {
         prover_worker(prover, job_rx, result_tx);
