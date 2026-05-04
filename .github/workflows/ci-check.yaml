@@ -152,6 +152,65 @@ jobs:
             --batches-dir "$BATCHES_DIR" \
             --batch-files "$CI_BATCHES"
 
+  server-simulator-build:
+    name: server-simulator-build
+    runs-on: matterlabs-ci-runner-high-performance
+    env:
+      ZKSYNC_USE_CUDA_STUBS: true
+      BATCHES_DIR: testdata/era_mainnet_batches/binary
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          path: airbender-platform
+
+      - name: Install linux packages
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          fi
+          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+
+      - name: Install Git LFS
+        run: git lfs install --local
+
+      - name: Pull batch 506093
+        run: ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Build simulator binary
+        run: cargo build -p eravm-prover-server --no-default-features --release --locked
+
+      - name: Run simulator integration test
+        run: |
+          cargo test -p eravm-prover-server --no-default-features --release --locked \
+            --test simulator_integration_test -- --nocapture
+
   server-integration-test:
     name: server-integration-test
     # TODO: re-enable once the test is stable; currently hangs indefinitely on the GPU runner.
@@ -223,6 +282,7 @@ jobs:
       - tests
       - vm-compare-batches
       - host-run-batches
+      - server-simulator-build
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
