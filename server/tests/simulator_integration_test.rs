@@ -40,7 +40,7 @@ async fn handle_proof_inputs(State(state): State<TestServerState>) -> impl IntoR
     {
         return StatusCode::NO_CONTENT.into_response();
     }
-    println!("[test-server] Serving job to simulator");
+    eprintln!("[test-server] Serving job to simulator");
     Json((*state.verifier_input).clone()).into_response()
 }
 
@@ -60,7 +60,7 @@ async fn handle_submit_proofs(
         Ok(bytes) => bytes,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    println!(
+    eprintln!(
         "[test-server] Received proof for batch {} ({} bytes)",
         body.l1_batch_number,
         proof_bytes.len()
@@ -115,7 +115,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
     let server_addr = listener
         .local_addr()
         .expect("failed to get test server address");
-    println!("[test] Test HTTP server listening on http://{server_addr}");
+    eprintln!("[test] Test HTTP server listening on http://{server_addr}");
 
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -124,7 +124,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
     });
 
     let prover_bin = env!("CARGO_BIN_EXE_eravm-prover-server");
-    println!("[test] Spawning simulator prover server: {prover_bin}");
+    eprintln!("[test] Spawning simulator prover server: {prover_bin}");
     let mut child = Command::new(prover_bin)
         .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
         .env(
@@ -157,7 +157,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
                     );
                 }
                 _ = interval.tick() => {
-                    println!(
+                    eprintln!(
                         "[test] Still waiting for proof... elapsed: {:.0}s",
                         started_at.elapsed().as_secs_f64()
                     );
@@ -173,5 +173,5 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
         "simulator mode must submit empty proof bytes, got {} bytes",
         proof_bytes.len()
     );
-    println!("[test] Simulator submitted empty proof as expected");
+    eprintln!("[test] Simulator submitted empty proof as expected");
 }
