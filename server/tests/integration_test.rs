@@ -2,7 +2,6 @@
 //! server, waits up to one hour for the proof to be submitted, then verifies it.
 
 use std::path::PathBuf;
-use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -13,6 +12,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use tokio::process::Command;
 use tokio::sync::oneshot;
 
 use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
@@ -133,17 +133,6 @@ fn prover_server_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_eravm-prover-server")))
 }
 
-/// RAII guard that kills the child process on drop.
-struct ChildGuard(Child);
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        println!("[test] Killing prover server process (pid {})", self.0.id());
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The integration test
 // ---------------------------------------------------------------------------
@@ -225,7 +214,7 @@ async fn prover_server_proves_one_batch() {
     // --- 3. Start the prover server binary ---
     let prover_bin = prover_server_bin();
     println!("[test] Spawning prover server: {}", prover_bin.display());
-    let child = Command::new(&prover_bin)
+    let mut child = Command::new(&prover_bin)
         .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
         .env(
             "PROVER_GUEST_DIST_DIR",
@@ -233,10 +222,13 @@ async fn prover_server_proves_one_batch() {
         )
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "integration-test")
+        .kill_on_drop(true)
         .spawn()
         .expect("failed to spawn eravm-prover-server");
-    println!("[test] Prover server spawned (pid {})", child.id());
-    let _child_guard = ChildGuard(child);
+    println!(
+        "[test] Prover server spawned (pid {})",
+        child.id().unwrap_or_default()
+    );
 
     // --- 4. Wait up to TEST_TIMEOUT for the proof, printing a heartbeat every minute ---
     eprintln!(
@@ -251,8 +243,16 @@ async fn prover_server_proves_one_batch() {
         let mut proof_rx = std::pin::pin!(proof_rx);
         loop {
             tokio::select! {
+                biased;
                 result = &mut proof_rx => {
                     return result.expect("proof channel closed without receiving a proof");
+                }
+                exit_status = child.wait() => {
+                    let status = exit_status.expect("failed to wait on prover-server child");
+                    panic!(
+                        "prover-server exited prematurely with {status} after {:.0}s",
+                        started_at.elapsed().as_secs_f64()
+                    );
                 }
                 _ = interval.tick() => {
                     println!(
