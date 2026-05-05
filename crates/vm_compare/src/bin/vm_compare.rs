@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
 
 fn compare_batch(
     batch_input: &BatchInputFile,
-    input: V1AirbenderVerifierInput,
+    input: AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<bool> {
     let batch_number = batch_input.number;

@@ -151,7 +151,7 @@ async fn prover_server_proves_one_batch() {
     // TODO: drop this once the upstream job producer emits V2 directly.
     let v1 = load_batch(&batch_input).expect("failed to load batch");
     let v2 = augment_with_synthetic_commitment(v1).expect("failed to build V2 input");
-    let verifier_input = AirbenderVerifierInput::V2(v2);
+    let verifier_input = v2;
     eprintln!("[test] Verifier input wrapped as V2");
 
     // --- 2. Set up test HTTP server ---

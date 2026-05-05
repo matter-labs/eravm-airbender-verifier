@@ -92,7 +92,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
     };
     let v1 = load_batch(&batch_input).expect("failed to load batch");
     let v2 = augment_with_synthetic_commitment(v1).expect("failed to build V2 input");
-    let verifier_input = AirbenderVerifierInput::V2(v2);
+    let verifier_input = v2;
 
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();
     let state = TestServerState {

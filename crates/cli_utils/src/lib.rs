@@ -6,6 +6,12 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use zksync_airbender_verifier::types::{
+    AirbenderVerifierInput, VMRunWitnessInputData, WitnessInputMerklePaths,
+};
+use zksync_multivm::interface::{L1BatchEnv, SystemEnv};
+use zksync_types::{block::L2BlockExecutionData, commitment::PubdataParams};
+
 /// Shared representation of a repository-owned batch input file.
 ///
 /// We keep both the logical batch number and the exact file path so CLI tools can
@@ -43,21 +49,32 @@ pub fn resolve_batch_inputs(
         .collect()
 }
 
-/// Private shim that mirrors the pre-cutover wire enum so we can still read
-/// the on-disk corpus. The corpus serializes the bincode variant tag, which
-/// differs between the old (V0/V1/V2) and new (V2-only) enum layouts. Bincode
-/// uses positional variant indices, so without this shim the old V1 tag
-/// would resolve to the new enum's V2 (or fail outright).
+/// Layout-equivalent of the pre-cutover `V1AirbenderVerifierInput` struct,
+/// kept here purely so bincode can decode the legacy on-disk corpus before we
+/// wrap it into a `AirbenderVerifierInput { commitment_input: None, .. }`.
+/// Field order and types match the old V1 struct exactly; do not change.
+#[derive(serde::Deserialize)]
+struct LegacyV1Layout {
+    vm_run_data: VMRunWitnessInputData,
+    merkle_paths: WitnessInputMerklePaths,
+    l2_blocks_execution_data: Vec<L2BlockExecutionData>,
+    l1_batch_env: L1BatchEnv,
+    system_env: SystemEnv,
+    pubdata_params: PubdataParams,
+}
+
+/// Mirrors the pre-cutover wire enum's variant indices. Bincode tags variants
+/// positionally, so the old V0/V1/V2 indices must line up with what the
+/// corpus actually contains. V0 is a unit variant that was used as a let-else
+/// suppression marker; V1 is the only payload-carrying variant in our corpus.
 #[derive(serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 enum LegacyAirbenderVerifierInput {
     V0,
-    V1(zksync_airbender_verifier::types::V1AirbenderVerifierInput),
-    #[allow(dead_code)]
-    V2(zksync_airbender_verifier::types::V2AirbenderVerifierInput),
+    V1(LegacyV1Layout),
 }
 
-/// Load and deserialize a `V1AirbenderVerifierInput` from a batch file.
+/// Load and deserialize a `AirbenderVerifierInput` from a batch file.
 ///
 /// Inputs are stored as hex-encoded framed bytes — first 4 bytes (big-endian
 /// `u32`) are the bincode payload length, followed by the payload itself
@@ -65,12 +82,13 @@ enum LegacyAirbenderVerifierInput {
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
 ///
-/// The on-disk format predates the V2 cutover, so we deserialize through
-/// `LegacyAirbenderVerifierInput` and return the inner V1. Callers that need
-/// V2 wrap with `airbender_verifier::test_utils::augment_with_synthetic_commitment`.
-pub fn load_batch(
-    batch_input: &BatchInputFile,
-) -> Result<zksync_airbender_verifier::types::V1AirbenderVerifierInput> {
+/// The on-disk format predates the V2 cutover (and predates the flat-V2 +
+/// optional-commitment-input shape), so we deserialize through
+/// `LegacyAirbenderVerifierInput` / `LegacyV1Layout` and return a
+/// `AirbenderVerifierInput` with `commitment_input: None`. Callers that
+/// need a populated commitment context wrap with
+/// `airbender_verifier::test_utils::augment_with_synthetic_commitment`.
+pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
     let mut bytes = parse_hex_bytes(&raw).with_context(|| {
@@ -107,14 +125,17 @@ pub fn load_batch(
     );
 
     match legacy {
-        LegacyAirbenderVerifierInput::V1(v1) => Ok(v1),
+        LegacyAirbenderVerifierInput::V1(v1) => Ok(AirbenderVerifierInput {
+            vm_run_data: v1.vm_run_data,
+            merkle_paths: v1.merkle_paths,
+            l2_blocks_execution_data: v1.l2_blocks_execution_data,
+            l1_batch_env: v1.l1_batch_env,
+            system_env: v1.system_env,
+            pubdata_params: v1.pubdata_params,
+            commitment_input: None,
+        }),
         LegacyAirbenderVerifierInput::V0 => anyhow::bail!(
             "batch {}: corpus contains legacy V0 input (unsupported)",
-            batch_input.number
-        ),
-        LegacyAirbenderVerifierInput::V2(_) => anyhow::bail!(
-            "batch {}: corpus contains V2 input — load_batch returns the inner V1 only; \
-             callers wrap with augment_with_synthetic_commitment",
             batch_input.number
         ),
     }
