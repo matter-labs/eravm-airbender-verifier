@@ -106,14 +106,28 @@ fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -
     vk
 }
 
+/// Resolution order for paths the test consumes:
+/// 1. `IT_<NAME>` env var (set by CI when running a prebuilt test binary on a
+///    different machine than the one that compiled it — `CARGO_MANIFEST_DIR`
+///    points to the build host).
+/// 2. `CARGO_MANIFEST_DIR`-relative default (the local-dev path).
 fn guest_dist_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
+    std::env::var_os("IT_GUEST_DIST_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
+    })
 }
 
 fn batch_file_path(filename: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../testdata/era_mainnet_batches/binary")
-        .join(filename)
+    let dir = std::env::var_os("IT_BATCHES_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/era_mainnet_batches/binary")
+    });
+    dir.join(filename)
+}
+
+fn prover_server_bin() -> PathBuf {
+    std::env::var_os("IT_PROVER_SERVER_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_eravm-prover-server")))
 }
 
 /// RAII guard that kills the child process on drop.
@@ -189,9 +203,9 @@ async fn prover_server_proves_one_batch() {
     });
 
     // --- 3. Start the prover server binary ---
-    let prover_bin = env!("CARGO_BIN_EXE_eravm-prover-server");
-    println!("[test] Spawning prover server: {prover_bin}");
-    let child = Command::new(prover_bin)
+    let prover_bin = prover_server_bin();
+    println!("[test] Spawning prover server: {}", prover_bin.display());
+    let child = Command::new(&prover_bin)
         .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
         .env(
             "PROVER_GUEST_DIST_DIR",

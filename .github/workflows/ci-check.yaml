@@ -152,12 +152,26 @@ jobs:
             --batches-dir "$BATCHES_DIR" \
             --batch-files "$CI_BATCHES"
 
-  server-integration-test:
-    name: server-integration-test
-    runs-on: matterlabs-ci-gpu-runner
-    timeout-minutes: 120
+  # -----------------------------------------------------------------------------
+  # Build the prover-server binary and the integration-test binary on a
+  # high-performance runner inside the nvidia/cuda devel container. This is the
+  # ONLY place where `gpu-prover` (and transitively `era_cudart_sys`,
+  # `bellman-cuda`-using crates) compile — the GPU runner has the driver but no
+  # toolkit, so cargo on that runner would either fail or hang.
+  #
+  # The matching run job (`server-integration-run`) downloads these artifacts
+  # and executes them on the GPU runner. No `cargo` runs there.
+  # -----------------------------------------------------------------------------
+  server-integration-build:
+    name: server-integration-build
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    container:
+      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
     env:
-      BATCHES_DIR: testdata/era_mainnet_batches/binary
+      # The runtime runner is an RTX 6000 Ada (sm_89). Match prove-batch.yaml.
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -169,21 +183,23 @@ jobs:
           ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
           path: airbender-platform
 
-      - name: Install linux packages
-        shell: 'bash -ex {0}'
+      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket; cmake; rustc.
+      # Same composite used by build-host in prove-batch.yaml.
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        if: ${{ runner.os == 'Linux' }}
         run: |
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO=sudo
-          fi
-          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+          apt-get update
+          apt-get install -y clang build-essential git curl libclang-dev git-lfs
 
-      - name: Install CMake 3.28+
-        uses: jwlawson/actions-setup-cmake@802fa1a2c4e212495c05bf94dba2704a92a472be # v2.0.2
-        with:
-          cmake-version: '3.28.x'
+      - name: Inspect toolchain
+        run: |
+          nvcc --version
+          cmake --version
+          rustc --version
 
       - name: Install Git LFS
         run: git lfs install --local
@@ -191,10 +207,15 @@ jobs:
       - name: Pull batch 506093
         run: ./scripts/fetch_lfs_batches.sh 506093.bin.gz
 
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
+      # Build era-bellman-cuda — `zksync-crypto-gpu`'s `gpu-ffi` build script
+      # reads `BELLMAN_CUDA_DIR` from the env. Without it, linking gpu-prover
+      # fails or stalls. (Same pattern as prove-batch.yaml's build-host.)
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
 
       - name: Install cargo-binutils
         working-directory: ./airbender-platform
@@ -208,10 +229,153 @@ jobs:
         working-directory: ./guest
         run: cargo airbender build
 
-      - name: Run prover server integration test
+      - name: Build eravm-prover-server
+        env:
+          RUST_BACKTRACE: 1
         run: |
-          cargo test --package eravm-prover-server --test integration_test --release --locked \
-            -- --ignored --nocapture
+          cargo build --release -p eravm-prover-server --locked
+          ls -lh target/release/eravm-prover-server
+
+      # Compile the integration test binary without running it. cargo emits
+      # JSON metadata that tells us the exact path of the test executable
+      # (it has a hash-suffixed name in target/release/deps/).
+      - name: Build integration test binary
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo test --release --locked \
+            --package eravm-prover-server --test integration_test \
+            --no-run --message-format=json > test-build.json
+          test_bin=$(jq -r 'select(.executable != null and (.target.name == "integration_test")) | .executable' test-build.json | tail -n1)
+          if [ -z "$test_bin" ]; then
+            echo "Failed to locate integration_test binary in cargo metadata" >&2
+            exit 1
+          fi
+          echo "Test binary: $test_bin"
+          mkdir -p test-stage
+          cp -v "$test_bin" test-stage/integration_test
+
+      # Stage runtime CUDA libraries the test/server need on the GPU runner:
+      #   - bellman-cuda's own outputs (it isn't in any system path)
+      #   - libcudart from the container's CUDA toolkit (the GPU runner has the
+      #     driver — `libcuda.so` — but no toolkit, so `libcudart.so.13` is
+      #     missing without us shipping it)
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+          ls -lh bellman-cuda-stage/
+
+      - name: Upload prover-server binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-bin
+          path: target/release/eravm-prover-server
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload integration test binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-integration-test
+          path: test-stage/integration_test
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-bellman-cuda
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload batch
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-batch
+          path: testdata/era_mainnet_batches/binary/506093.bin.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # -----------------------------------------------------------------------------
+  # Run the prebuilt integration test on the GPU runner. No cargo here — only
+  # the prebuilt binaries from server-integration-build, plus the staged CUDA
+  # runtime libs. The test binary picks up paths via IT_* env vars (its
+  # CARGO_MANIFEST_DIR / CARGO_BIN_EXE_* are baked at compile time and point
+  # to the build runner's filesystem).
+  # -----------------------------------------------------------------------------
+  server-integration-run:
+    name: server-integration-run
+    needs: server-integration-build
+    runs-on: matterlabs-ci-gpu-runner
+    timeout-minutes: 90
+    steps:
+      - name: Download prover-server binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-server-bin
+          path: stage/bin
+
+      - name: Download integration test binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-server-integration-test
+          path: stage/bin
+
+      - name: Download guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-server-guest-dist
+          path: stage/guest
+
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-server-bellman-cuda
+          path: stage/cuda-libs
+
+      - name: Download batch
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-server-batch
+          path: stage/batches
+
+      - name: Make binaries executable
+        run: |
+          chmod +x stage/bin/eravm-prover-server stage/bin/integration_test
+          ls -lh stage/bin stage/cuda-libs stage/guest stage/batches
+
+      - name: Run prover server integration test
+        env:
+          # The test binary uses the IT_* overrides because its baked-in
+          # CARGO_MANIFEST_DIR and CARGO_BIN_EXE_* point to the build runner.
+          IT_PROVER_SERVER_BIN: ${{ github.workspace }}/stage/bin/eravm-prover-server
+          IT_GUEST_DIST_DIR: ${{ github.workspace }}/stage/guest
+          IT_BATCHES_DIR: ${{ github.workspace }}/stage/batches
+          # libcudart and bellman-cuda's .so live in the staged dir.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
+          RUST_BACKTRACE: 1
+        run: |
+          # Background ticker prevents >30s silent log windows during the
+          # 1-hour proving wait. Trapped on EXIT so it dies with the step.
+          ( while sleep 30; do echo "[ci-tick] elapsed: ${SECONDS}s"; done ) &
+          ticker_pid=$!
+          trap 'kill "$ticker_pid" 2>/dev/null || true' EXIT
+          ./stage/bin/integration_test --ignored --nocapture
 
   pr-checks:
     runs-on: ubuntu-latest
@@ -221,7 +385,8 @@ jobs:
       - tests
       - vm-compare-batches
       - host-run-batches
-      - server-integration-test
+      - server-integration-build
+      - server-integration-run
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
