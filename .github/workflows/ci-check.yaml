@@ -318,8 +318,11 @@ jobs:
   server-integration-run:
     name: server-integration-run
     needs: server-integration-build
-    runs-on: matterlabs-ci-gpu-runner
-    timeout-minutes: 90
+    # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
+    # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
+    # Same runner used by prove-batch.yaml.
+    runs-on: matterlabs-ci-hetzner-rtx6000-gpu
+    timeout-minutes: 20
     steps:
       # Need the repo for `scripts/fetch_lfs_batches.sh` and the testdata path.
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -379,7 +382,7 @@ jobs:
           RUST_BACKTRACE: 1
         run: |
           # Background ticker prevents >30s silent log windows during the
-          # 1-hour proving wait. Trapped on EXIT so it dies with the step.
+          # proving wait. Trapped on EXIT so it dies with the step.
           ( while sleep 30; do echo "[ci-tick] elapsed: ${SECONDS}s"; done ) &
           ticker_pid=$!
           trap 'kill "$ticker_pid" 2>/dev/null || true' EXIT

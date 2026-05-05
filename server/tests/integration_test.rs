@@ -20,7 +20,7 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
 const EXPECTED_OUTPUT: u32 = 1;
-const TEST_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
+const TEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ impl Drop for ChildGuard {
 /// 1. Load batch 506093 and deserialize it to `AirbenderVerifierInput`.
 /// 2. Start a local HTTP server that serves the job once, then hangs returning 204.
 /// 3. Start `eravm-prover-server` pointed at the local server.
-/// 4. Wait up to 1 hour for the server to submit the proof.
+/// 4. Wait up to `TEST_TIMEOUT` for the server to submit the proof.
 /// 5. Verify the submitted proof with `RealVerifier`.
 ///
 /// Ignored by default: requires a GPU, the built guest binary, and LFS batch 506093.bin.gz.
@@ -220,8 +220,11 @@ async fn prover_server_proves_one_batch() {
     println!("[test] Prover server spawned (pid {})", child.id());
     let _child_guard = ChildGuard(child);
 
-    // --- 4. Wait up to 1 hour for the proof, printing a heartbeat every minute ---
-    println!("[test] Waiting for proof (timeout: 1 hour)...");
+    // --- 4. Wait up to TEST_TIMEOUT for the proof, printing a heartbeat every minute ---
+    eprintln!(
+        "[test] Waiting for proof (timeout: {}s)...",
+        TEST_TIMEOUT.as_secs()
+    );
     let started_at = Instant::now();
 
     let proof_bytes = tokio::time::timeout(TEST_TIMEOUT, async {
@@ -243,7 +246,7 @@ async fn prover_server_proves_one_batch() {
         }
     })
     .await
-    .expect("timed out after 1 hour waiting for proof");
+    .expect("timed out waiting for proof");
 
     println!(
         "[test] Proof received after {:.1}s ({} bytes)",
