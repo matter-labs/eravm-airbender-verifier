@@ -129,11 +129,11 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             let input = response
                 .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
-            let AirbenderVerifierInput::V1(ref v1) = input else {
-                anyhow::bail!("expected AirbenderVerifierInput::V1");
+            let AirbenderVerifierInput::V2(ref v2) = input else {
+                anyhow::bail!("expected AirbenderVerifierInput::V2");
             };
-            let batch_number = v1.vm_run_data.l1_batch_number.0;
-            let protocol_version = v1.vm_run_data.protocol_version as u16;
+            let batch_number = v2.v1.vm_run_data.l1_batch_number.0;
+            let protocol_version = v2.v1.vm_run_data.protocol_version as u16;
             let input_words = input_to_words(&input)?;
             Ok(Some(Job {
                 batch_number,
