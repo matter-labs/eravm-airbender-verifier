@@ -8,7 +8,6 @@ use std::path::Path;
 use zksync_airbender_verifier::test_utils::{
     augment_with_synthetic_commitment, crosscheck_commitment,
 };
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -36,9 +35,6 @@ fn test_batch_506093_commitment() {
         path: batch_path.clone(),
     })
     .expect("failed to load batch");
-    let AirbenderVerifierInput::V1(input) = input else {
-        panic!("expected AirbenderVerifierInput::V1");
-    };
 
     println!(
         "Running verification for batch {}...",

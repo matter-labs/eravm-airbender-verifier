@@ -149,10 +149,7 @@ async fn prover_server_proves_one_batch() {
     // V2 (commitment computation). Wrap V1 in a synthetic V2 so the test
     // pipeline is self-consistent.
     // TODO: drop this once the upstream job producer emits V2 directly.
-    let AirbenderVerifierInput::V1(v1) = load_batch(&batch_input).expect("failed to load batch")
-    else {
-        panic!("expected AirbenderVerifierInput::V1 from disk");
-    };
+    let v1 = load_batch(&batch_input).expect("failed to load batch");
     let v2 = augment_with_synthetic_commitment(v1).expect("failed to build V2 input");
     let verifier_input = AirbenderVerifierInput::V2(v2);
     eprintln!("[test] Verifier input wrapped as V2");

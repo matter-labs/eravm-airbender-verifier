@@ -14,5 +14,6 @@ categories.workspace = true
 anyhow.workspace = true
 bincode = { version = "2", features = ["serde"] }
 flate2.workspace = true
+serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 zksync_airbender_verifier.workspace = true

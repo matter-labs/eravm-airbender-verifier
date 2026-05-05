@@ -90,10 +90,7 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
         number: 506093,
         path: batch_path,
     };
-    let AirbenderVerifierInput::V1(v1) = load_batch(&batch_input).expect("failed to load batch")
-    else {
-        panic!("expected AirbenderVerifierInput::V1 from disk");
-    };
+    let v1 = load_batch(&batch_input).expect("failed to load batch");
     let v2 = augment_with_synthetic_commitment(v1).expect("failed to build V2 input");
     let verifier_input = AirbenderVerifierInput::V2(v2);
 
