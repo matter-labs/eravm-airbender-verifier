@@ -6442,6 +6442,9 @@ dependencies = [
  "serde",
  "tracing",
  "zksync_airbender_verifier",
+ "zksync_multivm",
+ "zksync_types",
+ "zksync_vm_interface",
 ]
 
 [[package]]

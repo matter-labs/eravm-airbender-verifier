@@ -85,7 +85,7 @@ impl FriPipeline {
             .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
         let mut prover_input = Inputs::new();
         prover_input
-            .push(&zksync_airbender_verifier::types::AirbenderVerifierInput::V2(v2))
+            .push(&v2)
             .context("failed to encode V2 AirbenderVerifierInput")?;
 
         let proving_started_at = Instant::now();
@@ -174,8 +174,8 @@ pub(crate) fn run_batch(
     // Run transpiler with the same synthetic `CommitmentInput`.
     let mut transpiler_input = Inputs::new();
     transpiler_input
-        .push(&zksync_airbender_verifier::types::AirbenderVerifierInput::V2(v2))
-        .context("failed to encode V2 AirbenderVerifierInput")?;
+        .push(&v2)
+        .context("failed to encode AirbenderVerifierInput")?;
 
     let execution = runner
         .run(transpiler_input.words())
@@ -213,7 +213,7 @@ pub(crate) fn run_batch(
 // pre-process the LFS corpus into V2.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
-) -> Result<zksync_airbender_verifier::types::V1AirbenderVerifierInput> {
+) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
     let parent_dir = batch_path.parent().with_context(|| {
         format!(
             "batch path {} has no parent directory",

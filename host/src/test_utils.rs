@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
 use crate::fri::load_verifier_input;
 
@@ -20,7 +20,7 @@ use crate::fri::load_verifier_input;
 /// See `zksync_airbender_verifier::test_utils` module docs.
 pub(crate) fn load_with_synthetic_commitment(
     batch_path: &Path,
-) -> Result<V2AirbenderVerifierInput> {
+) -> Result<AirbenderVerifierInput> {
     let v1 = load_verifier_input(batch_path)?;
     zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment(v1)
         .context("failed to build synthetic commitment input")

@@ -83,50 +83,24 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Version 1 of the data used as input for the Airbender verifier.
+/// Data fed to the Airbender verifier.
+///
+/// `commitment_input` is `Some` for full Airbender proving (the verifier
+/// produces a `proof_public_input` bound to the L1 commitment chain) and
+/// `None` for VM-only consumers — `cli_utils::load_batch` of the legacy
+/// on-disk corpus, `vm_compare` (only cares about VM execution), and tests
+/// that construct synthetic inputs without populating commitment context.
+/// The verifier's `Verify` impl requires `Some`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1AirbenderVerifierInput {
+pub struct AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
     pub l1_batch_env: L1BatchEnv,
     pub system_env: SystemEnv,
     pub pubdata_params: PubdataParams,
-}
-
-impl V1AirbenderVerifierInput {
-    pub fn new(
-        vm_run_data: VMRunWitnessInputData,
-        merkle_paths: WitnessInputMerklePaths,
-        l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-        l1_batch_env: L1BatchEnv,
-        system_env: SystemEnv,
-        pubdata_params: PubdataParams,
-    ) -> Self {
-        Self {
-            vm_run_data,
-            merkle_paths,
-            l2_blocks_execution_data,
-            l1_batch_env,
-            system_env,
-            pubdata_params,
-        }
-    }
-}
-
-/// Version 2: V1 + CommitmentInput for Airbender settlement.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V2AirbenderVerifierInput {
-    pub v1: V1AirbenderVerifierInput,
-    pub commitment_input: CommitmentInput,
-}
-
-/// Data used as input for the Airbender verifier.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
-pub enum AirbenderVerifierInput {
-    V2(V2AirbenderVerifierInput),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commitment_input: Option<CommitmentInput>,
 }
 
 #[cfg(test)]
