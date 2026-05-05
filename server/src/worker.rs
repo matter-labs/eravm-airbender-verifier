@@ -85,11 +85,7 @@ fn prove_job(prover: &ProverImpl, job: &Job) -> Option<CompletedProof> {
     match prover.run(&job.input_words) {
         Err(err) => {
             record_metrics(job, ProofStatus::Failure, started_at.elapsed());
-            error!(
-                batch_number = job.batch_number,
-                ?err,
-                "Simulator failed"
-            );
+            error!(batch_number = job.batch_number, ?err, "Simulator failed");
             None
         }
         Ok(execution) => {

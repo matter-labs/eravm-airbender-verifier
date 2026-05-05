@@ -35,10 +35,7 @@ struct TxExecutionCapture {
     trace: TransactionTrace,
 }
 
-pub fn compare(
-    input: AirbenderVerifierInput,
-    options: CompareOptions,
-) -> Result<ComparisonReport> {
+pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
     let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
     let fast_storage = StorageView::new(storage_snapshot).to_rc_ptr();

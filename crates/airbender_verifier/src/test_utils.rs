@@ -26,7 +26,7 @@ use zksync_types::{
 };
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
-use crate::types::{CommitmentInput, AirbenderVerifierInput, TOTAL_BLOBS_IN_COMMITMENT};
+use crate::types::{AirbenderVerifierInput, CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 use crate::VerificationResult;
 
 /// Replace `input.commitment_input` with a **synthetic, self-consistent**

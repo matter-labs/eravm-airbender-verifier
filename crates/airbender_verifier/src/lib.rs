@@ -43,7 +43,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    CommitmentInput, StorageLogMetadata, AirbenderVerifierInput, WitnessInputMerklePaths,
+    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, WitnessInputMerklePaths,
     TOTAL_BLOBS_IN_COMMITMENT,
 };
 

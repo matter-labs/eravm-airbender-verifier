@@ -76,9 +76,7 @@ fn main() -> Result<()> {
         if let Some(threads) = cli.worker_threads {
             builder = builder.with_worker_threads(threads);
         }
-        builder
-            .build()
-            .context("while building GPU prover")?
+        builder.build().context("while building GPU prover")?
     };
 
     #[cfg(not(feature = "gpu"))]
@@ -111,7 +109,11 @@ fn main() -> Result<()> {
     })
     .context("while setting Ctrl-C handler")?;
 
-    let mode = if cfg!(feature = "gpu") { "GPU" } else { "SIMULATOR" };
+    let mode = if cfg!(feature = "gpu") {
+        "GPU"
+    } else {
+        "SIMULATOR"
+    };
     info!(server_url = %cli.server_url, mode, "Starting prover server");
 
     let prover_handle = std::thread::spawn(move || {
