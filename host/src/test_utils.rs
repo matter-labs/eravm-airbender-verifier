@@ -18,7 +18,9 @@ use crate::fri::load_verifier_input;
 /// `CommitmentInput` (real blob linear hashes from pubdata, fabricated
 /// versioned hashes / opening commitments, zero prev_meta/prev_aux).
 /// See `zksync_airbender_verifier::test_utils` module docs.
-pub(crate) fn load_with_synthetic_commitment(batch_path: &Path) -> Result<V2AirbenderVerifierInput> {
+pub(crate) fn load_with_synthetic_commitment(
+    batch_path: &Path,
+) -> Result<V2AirbenderVerifierInput> {
     let v1_input = load_verifier_input(batch_path)?;
     let AirbenderVerifierInput::V1(v1) = v1_input else {
         anyhow::bail!("expected AirbenderVerifierInput::V1");

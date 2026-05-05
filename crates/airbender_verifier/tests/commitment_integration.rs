@@ -5,10 +5,12 @@
 
 use std::path::Path;
 
-use zksync_cli_utils::{load_batch, BatchInputFile};
-use zksync_airbender_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
+use zksync_airbender_verifier::test_utils::{
+    augment_with_synthetic_commitment, crosscheck_commitment,
+};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
+use zksync_cli_utils::{load_batch, BatchInputFile};
 
 #[test]
 fn test_batch_506093_commitment() {

@@ -112,15 +112,17 @@ fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -
 ///    points to the build host).
 /// 2. `CARGO_MANIFEST_DIR`-relative default (the local-dev path).
 fn guest_dist_dir() -> PathBuf {
-    std::env::var_os("IT_GUEST_DIST_DIR").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
-    })
+    std::env::var_os("IT_GUEST_DIST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app"))
 }
 
 fn batch_file_path(filename: &str) -> PathBuf {
-    let dir = std::env::var_os("IT_BATCHES_DIR").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/era_mainnet_batches/binary")
-    });
+    let dir = std::env::var_os("IT_BATCHES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/era_mainnet_batches/binary")
+        });
     dir.join(filename)
 }
 
