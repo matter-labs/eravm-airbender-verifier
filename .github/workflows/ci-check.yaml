@@ -173,17 +173,17 @@ jobs:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
-      # The nvidia/cuda devel image is minimal — no git, no git-lfs.
-      # Install both BEFORE actions/checkout: without git in PATH, checkout
-      # silently falls back to a tarball download via the REST API and the
-      # workspace ends up without a `.git` directory, which then breaks
-      # `git lfs install --local` and `git lfs pull` downstream.
-      - name: Install git and git-lfs
+      # The nvidia/cuda devel image is minimal — no git. Install it BEFORE
+      # actions/checkout: without git in PATH, checkout silently falls back to
+      # a REST API tarball download and the workspace ends up without a `.git`
+      # directory. (We don't pull LFS here; the batch is fetched on the run
+      # job since this build doesn't read it.)
+      - name: Install git
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y git git-lfs
+          apt-get install -y git
 
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -211,11 +211,6 @@ jobs:
           nvcc --version
           cmake --version
           rustc --version
-
-      - name: Pull batch 506093
-        run: |
-          git lfs install --local
-          ./scripts/fetch_lfs_batches.sh 506093.bin.gz
 
       # Build era-bellman-cuda — `zksync-crypto-gpu`'s `gpu-ffi` build script
       # reads `BELLMAN_CUDA_DIR` from the env. Without it, linking gpu-prover
@@ -309,14 +304,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Upload batch
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: eravm-prover-server-batch
-          path: testdata/era_mainnet_batches/binary/506093.bin.gz
-          if-no-files-found: error
-          retention-days: 1
-
       - name: sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -324,9 +311,9 @@ jobs:
   # -----------------------------------------------------------------------------
   # Run the prebuilt integration test on the GPU runner. No cargo here — only
   # the prebuilt binaries from server-integration-build, plus the staged CUDA
-  # runtime libs. The test binary picks up paths via IT_* env vars (its
-  # CARGO_MANIFEST_DIR / CARGO_BIN_EXE_* are baked at compile time and point
-  # to the build runner's filesystem).
+  # runtime libs and the LFS batch. The test binary picks up paths via IT_*
+  # env vars (its baked-in CARGO_MANIFEST_DIR / CARGO_BIN_EXE_* point to the
+  # build runner's filesystem).
   # -----------------------------------------------------------------------------
   server-integration-run:
     name: server-integration-run
@@ -334,6 +321,23 @@ jobs:
     runs-on: matterlabs-ci-gpu-runner
     timeout-minutes: 90
     steps:
+      # Need the repo for `scripts/fetch_lfs_batches.sh` and the testdata path.
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install git-lfs
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+          ${SUDO} apt-get update
+          ${SUDO} apt-get install -y git-lfs
+
+      - name: Pull batch 506093
+        run: |
+          git lfs install --local
+          ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+
       - name: Download prover-server binary
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -358,16 +362,10 @@ jobs:
           name: eravm-prover-server-bellman-cuda
           path: stage/cuda-libs
 
-      - name: Download batch
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: eravm-prover-server-batch
-          path: stage/batches
-
       - name: Make binaries executable
         run: |
           chmod +x stage/bin/eravm-prover-server stage/bin/integration_test
-          ls -lh stage/bin stage/cuda-libs stage/guest stage/batches
+          ls -lh stage/bin stage/cuda-libs stage/guest
 
       - name: Run prover server integration test
         env:
@@ -375,7 +373,7 @@ jobs:
           # CARGO_MANIFEST_DIR and CARGO_BIN_EXE_* point to the build runner.
           IT_PROVER_SERVER_BIN: ${{ github.workspace }}/stage/bin/eravm-prover-server
           IT_GUEST_DIST_DIR: ${{ github.workspace }}/stage/guest
-          IT_BATCHES_DIR: ${{ github.workspace }}/stage/batches
+          IT_BATCHES_DIR: ${{ github.workspace }}/testdata/era_mainnet_batches/binary
           # libcudart and bellman-cuda's .so live in the staged dir.
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
