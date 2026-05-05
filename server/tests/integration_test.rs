@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 
 use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
-use zksync_cli_utils::{load_batch_words, BatchInputFile};
+use zksync_cli_utils::{load_batch, BatchInputFile};
 
 const EXPECTED_OUTPUT: u32 = 1;
 const TEST_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
@@ -78,17 +78,6 @@ async fn handle_submit_proofs(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Inverts the framed word format produced by the server's `input_to_words`:
-/// `[byte_len as u32] ++ [bytes packed big-endian into u32 words, last zero-padded]`.
-fn words_to_verifier_input(words: &[u32]) -> AirbenderVerifierInput {
-    let byte_len = words[0] as usize;
-    let bytes: Vec<u8> = words[1..].iter().flat_map(|w| w.to_be_bytes()).collect();
-    let (input, _): (AirbenderVerifierInput, usize) =
-        bincode::serde::decode_from_slice(&bytes[..byte_len], bincode::config::standard())
-            .expect("failed to deserialize AirbenderVerifierInput from framed batch words");
-    input
-}
 
 /// Loads the VK from `cache_path` if it exists; otherwise generates and caches it.
 fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -> VerificationKey {
@@ -166,11 +155,8 @@ async fn prover_server_proves_one_batch() {
         number: 506093,
         path: batch_path,
     };
-    let words = load_batch_words(&batch_input).expect("failed to load batch words");
-    println!("[test] Batch loaded: {} words", words.len());
-
-    let verifier_input = words_to_verifier_input(&words);
-    println!("[test] Verifier input deserialized successfully");
+    let verifier_input = load_batch(&batch_input).expect("failed to load batch");
+    println!("[test] Verifier input loaded successfully");
 
     // --- 2. Set up test HTTP server ---
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();
