@@ -90,9 +90,9 @@ async fn simulator_processes_one_batch_and_submits_empty_proof() {
         number: 506093,
         path: batch_path,
     };
-    let v1 = load_batch(&batch_input).expect("failed to load batch");
-    let v2 = augment_with_synthetic_commitment(v1).expect("failed to build V2 input");
-    let verifier_input = v2;
+    let raw = load_batch(&batch_input).expect("failed to load batch");
+    let verifier_input =
+        augment_with_synthetic_commitment(raw).expect("failed to synthesize commitment input");
 
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();
     let state = TestServerState {

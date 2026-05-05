@@ -79,14 +79,18 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
-        // TODO: long term, the upstream dump should ship V2 directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize loop.
-        // The current approach is a workaround until either the producer emits V2 or we pre-process the LFS corpus into V2.
-        let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
-            .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+        // TODO: long term, the upstream dump should ship `commitment_input`
+        // directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize
+        // loop. Workaround until either the producer emits it or we pre-process
+        // the LFS corpus.
+        let input =
+            crate::test_utils::load_with_synthetic_commitment(batch_path).with_context(|| {
+                format!("failed to synthesize commitment input for batch {batch_number}")
+            })?;
         let mut prover_input = Inputs::new();
         prover_input
-            .push(&v2)
-            .context("failed to encode V2 AirbenderVerifierInput")?;
+            .push(&input)
+            .context("failed to encode AirbenderVerifierInput")?;
 
         let proving_started_at = Instant::now();
         let prove_result = self.prover.prove(prover_input.words()).with_context(|| {
@@ -159,10 +163,15 @@ pub(crate) fn run_batch(
     // blob hashes come from VM pubdata; versioned hashes, opening commitments,
     // and prev_batch_commitment are fabricated — see `test_utils` module docs.
     // **Not** L1-settlement-equivalent.
-    let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
-        .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+    let input =
+        crate::test_utils::load_with_synthetic_commitment(batch_path).with_context(|| {
+            format!("failed to synthesize commitment input for batch {batch_number}")
+        })?;
 
-    let native_result = v2.clone().verify().context("native verification failed")?;
+    let native_result = input
+        .clone()
+        .verify()
+        .context("native verification failed")?;
 
     info!(
         batch_number,
@@ -174,7 +183,7 @@ pub(crate) fn run_batch(
     // Run transpiler with the same synthetic `CommitmentInput`.
     let mut transpiler_input = Inputs::new();
     transpiler_input
-        .push(&v2)
+        .push(&input)
         .context("failed to encode AirbenderVerifierInput")?;
 
     let execution = runner
@@ -205,12 +214,12 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Load and deserialize a AirbenderVerifierInput from a batch file.
+/// Load and deserialize an `AirbenderVerifierInput` from a batch file.
 ///
-// TODO: long term, the upstream dump should ship V2 directly so we can avoid
-// the deserialize-(synthesise-CommitmentInput)-reserialize loop. The current
-// approach is a workaround until either the producer emits V2 or we
-// pre-process the LFS corpus into V2.
+// TODO: long term, the upstream dump should ship `commitment_input` directly
+// so we can avoid the deserialize-(synthesise-CommitmentInput)-reserialize
+// loop. Workaround until either the producer emits it or we pre-process the
+// LFS corpus.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
 ) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {

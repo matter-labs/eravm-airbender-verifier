@@ -119,17 +119,17 @@ pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
 }
 
 /// Reconstruct the batch commitment via upstream `L1BatchCommitment::new()`
-/// from the V2 input and assert the verifier's sub-hashes agree.
+/// and assert the verifier's sub-hashes agree.
 ///
 /// The hash math is shared upstream code, so this catches struct-construction
 /// mistakes in `verify_commitment` (e.g. fields swapped in the struct literal)
 /// rather than encoding bugs.
 pub fn crosscheck_commitment(
     result: &VerificationResult,
-    v2: &AirbenderVerifierInput,
+    input: &AirbenderVerifierInput,
 ) -> anyhow::Result<()> {
-    let protocol_version = v2.system_env.version;
-    let base = &v2.system_env.base_system_smart_contracts;
+    let protocol_version = input.system_env.version;
+    let base = &input.system_env.base_system_smart_contracts;
     let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 
     let sequencer_input = SequencerCommitmentInput::PostBoojum {
@@ -151,7 +151,7 @@ pub fn crosscheck_commitment(
             // Blake2s value reproduces the Airbender variant exactly.
             bootloader_initial_content_commitment: result.bootloader_heap_hash,
         },
-        blob_hashes: v2
+        blob_hashes: input
             .commitment_input
             .as_ref()
             .context("crosscheck_commitment requires commitment_input to be Some")?

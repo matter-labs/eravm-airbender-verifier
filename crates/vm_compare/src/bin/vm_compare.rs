@@ -84,7 +84,7 @@ fn compare_batch(
     let batch_file = batch_input.path.display();
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {
-        format!("while attempting to compare V1 input for batch {batch_number} from {batch_file}")
+        format!("while attempting to compare batch {batch_number} from {batch_file}")
     })?;
 
     match &report.outcome {

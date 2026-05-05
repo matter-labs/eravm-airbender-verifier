@@ -40,11 +40,12 @@ fn test_batch_506093_commitment() {
         "Running verification for batch {}...",
         input.l1_batch_env.number
     );
-    // Synthesize a self-consistent V2 input (fake blob/prev-batch data — see
-    // `test_utils` module docs) and run the production entry point.
-    let v2 = augment_with_synthetic_commitment(input).expect("failed to build V2 input");
-    let result = v2.clone().verify().expect("verification failed");
-    crosscheck_commitment(&result, &v2).expect("crosscheck failed");
+    // Synthesize a self-consistent `commitment_input` (fake blob/prev-batch data —
+    // see `test_utils` module docs) and run the production entry point.
+    let augmented =
+        augment_with_synthetic_commitment(input).expect("failed to synthesize commitment input");
+    let result = augmented.clone().verify().expect("verification failed");
+    crosscheck_commitment(&result, &augmented).expect("crosscheck failed");
 
     assert_ne!(
         result.commitment,
