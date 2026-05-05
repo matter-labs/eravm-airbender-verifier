@@ -16,10 +16,11 @@ use axum::{
 use tokio::sync::oneshot;
 
 use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
+use zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
-const EXPECTED_OUTPUT: u32 = 1;
 const TEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -171,8 +172,25 @@ async fn prover_server_proves_one_batch() {
         number: 506093,
         path: batch_path,
     };
-    let verifier_input = load_batch(&batch_input).expect("failed to load batch");
-    println!("[test] Verifier input loaded successfully");
+    // The on-disk corpus stores V1 inputs, but the guest requires V2 (with
+    // a `commitment_input`). Synthesize a self-consistent value so the test
+    // pipeline is end-to-end runnable without a sequencer / L1.
+    // TODO: drop this once the upstream job producer ships V2 directly.
+    let AirbenderVerifierInput::V1(v1) = load_batch(&batch_input).expect("failed to load batch")
+    else {
+        panic!("expected AirbenderVerifierInput::V1 from disk");
+    };
+    let v2 = augment_with_synthetic_commitment(v1).expect("failed to synthesize commitment input");
+
+    // Compute the expected proof public input natively. The prover's
+    // `proof_public_input` for the same V2 input must match this.
+    let expected_public_input = v2
+        .clone()
+        .verify()
+        .expect("native verify failed")
+        .proof_public_input;
+    println!("[test] Native verify produced public input: {expected_public_input:?}");
+    let verifier_input = AirbenderVerifierInput::V2(v2);
 
     // --- 2. Set up test HTTP server ---
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();
@@ -277,7 +295,11 @@ async fn prover_server_proves_one_batch() {
 
     println!("[test] Verifying proof...");
     verifier
-        .verify(&proof, &vk, VerificationRequest::real(&EXPECTED_OUTPUT))
+        .verify(
+            &proof,
+            &vk,
+            VerificationRequest::real(&expected_public_input),
+        )
         .expect("proof verification failed");
 
     println!("[test] Proof verified successfully!");
