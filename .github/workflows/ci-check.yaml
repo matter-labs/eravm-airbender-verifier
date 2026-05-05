@@ -173,6 +173,18 @@ jobs:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
+      # The nvidia/cuda devel image is minimal — no git, no git-lfs.
+      # Install both BEFORE actions/checkout: without git in PATH, checkout
+      # silently falls back to a tarball download via the REST API and the
+      # workspace ends up without a `.git` directory, which then breaks
+      # `git lfs install --local` and `git lfs pull` downstream.
+      - name: Install git and git-lfs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y git git-lfs
+
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Checkout airbender-platform
@@ -192,8 +204,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y clang build-essential git curl libclang-dev git-lfs
+          apt-get install -y clang build-essential curl libclang-dev
 
       - name: Inspect toolchain
         run: |
@@ -201,11 +212,10 @@ jobs:
           cmake --version
           rustc --version
 
-      - name: Install Git LFS
-        run: git lfs install --local
-
       - name: Pull batch 506093
-        run: ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+        run: |
+          git lfs install --local
+          ./scripts/fetch_lfs_batches.sh 506093.bin.gz
 
       # Build era-bellman-cuda — `zksync-crypto-gpu`'s `gpu-ffi` build script
       # reads `BELLMAN_CUDA_DIR` from the env. Without it, linking gpu-prover
