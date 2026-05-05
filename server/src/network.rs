@@ -129,11 +129,12 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             let input = response
                 .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
-            let AirbenderVerifierInput::V2(ref v2) = input else {
-                anyhow::bail!("expected AirbenderVerifierInput::V2");
+            let AirbenderVerifierInput::V2(v2) = &input else {
+                anyhow::bail!("unsupported AirbenderVerifierInput variant (expected V2)");
             };
-            let batch_number = v2.v1.vm_run_data.l1_batch_number.0;
-            let protocol_version = v2.v1.vm_run_data.protocol_version as u16;
+            let v1 = &v2.v1;
+            let batch_number = v1.vm_run_data.l1_batch_number.0;
+            let protocol_version = v1.vm_run_data.protocol_version as u16;
             let input_words = input_to_words(&input)?;
             Ok(Some(Job {
                 batch_number,
@@ -277,8 +278,8 @@ fn submit_result(
 #[cfg(test)]
 mod tests {
     use zksync_airbender_verifier::types::{
-        AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData,
-        WitnessInputMerklePaths,
+        AirbenderVerifierInput, CommitmentInput, V1AirbenderVerifierInput, V2AirbenderVerifierInput,
+        VMRunWitnessInputData, WitnessInputMerklePaths,
     };
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, L2BlockEnv, SystemEnv, TxExecutionMode};
@@ -398,6 +399,9 @@ mod tests {
             },
             Default::default(),
         );
-        AirbenderVerifierInput::new(v1)
+        AirbenderVerifierInput::V2(V2AirbenderVerifierInput {
+            v1,
+            commitment_input: CommitmentInput::default(),
+        })
     }
 }

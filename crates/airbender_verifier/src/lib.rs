@@ -704,7 +704,9 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::types::{
+        AirbenderVerifierInput, CommitmentInput, V2AirbenderVerifierInput, VMRunWitnessInputData,
+    };
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -878,8 +880,8 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_serialization() {
-        let tvi = V1AirbenderVerifierInput::new(
+    fn test_serialization() {
+        let v1 = V1AirbenderVerifierInput::new(
             VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
@@ -930,13 +932,17 @@ mod tests {
             },
             Default::default(),
         );
-        let tvi = AirbenderVerifierInput::new(tvi);
+        let v2 = V2AirbenderVerifierInput {
+            v1,
+            commitment_input: CommitmentInput::default(),
+        };
+        let avi = AirbenderVerifierInput::V2(v2);
         let serialized =
-            bincode_v1::serialize(&tvi).expect("Failed to serialize AirbenderVerifierInput.");
+            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
         let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
-        assert_eq!(tvi, deserialized);
+        assert_eq!(avi, deserialized);
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
