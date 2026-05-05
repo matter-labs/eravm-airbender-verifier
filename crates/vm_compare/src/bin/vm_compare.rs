@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
-use zksync_cli_utils::{load_batch_words, resolve_batch_inputs, BatchInputFile};
+use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
 #[derive(Debug, Parser)]
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     let mut divergent_files = Vec::new();
 
     for batch_input in batch_inputs {
-        let input = load_verifier_input(&batch_input).with_context(|| {
+        let input = load_batch(&batch_input).with_context(|| {
             format!(
                 "while attempting to load batch {} from {}",
                 batch_input.number,
@@ -73,65 +73,6 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn load_verifier_input(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput> {
-    let framed_words = load_batch_words(batch_input).with_context(|| {
-        format!(
-            "while attempting to parse words for batch {} from {}",
-            batch_input.number,
-            batch_input.path.display()
-        )
-    })?;
-    let payload = frame_words_to_bytes(&framed_words).with_context(|| {
-        format!(
-            "while attempting to decode framed payload for batch {} from {}",
-            batch_input.number,
-            batch_input.path.display()
-        )
-    })?;
-
-    let (input, decoded_len): (AirbenderVerifierInput, usize) =
-        bincode::serde::decode_from_slice(&payload, bincode::config::standard()).with_context(
-            || {
-                format!(
-                    "while attempting to bincode-decode batch {} from {}",
-                    batch_input.number,
-                    batch_input.path.display()
-                )
-            },
-        )?;
-    if decoded_len != payload.len() {
-        anyhow::bail!(
-            "batch {} from {} has trailing bincode bytes (decoded {decoded_len} of {})",
-            batch_input.number,
-            batch_input.path.display(),
-            payload.len()
-        );
-    }
-
-    Ok(input)
-}
-
-fn frame_words_to_bytes(words: &[u32]) -> Result<Vec<u8>> {
-    let (&byte_len_word, payload_words) = words
-        .split_first()
-        .context("while attempting to decode framed payload, frame has no length word")?;
-    let byte_len = byte_len_word as usize;
-    let expected_total_words = 1 + byte_len.div_ceil(4);
-    if words.len() != expected_total_words {
-        anyhow::bail!(
-            "framed payload has {} words but expected {expected_total_words} from byte length {byte_len}",
-            words.len()
-        );
-    }
-
-    let mut bytes = Vec::with_capacity(byte_len);
-    for word in payload_words {
-        bytes.extend_from_slice(&word.to_be_bytes());
-    }
-    bytes.truncate(byte_len);
-    Ok(bytes)
 }
 
 fn compare_batch(
