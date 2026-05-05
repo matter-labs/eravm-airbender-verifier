@@ -1,5 +1,5 @@
 //! Integration test: starts the prover server binary, serves one real batch via a local HTTP
-//! server, waits up to one hour for the proof to be submitted, then verifies it.
+//! server, waits for the proof to be submitted (up to `TEST_TIMEOUT`), then verifies it.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

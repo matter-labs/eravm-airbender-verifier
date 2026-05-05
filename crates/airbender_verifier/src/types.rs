@@ -99,7 +99,6 @@ pub struct AirbenderVerifierInput {
     pub l1_batch_env: L1BatchEnv,
     pub system_env: SystemEnv,
     pub pubdata_params: PubdataParams,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commitment_input: Option<CommitmentInput>,
 }
 
