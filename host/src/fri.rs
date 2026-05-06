@@ -81,7 +81,10 @@ impl FriPipeline {
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
         let input = load_verifier_input(batch_path).with_context(|| {
-            format!("failed to load batch {batch_number} from {}", batch_path.display())
+            format!(
+                "failed to load batch {batch_number} from {}",
+                batch_path.display()
+            )
         })?;
         let mut prover_input = Inputs::new();
         prover_input
@@ -156,7 +159,10 @@ pub(crate) fn run_batch(
     batch_path: &Path,
 ) -> Result<()> {
     let input = load_verifier_input(batch_path).with_context(|| {
-        format!("failed to load batch {batch_number} from {}", batch_path.display())
+        format!(
+            "failed to load batch {batch_number} from {}",
+            batch_path.display()
+        )
     })?;
 
     let native_result = input
