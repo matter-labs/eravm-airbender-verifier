@@ -43,8 +43,8 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    CommitmentInput, StorageLogMetadata, TeeVerifierInput, WitnessInputMerklePaths,
-    TOTAL_BLOBS_IN_COMMITMENT,
+    CommitmentInput, StorageLogMetadata, TeeVerifierInput, V1TeeVerifierInput,
+    WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
 /// A structure to hold the result of verification.
@@ -82,6 +82,14 @@ pub trait Verify {
 }
 
 impl Verify for TeeVerifierInput {
+    /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
+    /// payload, so it produces an error.
+    fn verify(self) -> anyhow::Result<VerificationResult> {
+        self.into_v1()?.verify()
+    }
+}
+
+impl Verify for V1TeeVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some` — VM-only consumers
     /// (`vm_compare`, legacy corpus loaders) call `execute(...)` directly.
@@ -89,7 +97,7 @@ impl Verify for TeeVerifierInput {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
         let commitment_input = self.commitment_input.take().context(
-            "TeeVerifierInput::verify requires `commitment_input`; \
+            "V1TeeVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;
         let state = execute(self)?;
@@ -134,7 +142,7 @@ impl VmExecutionState {
 /// blob verification) — `input.commitment_input` is ignored. Test code and
 /// `vm_compare` call this to obtain VM execution state without needing the
 /// L1 chain context; full verification calls `Verify::verify` instead.
-pub fn execute(input: TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -717,7 +725,7 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{TeeVerifierInput, VMRunWitnessInputData};
+    use crate::types::{TeeVerifierInput, V1TeeVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -892,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_serialization_roundtrip() {
-        let tvi = TeeVerifierInput {
+        let v1 = V1TeeVerifierInput {
             vm_run_data: VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
@@ -944,6 +952,7 @@ mod tests {
             pubdata_params: Default::default(),
             commitment_input: None,
         };
+        let tvi = TeeVerifierInput::V1(v1);
         let serialized =
             bincode_v1::serialize(&tvi).expect("Failed to serialize TeeVerifierInput.");
         let deserialized: TeeVerifierInput =

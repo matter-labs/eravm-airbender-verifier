@@ -83,7 +83,33 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Data fed to the TEE verifier.
+/// Versioned wire format for verifier input.
+///
+/// The bincode payload begins with a variant tag so the on-disk corpus and
+/// the host↔guest channel can evolve without rewriting the entire format
+/// each time. New variants take a fresh tag — `V0` is reserved as a marker
+/// (no payload) so we never reuse a discriminant from earlier dumps.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TeeVerifierInput {
+    /// Reserved marker. Kept so the V1 discriminant stays stable.
+    V0,
+    /// Current verifier input payload.
+    V1(V1TeeVerifierInput),
+}
+
+impl TeeVerifierInput {
+    /// Extract the V1 payload, erroring on the reserved `V0` marker.
+    pub fn into_v1(self) -> anyhow::Result<V1TeeVerifierInput> {
+        match self {
+            TeeVerifierInput::V1(v1) => Ok(v1),
+            TeeVerifierInput::V0 => {
+                anyhow::bail!("TeeVerifierInput::V0 has no payload — expected V1")
+            }
+        }
+    }
+}
+
+/// Verifier input payload (V1).
 ///
 /// `commitment_input` is `Some` for full proving (the verifier produces a
 /// `proof_public_input` bound to the L1 commitment chain) and `None` for
@@ -92,7 +118,7 @@ impl Default for CommitmentInput {
 /// synthetic inputs without populating commitment context. The verifier's
 /// `Verify` impl requires `Some`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TeeVerifierInput {
+pub struct V1TeeVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,

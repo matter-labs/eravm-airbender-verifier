@@ -28,20 +28,22 @@ fn test_batch_506093_commitment() {
         return;
     }
 
-    let input = load_batch(&BatchInputFile {
+    let v1 = load_batch(&BatchInputFile {
         number: BATCH_NUMBER,
         path: batch_path.clone(),
     })
-    .expect("failed to load batch");
+    .expect("failed to load batch")
+    .into_v1()
+    .expect("expected V1 payload");
 
     println!(
         "Running verification for batch {}...",
-        input.l1_batch_env.number
+        v1.l1_batch_env.number
     );
     // Synthesize a self-consistent `commitment_input` (fake blob/prev-batch data —
     // see `test_utils` module docs) and run the production entry point.
     let augmented =
-        augment_with_synthetic_commitment(input).expect("failed to synthesize commitment input");
+        augment_with_synthetic_commitment(v1).expect("failed to synthesize commitment input");
     let result = augmented.clone().verify().expect("verification failed");
     crosscheck_commitment(&result, &augmented).expect("crosscheck failed");
 

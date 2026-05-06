@@ -19,7 +19,7 @@ use zksync_multivm::{
     vm_latest::HistoryEnabled,
     FastVmInstance, LegacyVmInstance, MultiVmTracer,
 };
-use zksync_tee_verifier::types::TeeVerifierInput;
+use zksync_tee_verifier::types::V1TeeVerifierInput;
 use zksync_types::{u256_to_h256, Transaction, H256};
 
 use crate::types::TransactionTrace;
@@ -35,7 +35,7 @@ struct TxExecutionCapture {
     trace: TransactionTrace,
 }
 
-pub fn compare(input: TeeVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
+pub fn compare(input: V1TeeVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
     let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
     let fast_storage = StorageView::new(storage_snapshot).to_rc_ptr();
@@ -235,7 +235,7 @@ fn divergence_report(
     }
 }
 
-fn default_location(input: &TeeVerifierInput) -> TxLocation {
+fn default_location(input: &V1TeeVerifierInput) -> TxLocation {
     TxLocation {
         l2_block_number: input
             .l2_blocks_execution_data
@@ -247,7 +247,7 @@ fn default_location(input: &TeeVerifierInput) -> TxLocation {
     }
 }
 
-fn create_storage_snapshot(input: &TeeVerifierInput) -> StorageSnapshot {
+fn create_storage_snapshot(input: &V1TeeVerifierInput) -> StorageSnapshot {
     let storage = input
         .vm_run_data
         .witness_block_state
