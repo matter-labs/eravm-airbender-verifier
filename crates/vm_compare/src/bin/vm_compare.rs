@@ -82,12 +82,9 @@ fn compare_batch(
 ) -> Result<bool> {
     let batch_number = batch_input.number;
     let batch_file = batch_input.path.display();
-    let TeeVerifierInput::V1(input) = input else {
-        anyhow::bail!("batch {batch_number} from {batch_file} must contain TeeVerifierInput::V1");
-    };
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {
-        format!("while attempting to compare V1 input for batch {batch_number} from {batch_file}")
+        format!("while attempting to compare batch {batch_number} from {batch_file}")
     })?;
 
     match &report.outcome {

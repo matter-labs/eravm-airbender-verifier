@@ -7,7 +7,6 @@ use std::path::Path;
 
 use zksync_cli_utils::{load_batch, BatchInputFile};
 use zksync_tee_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
-use zksync_tee_verifier::types::TeeVerifierInput;
 use zksync_tee_verifier::Verify;
 
 #[test]
@@ -34,19 +33,17 @@ fn test_batch_506093_commitment() {
         path: batch_path.clone(),
     })
     .expect("failed to load batch");
-    let TeeVerifierInput::V1(input) = input else {
-        panic!("expected TeeVerifierInput::V1");
-    };
 
     println!(
         "Running verification for batch {}...",
         input.l1_batch_env.number
     );
-    // Synthesize a self-consistent V2 input (fake blob/prev-batch data — see
-    // `test_utils` module docs) and run the production entry point.
-    let v2 = augment_with_synthetic_commitment(input).expect("failed to build V2 input");
-    let result = v2.clone().verify().expect("verification failed");
-    crosscheck_commitment(&result, &v2).expect("crosscheck failed");
+    // Synthesize a self-consistent `commitment_input` (fake blob/prev-batch data —
+    // see `test_utils` module docs) and run the production entry point.
+    let augmented =
+        augment_with_synthetic_commitment(input).expect("failed to synthesize commitment input");
+    let result = augmented.clone().verify().expect("verification failed");
+    crosscheck_commitment(&result, &augmented).expect("crosscheck failed");
 
     assert_ne!(
         result.commitment,
