@@ -171,7 +171,7 @@ pub(crate) fn run_batch(
         "Native verification + commitment succeeded"
     );
 
-    // Run transpiler with the same synthetic `CommitmentInput`.
+    // Re-run on the transpiler with the same input; the public input must match.
     let mut transpiler_input = Inputs::new();
     transpiler_input
         .push(&input)
@@ -206,8 +206,8 @@ pub(crate) fn run_batch(
 }
 
 /// Load and deserialize a `TeeVerifierInput` from a batch file. The corpus
-/// ships with `commitment_input` already baked in (see the `migrate-corpus`
-/// tool), so callers can `verify()` directly without a synthesis step.
+/// ships with `commitment_input` baked in, so callers can `verify()`
+/// directly — no runtime synthesis step.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
 ) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {

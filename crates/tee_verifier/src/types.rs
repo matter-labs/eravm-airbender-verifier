@@ -86,14 +86,15 @@ impl Default for CommitmentInput {
 /// Versioned wire format for verifier input.
 ///
 /// The bincode payload begins with a variant tag so the on-disk corpus and
-/// the host↔guest channel can evolve without rewriting the entire format
-/// each time. New variants take a fresh tag — `V0` is reserved as a marker
-/// (no payload) so we never reuse a discriminant from earlier dumps.
+/// the host↔guest channel can evolve without rewriting the format each time
+/// the payload changes.
+///
+/// `V0` is a placeholder with no payload. It pins V1 at discriminant `1` so
+/// removing or shuffling variants does not silently change the encoding of
+/// every existing dump.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TeeVerifierInput {
-    /// Reserved marker. Kept so the V1 discriminant stays stable.
     V0,
-    /// Current verifier input payload.
     V1(V1TeeVerifierInput),
 }
 
@@ -111,12 +112,11 @@ impl TeeVerifierInput {
 
 /// Verifier input payload (V1).
 ///
-/// `commitment_input` is `Some` for full proving (the verifier produces a
-/// `proof_public_input` bound to the L1 commitment chain) and `None` for
-/// VM-only consumers — `cli_utils::load_batch` of the legacy on-disk corpus,
-/// `vm_compare` (only cares about VM execution), and tests that construct
-/// synthetic inputs without populating commitment context. The verifier's
-/// `Verify` impl requires `Some`.
+/// `commitment_input` carries the L1 chain context the verifier needs to
+/// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
+/// requires it to be `Some`. The field is `Option<...>` so VM-only flows
+/// (e.g., the serialization roundtrip test) can construct an input without
+/// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V1TeeVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,

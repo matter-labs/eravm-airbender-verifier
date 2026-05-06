@@ -91,8 +91,7 @@ impl Verify for TeeVerifierInput {
 
 impl Verify for V1TeeVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
-    /// Requires `commitment_input` to be `Some` — VM-only consumers
-    /// (`vm_compare`, legacy corpus loaders) call `execute(...)` directly.
+    /// Requires `commitment_input` to be `Some`.
     fn verify(mut self) -> anyhow::Result<VerificationResult> {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
@@ -138,10 +137,9 @@ impl VmExecutionState {
 /// Run the VM, verify the new state root via merkle proofs, and return the
 /// intermediate state needed to compute the batch commitment.
 ///
-/// This does not run any commitment-input-dependent checks (prev binding,
-/// blob verification) — `input.commitment_input` is ignored. Test code and
-/// `vm_compare` call this to obtain VM execution state without needing the
-/// L1 chain context; full verification calls `Verify::verify` instead.
+/// Commitment-input-dependent checks (prev binding, blob verification) are
+/// not performed here — `input.commitment_input` is ignored. `Verify::verify`
+/// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),

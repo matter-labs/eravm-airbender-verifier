@@ -46,8 +46,9 @@ use crate::VerificationResult;
 pub fn augment_with_synthetic_commitment(
     mut input: V1TeeVerifierInput,
 ) -> anyhow::Result<V1TeeVerifierInput> {
-    // Run the VM once to obtain pubdata; the resulting state is dropped because
-    // we still need a fresh execution after `commitment_input` is filled in.
+    // We need the VM's pubdata to derive synthetic blob hashes. The rest of
+    // the execution state is discarded; the caller's `verify()` re-runs
+    // `execute` end-to-end on the augmented input.
     let preliminary = crate::execute(input.clone())?;
     let pubdata = preliminary.pubdata();
     let (blob_versioned_hashes, blob_hashes) = compute_blob_opening_data(pubdata);

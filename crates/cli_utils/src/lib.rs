@@ -53,11 +53,8 @@ pub fn resolve_batch_inputs(
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
 ///
-/// Returns the versioned wire wrapper. Callers that need the inner V1
-/// payload call `.into_v1()` (and then
-/// `zksync_tee_verifier::test_utils::augment_with_synthetic_commitment` if
-/// they need a populated commitment context — the corpus stores
-/// `commitment_input: None`).
+/// Returns the versioned wire wrapper; callers extract the payload with
+/// `.into_v1()`.
 pub fn load_batch(batch_input: &BatchInputFile) -> Result<TeeVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
