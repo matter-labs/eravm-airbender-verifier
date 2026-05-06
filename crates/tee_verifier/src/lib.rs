@@ -85,8 +85,10 @@ impl Verify for TeeVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some` — VM-only consumers
     /// (`vm_compare`, legacy corpus loaders) call `execute(...)` directly.
-    fn verify(self) -> anyhow::Result<VerificationResult> {
-        let commitment_input = self.commitment_input.clone().context(
+    fn verify(mut self) -> anyhow::Result<VerificationResult> {
+        // `execute` ignores `commitment_input`, so move it out first to avoid
+        // cloning the blob hash vectors.
+        let commitment_input = self.commitment_input.take().context(
             "TeeVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;

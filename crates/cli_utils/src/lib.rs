@@ -55,7 +55,7 @@ pub fn resolve_batch_inputs(
 ///
 /// The corpus stores `commitment_input: None`. Callers that need a populated
 /// commitment context wrap with
-/// `tee_verifier::test_utils::augment_with_synthetic_commitment`.
+/// `zksync_tee_verifier::test_utils::augment_with_synthetic_commitment`.
 pub fn load_batch(batch_input: &BatchInputFile) -> Result<TeeVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
