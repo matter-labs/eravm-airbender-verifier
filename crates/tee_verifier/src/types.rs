@@ -93,6 +93,9 @@ impl Default for CommitmentInput {
 /// removing or shuffling variants does not silently change the encoding of
 /// every existing dump.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// V1 is large because the verifier payload is large; boxing would add a heap
+// indirection without changing the bincode wire shape, so we accept the size.
+#[allow(clippy::large_enum_variant)]
 pub enum TeeVerifierInput {
     V0,
     V1(V1TeeVerifierInput),
