@@ -5268,11 +5268,8 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "flate2",
- "serde",
  "tracing",
- "zksync_multivm",
  "zksync_tee_verifier",
- "zksync_types",
 ]
 
 [[package]]

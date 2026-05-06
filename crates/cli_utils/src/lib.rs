@@ -6,11 +6,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use zksync_multivm::interface::{L1BatchEnv, SystemEnv};
-use zksync_tee_verifier::types::{
-    TeeVerifierInput, VMRunWitnessInputData, WitnessInputMerklePaths,
-};
-use zksync_types::{block::L2BlockExecutionData, commitment::PubdataParams};
+use zksync_tee_verifier::types::TeeVerifierInput;
 
 /// Shared representation of a repository-owned batch input file.
 ///
@@ -49,31 +45,6 @@ pub fn resolve_batch_inputs(
         .collect()
 }
 
-/// Layout-equivalent of the pre-cutover `V1TeeVerifierInput` struct, kept here
-/// purely so bincode can decode the legacy on-disk corpus before we wrap it
-/// into a `TeeVerifierInput { commitment_input: None, .. }`. Field order and
-/// types match the old V1 struct exactly; do not change.
-#[derive(serde::Deserialize)]
-struct LegacyV1Layout {
-    vm_run_data: VMRunWitnessInputData,
-    merkle_paths: WitnessInputMerklePaths,
-    l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-    l1_batch_env: L1BatchEnv,
-    system_env: SystemEnv,
-    pubdata_params: PubdataParams,
-}
-
-/// Mirrors the pre-cutover wire enum's variant indices. Bincode tags variants
-/// positionally, so the old V0/V1/V2 indices must line up with what the corpus
-/// actually contains. V0 was a unit-variant let-else suppression marker; V1 is
-/// the only payload-carrying variant in our corpus.
-#[derive(serde::Deserialize)]
-#[allow(clippy::large_enum_variant)]
-enum LegacyTeeVerifierInput {
-    V0,
-    V1(LegacyV1Layout),
-}
-
 /// Load and deserialize a `TeeVerifierInput` from a batch file.
 ///
 /// Inputs are stored as hex-encoded framed bytes — first 4 bytes (big-endian
@@ -82,10 +53,8 @@ enum LegacyTeeVerifierInput {
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
 ///
-/// The on-disk format predates the flat + optional-commitment-input shape, so
-/// we deserialize through `LegacyTeeVerifierInput` / `LegacyV1Layout` and
-/// return a `TeeVerifierInput` with `commitment_input: None`. Callers that
-/// need a populated commitment context wrap with
+/// The corpus stores `commitment_input: None`. Callers that need a populated
+/// commitment context wrap with
 /// `tee_verifier::test_utils::augment_with_synthetic_commitment`.
 pub fn load_batch(batch_input: &BatchInputFile) -> Result<TeeVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
@@ -113,7 +82,7 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<TeeVerifierInput> {
     );
     bytes.truncate(byte_len);
 
-    let (legacy, decoded_len): (LegacyTeeVerifierInput, usize) =
+    let (input, decoded_len): (TeeVerifierInput, usize) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
     anyhow::ensure!(
@@ -122,22 +91,7 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<TeeVerifierInput> {
         batch_input.number,
         bytes.len(),
     );
-
-    match legacy {
-        LegacyTeeVerifierInput::V1(v1) => Ok(TeeVerifierInput {
-            vm_run_data: v1.vm_run_data,
-            merkle_paths: v1.merkle_paths,
-            l2_blocks_execution_data: v1.l2_blocks_execution_data,
-            l1_batch_env: v1.l1_batch_env,
-            system_env: v1.system_env,
-            pubdata_params: v1.pubdata_params,
-            commitment_input: None,
-        }),
-        LegacyTeeVerifierInput::V0 => anyhow::bail!(
-            "batch {}: corpus contains legacy V0 input (unsupported)",
-            batch_input.number
-        ),
-    }
+    Ok(input)
 }
 
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
