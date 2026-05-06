@@ -1,7 +1,6 @@
 mod fri;
 mod snark;
 mod statistics;
-mod test_utils;
 
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};

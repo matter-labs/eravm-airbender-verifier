@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use zksync_cli_utils::{load_batch, BatchInputFile};
-use zksync_tee_verifier::test_utils::{augment_with_synthetic_commitment, crosscheck_commitment};
+use zksync_tee_verifier::test_utils::crosscheck_commitment;
 use zksync_tee_verifier::Verify;
 
 #[test]
@@ -28,6 +28,9 @@ fn test_batch_506093_commitment() {
         return;
     }
 
+    // The corpus ships with a baked-in synthetic `commitment_input` (fake
+    // blob/prev-batch data — see `test_utils` module docs), so we can verify
+    // directly. Not L1-settlement-equivalent.
     let v1 = load_batch(&BatchInputFile {
         number: BATCH_NUMBER,
         path: batch_path.clone(),
@@ -40,12 +43,8 @@ fn test_batch_506093_commitment() {
         "Running verification for batch {}...",
         v1.l1_batch_env.number
     );
-    // Synthesize a self-consistent `commitment_input` (fake blob/prev-batch data —
-    // see `test_utils` module docs) and run the production entry point.
-    let augmented =
-        augment_with_synthetic_commitment(v1).expect("failed to synthesize commitment input");
-    let result = augmented.clone().verify().expect("verification failed");
-    crosscheck_commitment(&result, &augmented).expect("crosscheck failed");
+    let result = v1.clone().verify().expect("verification failed");
+    crosscheck_commitment(&result, &v1).expect("crosscheck failed");
 
     assert_ne!(
         result.commitment,

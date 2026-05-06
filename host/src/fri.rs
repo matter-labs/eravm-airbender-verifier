@@ -80,14 +80,9 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
-        // TODO: long term, the upstream dump should ship `commitment_input`
-        // directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize
-        // loop. Workaround until either the producer emits it or we pre-process
-        // the LFS corpus.
-        let input =
-            crate::test_utils::load_with_synthetic_commitment(batch_path).with_context(|| {
-                format!("failed to synthesize commitment input for batch {batch_number}")
-            })?;
+        let input = load_verifier_input(batch_path).with_context(|| {
+            format!("failed to load batch {batch_number} from {}", batch_path.display())
+        })?;
         let mut prover_input = Inputs::new();
         prover_input
             .push(&input)
@@ -160,14 +155,9 @@ pub(crate) fn run_batch(
     batch_number: u64,
     batch_path: &Path,
 ) -> Result<()> {
-    // Load batch and synthesize a self-consistent `CommitmentInput`. Linear
-    // blob hashes come from VM pubdata; versioned hashes, opening commitments,
-    // and prev_batch_commitment are fabricated — see `test_utils` module docs.
-    // **Not** L1-settlement-equivalent.
-    let input =
-        crate::test_utils::load_with_synthetic_commitment(batch_path).with_context(|| {
-            format!("failed to synthesize commitment input for batch {batch_number}")
-        })?;
+    let input = load_verifier_input(batch_path).with_context(|| {
+        format!("failed to load batch {batch_number} from {}", batch_path.display())
+    })?;
 
     let native_result = input
         .clone()
@@ -215,12 +205,9 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Load and deserialize a `TeeVerifierInput` from a batch file.
-///
-// TODO: long term, the upstream dump should ship `commitment_input` directly
-// so we can avoid the deserialize-(synthesise-CommitmentInput)-reserialize
-// loop. Workaround until either the producer emits it or we pre-process the
-// LFS corpus.
+/// Load and deserialize a `TeeVerifierInput` from a batch file. The corpus
+/// ships with `commitment_input` already baked in (see the `migrate-corpus`
+/// tool), so callers can `verify()` directly without a synthesis step.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
 ) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {
