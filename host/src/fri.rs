@@ -1,6 +1,6 @@
 use airbender_host::{
-    GpuProver, Inputs, Program, Proof, Prover, ProverLevel, RealVerifier, Runner, TranspilerRunner,
-    VerificationKey, VerificationRequest, Verifier,
+    GpuProver, Inputs, Program, Proof, Prover, ProverLevel, RealVerifier, Runner, SecurityLevel,
+    TranspilerRunner, VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
 use std::io::{BufReader, BufWriter};
@@ -39,7 +39,7 @@ pub(crate) struct FriPipeline {
 }
 
 impl FriPipeline {
-    pub(crate) fn new(worker_threads: Option<usize>) -> Result<Self> {
+    pub(crate) fn new(worker_threads: Option<usize>, security: SecurityLevel) -> Result<Self> {
         let program =
             Program::load(dist_dir()).context("while attempting to load guest program")?;
         let verifier = program
@@ -49,7 +49,7 @@ impl FriPipeline {
 
         let cache_path = vk_cache_path(&program)
             .context("while attempting to resolve verification key cache path")?;
-        let vk = load_or_generate_vk(&verifier, &cache_path).with_context(|| {
+        let vk = load_or_generate_vk(&verifier, &cache_path, security).with_context(|| {
             format!(
                 "while attempting to prepare verification key cache {}",
                 cache_path.display()
@@ -253,7 +253,11 @@ pub(crate) fn load_raw_proof(path: &Path) -> Result<RawFriProof> {
         .with_context(|| format!("while attempting to deserialize {}", path.display()))
 }
 
-fn load_or_generate_vk(verifier: &RealVerifier, cache_path: &Path) -> Result<VerificationKey> {
+fn load_or_generate_vk(
+    verifier: &RealVerifier,
+    cache_path: &Path,
+    security: SecurityLevel,
+) -> Result<VerificationKey> {
     if cache_path.exists() {
         let bytes = std::fs::read(cache_path)
             .with_context(|| format!("while attempting to read {}", cache_path.display()))?;
@@ -278,7 +282,7 @@ fn load_or_generate_vk(verifier: &RealVerifier, cache_path: &Path) -> Result<Ver
     }
 
     let vk = verifier
-        .generate_vk()
+        .generate_vk(security)
         .context("while attempting to generate verification key")?;
     let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
         .context("while attempting to bincode-encode verification key cache payload")?;

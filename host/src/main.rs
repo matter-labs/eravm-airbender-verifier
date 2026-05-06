@@ -1,8 +1,32 @@
+use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use eravm_prover_host::{prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions};
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum SecurityLevelArg {
+    #[value(name = "80")]
+    Bits80,
+    #[value(name = "100")]
+    Bits100,
+}
+
+impl From<SecurityLevelArg> for SecurityLevel {
+    fn from(security: SecurityLevelArg) -> Self {
+        match security {
+            SecurityLevelArg::Bits80 => Self::Bits80,
+            SecurityLevelArg::Bits100 => Self::Bits100,
+        }
+    }
+}
+
+impl std::fmt::Display for SecurityLevelArg {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", SecurityLevel::from(*self))
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Run, prove, and wrap Era mainnet batches")]
@@ -49,6 +73,9 @@ struct ProveFriArgs {
 
     #[arg(long)]
     worker_threads: Option<usize>,
+
+    #[arg(long, default_value_t = SecurityLevelArg::Bits80)]
+    security: SecurityLevelArg,
 }
 
 #[derive(Debug, Args)]
@@ -96,7 +123,12 @@ fn main() -> Result<()> {
         }
         Command::ProveFri(args) => {
             let batch_inputs = args.batch_selection.resolve()?;
-            prove_batches_fri(&batch_inputs, args.worker_threads, &args.output_dir)
+            prove_batches_fri(
+                &batch_inputs,
+                args.worker_threads,
+                &args.output_dir,
+                args.security.into(),
+            )
         }
         Command::ProveSnark(args) => {
             let snark_options = SnarkOptions {

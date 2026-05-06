@@ -3,6 +3,7 @@ mod snark;
 mod statistics;
 mod test_utils;
 
+use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -45,8 +46,9 @@ pub fn prove_batches_fri(
     batch_inputs: &[BatchInputFile],
     worker_threads: Option<usize>,
     output_root: &Path,
+    security: SecurityLevel,
 ) -> Result<()> {
-    let pipeline = FriPipeline::new(worker_threads)?;
+    let pipeline = FriPipeline::new(worker_threads, security)?;
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {
