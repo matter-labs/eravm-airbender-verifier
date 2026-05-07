@@ -43,7 +43,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # --no-default-features skips GPU support in the tool itself (only needed for `prove`, not `build`).
 RUN cargo install \
         --git https://github.com/matter-labs/airbender-platform \
-        --rev 39e91e658a5ed36c7097d483696b704e2d4058f7 \
+        --rev 6a81afcf992f586256b943ba3241254202de8901 \
         cargo-airbender \
         --no-default-features
 
