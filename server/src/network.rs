@@ -3,12 +3,14 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
 
+use airbender_host::Proof;
 use anyhow::{Context, Result};
 use tracing::{debug, error, info, warn};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_prover_metrics::METRICS;
 
-use crate::types::{CompletedProof, Job, SubmitProofRequest};
+use crate::types::{CompletedProof, FriProofPayload, Job, JobInput, SubmitProofRequest};
+use crate::Mode;
 
 pub struct NetworkWorkerConfig {
     pub job_tx: SyncSender<Job>,
@@ -19,6 +21,7 @@ pub struct NetworkWorkerConfig {
     pub poll_interval: Duration,
     pub submit_attempts: usize,
     pub shutdown: Arc<AtomicBool>,
+    pub mode: Mode,
 }
 
 /// Fetches jobs from the server, forwards them to the prover, and submits completed proofs.
@@ -66,7 +69,11 @@ pub fn network_worker(cfg: NetworkWorkerConfig) {
 
         // Fetch a new job from the server if we have no pending job buffered.
         if pending_job.is_none() {
-            match fetch_job(&cfg.client, &cfg.server_url) {
+            let fetch_result = match cfg.mode {
+                Mode::Fri | Mode::FriSnark => fetch_input_job(&cfg.client, &cfg.server_url),
+                Mode::Snark => fetch_fri_proof_job(&cfg.client, &cfg.server_url),
+            };
+            match fetch_result {
                 Ok(Some(job)) => {
                     info!(batch_number = job.batch_number, "Received job");
                     METRICS.pending_jobs.inc_by(1);
@@ -114,10 +121,10 @@ fn submit_proof(cfg: &NetworkWorkerConfig, result: &CompletedProof) {
     }
 }
 
-/// Polls `POST /airbender/proof_inputs` for a new job.
+/// Polls `POST /airbender/proof_inputs` for a new job that needs FRI proving.
 ///
 /// Returns `None` on 204 No Content (no jobs available).
-fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Option<Job>> {
+fn fetch_input_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Option<Job>> {
     let url = format!("{base_url}/airbender/proof_inputs");
     let response = client
         .post(&url)
@@ -138,7 +145,49 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             Ok(Some(Job {
                 batch_number,
                 protocol_version,
-                input_words,
+                input: JobInput::Input(input_words),
+            }))
+        }
+        reqwest::StatusCode::NO_CONTENT => Ok(None),
+        status => {
+            warn!(%status, "Unexpected status from job server");
+            Ok(None)
+        }
+    }
+}
+
+/// Polls `POST /airbender/fri_proofs` for a FRI proof to wrap into a SNARK
+/// (used in `snark` mode). The endpoint contract is server-defined; see
+/// `FriProofPayload` for the expected JSON shape.
+fn fetch_fri_proof_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Option<Job>> {
+    let url = format!("{base_url}/airbender/fri_proofs");
+    let response = client
+        .post(&url)
+        .send()
+        .with_context(|| format!("while polling {url}"))?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            let payload = response
+                .json::<FriProofPayload>()
+                .context("while deserializing FRI proof payload")?;
+            let (proof, decoded_len): (Proof, usize) =
+                bincode::serde::decode_from_slice(&payload.proof, bincode::config::standard())
+                    .context("while decoding bincode FRI proof bytes")?;
+            if decoded_len != payload.proof.len() {
+                anyhow::bail!("FRI proof bytes have trailing data");
+            }
+            let real = match proof {
+                Proof::Real(real) => real,
+                Proof::Dev(_) => {
+                    anyhow::bail!("snark mode received a development proof; expected a real proof")
+                }
+            };
+            let raw = real.into_inner();
+            Ok(Some(Job {
+                batch_number: payload.l1_batch_number,
+                protocol_version: payload.protocol_version,
+                input: JobInput::FriProof(Box::new(raw)),
             }))
         }
         reqwest::StatusCode::NO_CONTENT => Ok(None),
