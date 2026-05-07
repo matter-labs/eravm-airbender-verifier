@@ -15,7 +15,9 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
-use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
+use airbender_host::{
+    Program, Proof, ProverLevel, SecurityLevel, VerificationKey, VerificationRequest, Verifier,
+};
 use zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
@@ -96,7 +98,9 @@ fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -
     }
 
     println!("[test] Generating verification key (this may take a while)...");
-    let vk = verifier.generate_vk().expect("failed to generate VK");
+    let vk = verifier
+        .generate_vk(SecurityLevel::default())
+        .expect("failed to generate VK");
     let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
         .expect("failed to encode VK for caching");
     std::fs::write(cache_path, &encoded).expect("failed to write VK cache");

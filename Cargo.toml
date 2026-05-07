@@ -90,15 +90,16 @@ ark-ff = { version = "0.5", default-features = false }
 ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar_field"] }
 
 # Protocol and VM dependencies
-airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", branch = "main" } # TODO: Must be pinned before merge
-airbender-host = { git = "https://github.com/matter-labs/airbender-platform", branch = "main" } # TODO: Must be pinned before merge
-airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", branch = "main" } # TODO: Must be pinned before merge
+airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", branch = "deniallugo/setup-cache" } # TODO: Must be pinned before merge
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", branch = "deniallugo/setup-cache" } # TODO: Must be pinned before merge
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", branch = "deniallugo/setup-cache" } # TODO: Must be pinned before merge
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "dev" } # TODO: Must be pinned before merge
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airbender-eravm" } # TODO: Must be pinned before merge
 
 # Local dependencies in this workspace
+eravm_prover_host = { version = "0.1.0", path = "host", package = "eravm-prover-host" }
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }
 zksync_prover_metrics = { version = "29.7.1-non-semver-compat", path = "crates/prover_metrics" }
 zksync_cli_utils = { version = "29.7.1-non-semver-compat", path = "crates/cli_utils" }
@@ -112,6 +113,49 @@ zksync_airbender_verifier = { version = "29.7.1-non-semver-compat", path = "crat
 zksync_types = { version = "29.7.1-non-semver-compat", path = "crates/types" }
 zksync_vm_compare = { version = "29.7.1-non-semver-compat", path = "crates/vm_compare" }
 zksync_vm_interface = { version = "29.7.1-non-semver-compat", path = "crates/vm_interface" }
+
+# Force every zksync-airbender consumer in the workspace dep graph (notably
+# zkos-wrapper, which still pins the old rev) onto the same setup-cache rev
+# that the `airbender-platform deniallugo/setup-cache` branch uses, so we
+# don't end up with two copies of `execution_utils` / `field` / etc. Cargo
+# rejects same-URL patches, so the override points at a local clone of the
+# `deniallugo/setup-cache` branch in `../zksync-airbender`. Drop once
+# zksync-airbender ships the new APIs and the downstream pins all advance.
+[patch."https://github.com/matter-labs/zksync-airbender"]
+common_constants = { path = "../zksync-airbender/common_constants" }
+blake2s_u32 = { path = "../zksync-airbender/blake2s_u32" }
+riscv_common = { path = "../zksync-airbender/riscv_common" }
+execution_utils = { path = "../zksync-airbender/execution_utils" }
+gpu_prover = { path = "../zksync-airbender/gpu_prover" }
+riscv_transpiler = { path = "../zksync-airbender/riscv_transpiler" }
+verifier_common = { path = "../zksync-airbender/verifier_common" }
+add_sub_lui_auipc_mop = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/add_sub_lui_auipc_mop" }
+bigint_with_control = { path = "../zksync-airbender/circuit_defs/bigint_with_control" }
+blake2_with_compression = { path = "../zksync-airbender/circuit_defs/blake2_with_compression" }
+blake2_with_compression_verifier = { path = "../zksync-airbender/circuit_defs/blake2_with_compression/verifier" }
+cs = { path = "../zksync-airbender/cs" }
+fft = { path = "../zksync-airbender/fft" }
+field = { path = "../zksync-airbender/field" }
+full_statement_verifier = { path = "../zksync-airbender/full_statement_verifier" }
+inits_and_teardowns = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/inits_and_teardowns" }
+jump_branch_slt = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/jump_branch_slt" }
+keccak_special5 = { path = "../zksync-airbender/circuit_defs/keccak_special5" }
+load_store_subword_only = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/load_store_subword_only" }
+load_store_word_only = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/load_store_word_only" }
+mul_div = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/mul_div" }
+mul_div_unsigned = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/mul_div_unsigned" }
+non_determinism_source = { path = "../zksync-airbender/non_determinism_source" }
+prover = { path = "../zksync-airbender/prover" }
+setups = { path = "../zksync-airbender/circuit_defs/setups" }
+shift_binary_csr = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/shift_binary_csr" }
+trace_and_split = { path = "../zksync-airbender/circuit_defs/trace_and_split" }
+trace_holder = { path = "../zksync-airbender/trace_holder" }
+transcript = { path = "../zksync-airbender/transcript" }
+unified_reduced_machine = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/unified_reduced_machine" }
+unified_reduced_machine_verifier = { path = "../zksync-airbender/circuit_defs/unrolled_circuits/unified_reduced_machine/verifier" }
+verifier_generator = { path = "../zksync-airbender/verifier_generator" }
+worker = { path = "../zksync-airbender/worker" }
+prover_examples = { path = "../zksync-airbender/circuit_defs/prover_examples" }
 
 # This is required to avoid having to specify `RUST_MIN_STACK` for compilation.
 # The reason why this is needed is because these packages are highly optimized, but the optimizations

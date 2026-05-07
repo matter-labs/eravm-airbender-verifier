@@ -15,7 +15,7 @@ use zksync_airbender_verifier::Verify;
 /// The actual value is batch-specific and verified by L1 against stored commitments.
 pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
-pub(crate) type RawFriProof = airbender_host::raw::UnrolledProgramProof;
+pub type RawFriProof = airbender_host::raw::UnrolledProgramProof;
 
 pub(crate) struct FriProofArtifact {
     pub(crate) proof: RawFriProof,

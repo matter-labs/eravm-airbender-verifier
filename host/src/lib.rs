@@ -9,12 +9,13 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::snark::SnarkOptions;
+pub use crate::fri::RawFriProof;
+pub use crate::snark::{GenerateVkOptions, SnarkOptions, SnarkPipeline};
 
 use crate::fri::{
     build_runner, load_raw_proof, run_batch, save_raw_proof, FriPipeline, FRI_PROOF_FILE_NAME,
 };
-use crate::snark::SnarkPipeline;
+use crate::snark::generate_vks;
 use crate::statistics::StatisticsCollector;
 
 // ==============================================================================
@@ -79,6 +80,10 @@ pub fn prove_batches_fri(
     }
 
     Ok(())
+}
+
+pub fn generate_vk(output_dir: &Path, options: &GenerateVkOptions) -> Result<()> {
+    generate_vks(output_dir, options)
 }
 
 pub fn wrap_to_snark(

@@ -1,7 +1,9 @@
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use eravm_prover_host::{prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions};
+use eravm_prover_host::{
+    generate_vk, prove_batches_fri, run_batches, wrap_to_snark, GenerateVkOptions, SnarkOptions,
+};
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
 
@@ -40,6 +42,7 @@ enum Command {
     Run(RunArgs),
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
+    GenerateVk(GenerateVkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -79,6 +82,18 @@ struct ProveFriArgs {
 }
 
 #[derive(Debug, Args)]
+struct GenerateVkArgs {
+    #[arg(long)]
+    output_dir: PathBuf,
+
+    #[arg(long)]
+    worker_threads: Option<usize>,
+
+    #[arg(long)]
+    trusted_setup: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 struct ProveSnarkArgs {
     #[arg(long, value_delimiter = ',')]
     proof_files: Vec<PathBuf>,
@@ -97,6 +112,12 @@ struct ProveSnarkArgs {
 
     #[arg(long)]
     save_intermediates: bool,
+
+    /// Optional directory containing pre-generated VKs (matching the layout
+    /// `generate-vk` produces). When set, loads any present VKs and writes any
+    /// it had to compute, so subsequent runs skip the multi-minute derivation.
+    #[arg(long)]
+    vk_cache_dir: Option<PathBuf>,
 }
 
 impl BatchSelectionArgs {
@@ -136,8 +157,16 @@ fn main() -> Result<()> {
                 trusted_setup: args.trusted_setup,
                 use_zk: args.use_zk,
                 save_intermediates: args.save_intermediates,
+                vk_cache_dir: args.vk_cache_dir,
             };
             wrap_to_snark(&args.proof_files, &args.output_dir, &snark_options)
+        }
+        Command::GenerateVk(args) => {
+            let options = GenerateVkOptions {
+                worker_threads: args.worker_threads,
+                trusted_setup: args.trusted_setup,
+            };
+            generate_vk(&args.output_dir, &options)
         }
     }
 }
