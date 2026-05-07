@@ -80,14 +80,16 @@ impl FriPipeline {
         batch_number: u64,
         batch_path: &Path,
     ) -> Result<FriProofArtifact> {
-        // TODO: long term, the upstream dump should ship V2 directly so we can avoid this deserialize-(synthesise-CommitmentInput)-reserialize loop.
-        // The current approach is a workaround until either the producer emits V2 or we pre-process the LFS corpus into V2.
-        let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
-            .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+        let input = load_verifier_input(batch_path).with_context(|| {
+            format!(
+                "failed to load batch {batch_number} from {}",
+                batch_path.display()
+            )
+        })?;
         let mut prover_input = Inputs::new();
         prover_input
-            .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
-            .context("failed to encode V2 TeeVerifierInput")?;
+            .push(&input)
+            .context("failed to encode TeeVerifierInput")?;
 
         let proving_started_at = Instant::now();
         let prove_result = self.prover.prove(prover_input.words()).with_context(|| {
@@ -156,14 +158,17 @@ pub(crate) fn run_batch(
     batch_number: u64,
     batch_path: &Path,
 ) -> Result<()> {
-    // Load batch and synthesize a self-consistent `CommitmentInput`. Linear
-    // blob hashes come from VM pubdata; versioned hashes, opening commitments,
-    // and prev_batch_commitment are fabricated — see `test_utils` module docs.
-    // **Not** L1-settlement-equivalent.
-    let v2 = crate::test_utils::load_with_synthetic_commitment(batch_path)
-        .with_context(|| format!("failed to build V2 input for batch {batch_number}"))?;
+    let input = load_verifier_input(batch_path).with_context(|| {
+        format!(
+            "failed to load batch {batch_number} from {}",
+            batch_path.display()
+        )
+    })?;
 
-    let native_result = v2.clone().verify().context("native verification failed")?;
+    let native_result = input
+        .clone()
+        .verify()
+        .context("native verification failed")?;
 
     info!(
         batch_number,
@@ -172,11 +177,11 @@ pub(crate) fn run_batch(
         "Native verification + commitment succeeded"
     );
 
-    // Run transpiler with the same synthetic `CommitmentInput`.
+    // Re-run on the transpiler with the same input; the public input must match.
     let mut transpiler_input = Inputs::new();
     transpiler_input
-        .push(&zksync_tee_verifier::types::TeeVerifierInput::V2(v2))
-        .context("failed to encode V2 TeeVerifierInput")?;
+        .push(&input)
+        .context("failed to encode TeeVerifierInput")?;
 
     let execution = runner
         .run(transpiler_input.words())
@@ -206,12 +211,9 @@ pub(crate) fn run_batch(
     Ok(())
 }
 
-/// Load and deserialize a TeeVerifierInput from a batch file.
-///
-// TODO: long term, the upstream dump should ship V2 directly so we can avoid
-// the deserialize-(synthesise-CommitmentInput)-reserialize loop. The current
-// approach is a workaround until either the producer emits V2 or we
-// pre-process the LFS corpus into V2.
+/// Load and deserialize a `TeeVerifierInput` from a batch file. The corpus
+/// ships with `commitment_input` baked in, so callers can `verify()`
+/// directly — no runtime synthesis step.
 pub(crate) fn load_verifier_input(
     batch_path: &Path,
 ) -> Result<zksync_tee_verifier::types::TeeVerifierInput> {

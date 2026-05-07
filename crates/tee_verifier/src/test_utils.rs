@@ -26,13 +26,12 @@ use zksync_types::{
 };
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
-use crate::types::{
-    CommitmentInput, V1TeeVerifierInput, V2TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
-};
+use crate::types::{CommitmentInput, V1TeeVerifierInput, TOTAL_BLOBS_IN_COMMITMENT};
 use crate::VerificationResult;
 
-/// Augment a V1 input with a **synthetic** `CommitmentInput` so that the verifier
-/// pipeline can be exercised end-to-end without real sequencer/L1 inputs.
+/// Replace `input.commitment_input` with a **synthetic, self-consistent** value
+/// so that the verifier pipeline can be exercised end-to-end without real
+/// sequencer/L1 inputs. Any pre-existing `commitment_input` is overwritten.
 ///
 /// What's produced:
 /// - `blob_hashes` carry real linear hashes (derived from the VM's pubdata) and
@@ -45,36 +44,35 @@ use crate::VerificationResult;
 /// See the module-level docs for why this is **not** L1-settlement-equivalent.
 /// Only use this for testing the verifier pipeline.
 pub fn augment_with_synthetic_commitment(
-    v1: V1TeeVerifierInput,
-) -> anyhow::Result<V2TeeVerifierInput> {
-    // Run the VM once to obtain pubdata; the resulting state is dropped because
-    // we still need a fresh execution after `commitment_input` is filled in.
-    let preliminary = crate::execute(v1.clone())?;
+    mut input: V1TeeVerifierInput,
+) -> anyhow::Result<V1TeeVerifierInput> {
+    // We need the VM's pubdata to derive synthetic blob hashes. The rest of
+    // the execution state is discarded; the caller's `verify()` re-runs
+    // `execute` end-to-end on the augmented input.
+    let preliminary = crate::execute(input.clone())?;
     let pubdata = preliminary.pubdata();
     let (blob_versioned_hashes, blob_hashes) = compute_blob_opening_data(pubdata);
 
     // Compute a self-consistent prev_batch_commitment from old_root_hash and
     // enumeration_index so that the prev_batch_commitment binding check passes.
-    // In production these come from L1; for tests we derive them from the V1 input.
-    let old_root_hash = v1.l1_batch_env.previous_batch_hash.context(
+    // In production these come from L1; for tests we derive them from the input.
+    let old_root_hash = input.l1_batch_env.previous_batch_hash.context(
         "previous_batch_hash is missing — genesis batches are not supported by this helper",
     )?;
-    let enumeration_index = v1.merkle_paths.next_enumeration_index();
+    let enumeration_index = input.merkle_paths.next_enumeration_index();
     let prev_meta_hash = H256::zero();
     let prev_aux_hash = H256::zero();
     let prev_passthrough = compute_pass_through_data_hash(enumeration_index, old_root_hash);
     let prev_batch_commitment = compute_commitment(prev_passthrough, prev_meta_hash, prev_aux_hash);
 
-    Ok(V2TeeVerifierInput {
-        v1,
-        commitment_input: CommitmentInput {
-            prev_batch_commitment,
-            prev_meta_hash,
-            prev_aux_hash,
-            blob_hashes,
-            blob_versioned_hashes,
-        },
-    })
+    input.commitment_input = Some(CommitmentInput {
+        prev_batch_commitment,
+        prev_meta_hash,
+        prev_aux_hash,
+        blob_hashes,
+        blob_versioned_hashes,
+    });
+    Ok(input)
 }
 
 /// Compute self-consistent blob versioned hashes and `BlobHash` (linear +
@@ -121,17 +119,17 @@ pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
 }
 
 /// Reconstruct the batch commitment via upstream `L1BatchCommitment::new()`
-/// from the V2 input and assert the verifier's sub-hashes agree.
+/// and assert the verifier's sub-hashes agree.
 ///
 /// The hash math is shared upstream code, so this catches struct-construction
 /// mistakes in `verify_commitment` (e.g. fields swapped in the struct literal)
 /// rather than encoding bugs.
 pub fn crosscheck_commitment(
     result: &VerificationResult,
-    v2: &V2TeeVerifierInput,
+    input: &V1TeeVerifierInput,
 ) -> anyhow::Result<()> {
-    let protocol_version = v2.v1.system_env.version;
-    let base = &v2.v1.system_env.base_system_smart_contracts;
+    let protocol_version = input.system_env.version;
+    let base = &input.system_env.base_system_smart_contracts;
     let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 
     let sequencer_input = SequencerCommitmentInput::PostBoojum {
@@ -153,7 +151,12 @@ pub fn crosscheck_commitment(
             // Blake2s value reproduces the Airbender variant exactly.
             bootloader_initial_content_commitment: result.bootloader_heap_hash,
         },
-        blob_hashes: v2.commitment_input.blob_hashes.clone(),
+        blob_hashes: input
+            .commitment_input
+            .as_ref()
+            .context("crosscheck_commitment requires commitment_input to be Some")?
+            .blob_hashes
+            .clone(),
         aggregation_root: H256::zero(),
     };
     let seq_hashes = L1BatchCommitment::new(sequencer_input, true)

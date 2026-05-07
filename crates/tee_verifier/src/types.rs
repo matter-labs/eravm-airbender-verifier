@@ -83,7 +83,43 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Version 1 of the data used as input for the TEE verifier.
+/// Versioned wire format for verifier input.
+///
+/// The bincode payload begins with a variant tag so the on-disk corpus and
+/// the host↔guest channel can evolve without rewriting the format each time
+/// the payload changes.
+///
+/// `V0` is a placeholder with no payload. It pins V1 at discriminant `1` so
+/// removing or shuffling variants does not silently change the encoding of
+/// every existing dump.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// V1 is large because the verifier payload is large; boxing would add a heap
+// indirection without changing the bincode wire shape, so we accept the size.
+#[allow(clippy::large_enum_variant)]
+pub enum TeeVerifierInput {
+    V0,
+    V1(V1TeeVerifierInput),
+}
+
+impl TeeVerifierInput {
+    /// Extract the V1 payload, erroring on the reserved `V0` marker.
+    pub fn into_v1(self) -> anyhow::Result<V1TeeVerifierInput> {
+        match self {
+            TeeVerifierInput::V1(v1) => Ok(v1),
+            TeeVerifierInput::V0 => {
+                anyhow::bail!("TeeVerifierInput::V0 has no payload — expected V1")
+            }
+        }
+    }
+}
+
+/// Verifier input payload (V1).
+///
+/// `commitment_input` carries the L1 chain context the verifier needs to
+/// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
+/// requires it to be `Some`. The field is `Option<...>` so VM-only flows
+/// (e.g., the serialization roundtrip test) can construct an input without
+/// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V1TeeVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
@@ -92,50 +128,7 @@ pub struct V1TeeVerifierInput {
     pub l1_batch_env: L1BatchEnv,
     pub system_env: SystemEnv,
     pub pubdata_params: PubdataParams,
-}
-
-impl V1TeeVerifierInput {
-    pub fn new(
-        vm_run_data: VMRunWitnessInputData,
-        merkle_paths: WitnessInputMerklePaths,
-        l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-        l1_batch_env: L1BatchEnv,
-        system_env: SystemEnv,
-        pubdata_params: PubdataParams,
-    ) -> Self {
-        Self {
-            vm_run_data,
-            merkle_paths,
-            l2_blocks_execution_data,
-            l1_batch_env,
-            system_env,
-            pubdata_params,
-        }
-    }
-}
-
-/// Version 2: V1 + CommitmentInput for Airbender settlement.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V2TeeVerifierInput {
-    pub v1: V1TeeVerifierInput,
-    pub commitment_input: CommitmentInput,
-}
-
-/// Data used as input for the TEE verifier.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
-pub enum TeeVerifierInput {
-    /// `V0` suppresses warning about irrefutable `let...else` pattern.
-    V0,
-    V1(V1TeeVerifierInput),
-    V2(V2TeeVerifierInput),
-}
-
-impl TeeVerifierInput {
-    pub fn new(input: V1TeeVerifierInput) -> Self {
-        Self::V1(input)
-    }
+    pub commitment_input: Option<CommitmentInput>,
 }
 
 #[cfg(test)]
