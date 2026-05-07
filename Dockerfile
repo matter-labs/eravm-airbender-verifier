@@ -34,10 +34,14 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # nightly-2026-02-10 as required by rust-toolchain.toml.
 # rust-src + llvm-tools-preview are needed for the guest RISC-V build:
 #   - rust-src:            enables -Zbuild-std (std compiled from source for riscv32im-risc0-zkvm-elf)
-#   - llvm-tools-preview:  provides cargo-objcopy used by cargo-airbender to produce app.bin / app.text
+#   - llvm-tools-preview:  ships the llvm-objcopy binary that cargo-binutils wraps
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain nightly-2026-02-10 --profile minimal \
     && rustup component add rust-src llvm-tools-preview
+
+# cargo-binutils provides the `cargo objcopy` subcommand that cargo-airbender
+# invokes to produce app.bin / app.text from the guest ELF.
+RUN cargo install cargo-binutils --locked
 
 # Install cargo-airbender at the exact commit pinned in Cargo.lock.
 # --no-default-features skips GPU support in the tool itself (only needed for `prove`, not `build`).
