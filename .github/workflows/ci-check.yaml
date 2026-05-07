@@ -381,11 +381,6 @@ jobs:
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
         run: |
-          # Background ticker prevents >30s silent log windows during the
-          # proving wait. Trapped on EXIT so it dies with the step.
-          ( while sleep 30; do echo "[ci-tick] elapsed: ${SECONDS}s"; done ) &
-          ticker_pid=$!
-          trap 'kill "$ticker_pid" 2>/dev/null || true' EXIT
           ./stage/bin/integration_test --ignored --nocapture
 
   pr-checks:

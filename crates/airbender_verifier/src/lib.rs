@@ -946,13 +946,13 @@ mod tests {
             pubdata_params: Default::default(),
             commitment_input: None,
         };
-        let tvi = AirbenderVerifierInput::V1(v1);
+        let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
-            bincode_v1::serialize(&tvi).expect("Failed to serialize AirbenderVerifierInput.");
+            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
         let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
-        assert_eq!(tvi, deserialized);
+        assert_eq!(avi, deserialized);
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
