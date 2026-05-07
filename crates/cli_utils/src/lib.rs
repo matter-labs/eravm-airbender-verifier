@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
+
 /// Shared representation of a repository-owned batch input file.
 ///
 /// We keep both the logical batch number and the exact file path so CLI tools can
@@ -50,9 +52,10 @@ pub fn resolve_batch_inputs(
 /// padded out to a multiple of 4 bytes. The files may live as plain `.bin`
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
-pub fn load_batch(
-    batch_input: &BatchInputFile,
-) -> Result<zksync_airbender_verifier::types::AirbenderVerifierInput> {
+///
+/// Returns the versioned wire wrapper; callers extract the payload with
+/// `.into_v1()`.
+pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
     let mut bytes = parse_hex_bytes(&raw).with_context(|| {
@@ -78,7 +81,7 @@ pub fn load_batch(
     );
     bytes.truncate(byte_len);
 
-    let (input, decoded_len) =
+    let (input, decoded_len): (AirbenderVerifierInput, usize) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
     anyhow::ensure!(

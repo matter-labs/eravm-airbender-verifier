@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
@@ -46,13 +46,16 @@ fn main() -> Result<()> {
     let mut divergent_files = Vec::new();
 
     for batch_input in batch_inputs {
-        let input = load_batch(&batch_input).with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?;
+        let input = load_batch(&batch_input)
+            .with_context(|| {
+                format!(
+                    "while attempting to load batch {} from {}",
+                    batch_input.number,
+                    batch_input.path.display()
+                )
+            })?
+            .into_v1()
+            .with_context(|| format!("batch {} has no V1 payload", batch_input.number))?;
         let matched = compare_batch(&batch_input, input, options)?;
         if !matched {
             divergent_files.push(batch_input.path.display().to_string());
@@ -77,19 +80,14 @@ fn main() -> Result<()> {
 
 fn compare_batch(
     batch_input: &BatchInputFile,
-    input: AirbenderVerifierInput,
+    input: V1AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<bool> {
     let batch_number = batch_input.number;
     let batch_file = batch_input.path.display();
-    let AirbenderVerifierInput::V1(input) = input else {
-        anyhow::bail!(
-            "batch {batch_number} from {batch_file} must contain AirbenderVerifierInput::V1"
-        );
-    };
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {
-        format!("while attempting to compare V1 input for batch {batch_number} from {batch_file}")
+        format!("while attempting to compare batch {batch_number} from {batch_file}")
     })?;
 
     match &report.outcome {

@@ -15,8 +15,9 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
-use airbender_host::{Program, Proof, ProverLevel, VerificationKey, VerificationRequest, Verifier};
-use zksync_airbender_verifier::test_utils::augment_with_synthetic_commitment;
+use airbender_host::{
+    Program, Proof, ProverLevel, SecurityLevel, VerificationKey, VerificationRequest, Verifier,
+};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
@@ -96,7 +97,9 @@ fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -
     }
 
     println!("[test] Generating verification key (this may take a while)...");
-    let vk = verifier.generate_vk().expect("failed to generate VK");
+    let vk = verifier
+        .generate_vk(SecurityLevel::default())
+        .expect("failed to generate VK");
     let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
         .expect("failed to encode VK for caching");
     std::fs::write(cache_path, &encoded).expect("failed to write VK cache");
@@ -172,25 +175,22 @@ async fn prover_server_proves_one_batch() {
         number: 506093,
         path: batch_path,
     };
-    // The on-disk corpus stores V1 inputs, but the guest requires V2 (with
-    // a `commitment_input`). Synthesize a self-consistent value so the test
-    // pipeline is end-to-end runnable without a sequencer / L1.
-    // TODO: drop this once the upstream job producer ships V2 directly.
-    let AirbenderVerifierInput::V1(v1) = load_batch(&batch_input).expect("failed to load batch")
-    else {
-        panic!("expected AirbenderVerifierInput::V1 from disk");
-    };
-    let v2 = augment_with_synthetic_commitment(v1).expect("failed to synthesize commitment input");
+    // The corpus ships with `commitment_input` baked in, so the loaded V1 is
+    // ready to verify directly — no synthesis step needed.
+    let v1 = load_batch(&batch_input)
+        .expect("failed to load batch")
+        .into_v1()
+        .expect("expected AirbenderVerifierInput::V1 from disk");
 
     // Compute the expected proof public input natively. The prover's
-    // `proof_public_input` for the same V2 input must match this.
-    let expected_public_input = v2
+    // `proof_public_input` for the same input must match this.
+    let expected_public_input = v1
         .clone()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
     println!("[test] Native verify produced public input: {expected_public_input:?}");
-    let verifier_input = AirbenderVerifierInput::V2(v2);
+    let verifier_input = AirbenderVerifierInput::V1(v1);
 
     // --- 2. Set up test HTTP server ---
     let (proof_tx, proof_rx) = oneshot::channel::<Vec<u8>>();

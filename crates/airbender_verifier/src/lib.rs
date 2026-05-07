@@ -43,7 +43,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput, V2AirbenderVerifierInput,
+    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
@@ -81,11 +81,26 @@ pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
 
-impl Verify for V2AirbenderVerifierInput {
-    /// Run the VM, verify the new state root, and compute the batch commitment.
+impl Verify for AirbenderVerifierInput {
+    /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
+    /// payload, so it produces an error.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        let state = execute(self.v1)?;
-        verify_commitment(state, self.commitment_input)
+        self.into_v1()?.verify()
+    }
+}
+
+impl Verify for V1AirbenderVerifierInput {
+    /// Run the VM, verify the new state root, and compute the batch commitment.
+    /// Requires `commitment_input` to be `Some`.
+    fn verify(mut self) -> anyhow::Result<VerificationResult> {
+        // `execute` ignores `commitment_input`, so move it out first to avoid
+        // cloning the blob hash vectors.
+        let commitment_input = self.commitment_input.take().context(
+            "V1AirbenderVerifierInput::verify requires `commitment_input`; \
+             use `execute(...)` directly for VM-only flows",
+        )?;
+        let state = execute(self)?;
+        verify_commitment(state, commitment_input)
     }
 }
 
@@ -122,9 +137,9 @@ impl VmExecutionState {
 /// Run the VM, verify the new state root via merkle proofs, and return the
 /// intermediate state needed to compute the batch commitment.
 ///
-/// This does not run any commitment-input-dependent checks (prev binding,
-/// blob verification). Test code can call this to obtain pubdata, then build
-/// a `CommitmentInput` and pass the state to [`verify_commitment`].
+/// Commitment-input-dependent checks (prev binding, blob verification) are
+/// not performed here — `input.commitment_input` is ignored. `Verify::verify`
+/// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
@@ -704,7 +719,7 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -878,9 +893,9 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_serialization() {
-        let tvi = V1AirbenderVerifierInput::new(
-            VMRunWitnessInputData {
+    fn test_serialization_roundtrip() {
+        let v1 = V1AirbenderVerifierInput {
+            vm_run_data: VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
                 initial_heap_content: vec![],
@@ -892,9 +907,9 @@ mod tests {
                 pubdata_costs: vec![],
                 witness_block_state: Default::default(),
             },
-            WitnessInputMerklePaths::new(0),
-            vec![],
-            L1BatchEnv {
+            merkle_paths: WitnessInputMerklePaths::new(0),
+            l2_blocks_execution_data: vec![],
+            l1_batch_env: L1BatchEnv {
                 previous_batch_hash: Some(H256([1; 32])),
                 number: Default::default(),
                 timestamp: 0,
@@ -909,7 +924,7 @@ mod tests {
                     interop_roots: vec![],
                 },
             },
-            SystemEnv {
+            system_env: SystemEnv {
                 zk_porter_available: false,
                 version: Default::default(),
                 base_system_smart_contracts: BaseSystemContracts {
@@ -928,9 +943,10 @@ mod tests {
                 default_validation_computational_gas_limit: 0,
                 chain_id: Default::default(),
             },
-            Default::default(),
-        );
-        let tvi = AirbenderVerifierInput::new(tvi);
+            pubdata_params: Default::default(),
+            commitment_input: None,
+        };
+        let tvi = AirbenderVerifierInput::V1(v1);
         let serialized =
             bincode_v1::serialize(&tvi).expect("Failed to serialize AirbenderVerifierInput.");
         let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)

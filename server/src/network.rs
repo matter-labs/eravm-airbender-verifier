@@ -129,11 +129,11 @@ fn fetch_job(client: &reqwest::blocking::Client, base_url: &str) -> Result<Optio
             let input = response
                 .json::<AirbenderVerifierInput>()
                 .context("while deserializing proof generation data")?;
-            let AirbenderVerifierInput::V2(ref v2) = input else {
-                anyhow::bail!("expected AirbenderVerifierInput::V2");
+            let AirbenderVerifierInput::V1(ref v1) = input else {
+                anyhow::bail!("expected AirbenderVerifierInput::V1");
             };
-            let batch_number = v2.v1.vm_run_data.l1_batch_number.0;
-            let protocol_version = v2.v1.vm_run_data.protocol_version as u16;
+            let batch_number = v1.vm_run_data.l1_batch_number.0;
+            let protocol_version = v1.vm_run_data.protocol_version as u16;
             let input_words = input_to_words(&input)?;
             Ok(Some(Job {
                 batch_number,
@@ -347,8 +347,8 @@ mod tests {
     }
 
     fn make_test_input() -> AirbenderVerifierInput {
-        let v1 = V1AirbenderVerifierInput::new(
-            VMRunWitnessInputData {
+        let v1 = V1AirbenderVerifierInput {
+            vm_run_data: VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
                 initial_heap_content: vec![],
@@ -360,9 +360,9 @@ mod tests {
                 pubdata_costs: vec![],
                 witness_block_state: Default::default(),
             },
-            WitnessInputMerklePaths::new(0),
-            vec![],
-            L1BatchEnv {
+            merkle_paths: WitnessInputMerklePaths::new(0),
+            l2_blocks_execution_data: vec![],
+            l1_batch_env: L1BatchEnv {
                 previous_batch_hash: Some(H256([1; 32])),
                 number: Default::default(),
                 timestamp: 0,
@@ -377,7 +377,7 @@ mod tests {
                     interop_roots: vec![],
                 },
             },
-            SystemEnv {
+            system_env: SystemEnv {
                 zk_porter_available: false,
                 version: Default::default(),
                 base_system_smart_contracts: BaseSystemContracts {
@@ -396,8 +396,9 @@ mod tests {
                 default_validation_computational_gas_limit: 0,
                 chain_id: Default::default(),
             },
-            Default::default(),
-        );
-        AirbenderVerifierInput::new(v1)
+            pubdata_params: Default::default(),
+            commitment_input: None,
+        };
+        AirbenderVerifierInput::V1(v1)
     }
 }
