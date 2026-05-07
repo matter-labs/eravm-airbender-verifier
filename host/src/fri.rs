@@ -47,7 +47,7 @@ impl FriPipeline {
             .build()
             .context("while attempting to build real verifier")?;
 
-        let cache_path = vk_cache_path(&program)
+        let cache_path = vk_cache_path(&program, security)
             .context("while attempting to resolve verification key cache path")?;
         let vk = load_or_generate_vk(&verifier, &cache_path, security).with_context(|| {
             format!(
@@ -58,7 +58,8 @@ impl FriPipeline {
 
         let mut prover = program
             .gpu_prover()
-            .with_level(ProverLevel::RecursionUnified);
+            .with_level(ProverLevel::RecursionUnified)
+            .with_security(security);
         if let Some(worker_threads) = worker_threads {
             prover = prover.with_worker_threads(worker_threads);
         }
@@ -293,7 +294,7 @@ fn load_or_generate_vk(
     Ok(vk)
 }
 
-fn vk_cache_path(program: &Program) -> Result<PathBuf> {
+fn vk_cache_path(program: &Program, security: SecurityLevel) -> Result<PathBuf> {
     let manifest_sha256 = program.manifest().bin.sha256.trim();
     if manifest_sha256.is_empty() {
         anyhow::bail!(
@@ -301,7 +302,11 @@ fn vk_cache_path(program: &Program) -> Result<PathBuf> {
         );
     }
 
-    Ok(PathBuf::from(format!("vk-{manifest_sha256}.bin")))
+    // The VK depends on the security level — keep separate caches so an old
+    // 80-bit VK isn't reused when the prover is now producing 100-bit proofs.
+    Ok(PathBuf::from(format!(
+        "vk-{manifest_sha256}-{security}.bin"
+    )))
 }
 
 fn dist_dir() -> PathBuf {
