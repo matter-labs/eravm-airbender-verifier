@@ -9,6 +9,7 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.github/workflows/docker-build.yaml'
   push:
     branches: [main]
     paths:
@@ -18,6 +19,7 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.github/workflows/docker-build.yaml'
 
 permissions:
   contents: read
@@ -30,7 +32,7 @@ concurrency:
 jobs:
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: matterlabs-ci-runner-high-performance
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
