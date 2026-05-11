@@ -2,6 +2,10 @@
 name = "eravm-prover-host"
 version = "0.1.0"
 edition = "2021"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 airbender-host = { workspace = true, features = ["gpu-prover"] }
