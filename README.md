@@ -6,8 +6,8 @@ FRI proofs, and wrap those proofs into SNARK proofs.
 
 ## Layout
 
-- `crates/`: reduced verifier libraries extracted from `zksync-era` (entrypoint crate: `zksync_tee_verifier`).
-- `guest/`: Airbender guest program that reads `TeeVerifierInput` and runs `verify()`.
+- `crates/`: reduced verifier libraries extracted from `zksync-era` (entrypoint crate: `zksync_airbender_verifier`).
+- `guest/`: Airbender guest program that reads `AirbenderVerifierInput` and runs `verify()`.
 - `host/`: host runner/prover app for batch execution and proof generation.
 - `testdata/era_mainnet_batches/`: compressed mainnet batch corpus tracked via Git LFS.
 

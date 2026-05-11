@@ -9,10 +9,12 @@ members = [
   "crates/mini_merkle_tree",
   "crates/multivm",
   "crates/vm_compare",
-  "crates/tee_verifier",
+  "crates/airbender_verifier",
   "crates/types",
   "crates/vm_interface",
+  "crates/prover_metrics",
   "host",
+  "server",
   "guest",
 ]
 default-members = [
@@ -25,7 +27,7 @@ default-members = [
   "crates/mini_merkle_tree",
   "crates/multivm",
   "crates/vm_compare",
-  "crates/tee_verifier",
+  "crates/airbender_verifier",
   "crates/types",
   "crates/vm_interface",
 ]
@@ -44,12 +46,15 @@ categories = ["cryptography"]
 [workspace.dependencies]
 # External dependencies
 anyhow = "1"
+axum = "0.7"
+ctrlc = "3"
 assert_matches = "1.5"
 async-trait = "0.1"
-bincode = "1"
+bincode = { version = "2", features = ["serde"] }
 blake2 = "0.10"
 chrono = { version = "0.4", default-features = false }
 clap = "4.2.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 const-decoder = "0.4.0"
 criterion = "0.4.0"
 ethabi = { version = "18.0.0", default-features = false, features = ["std", "rlp", "serde"] }
@@ -74,8 +79,11 @@ tempfile = "3.0.2"
 test-casing = "0.1.2"
 thiserror = "2.0.12"
 thread_local = "1.1"
+tokio = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+vise = "0.3.2"
+vise-exporter = "0.3.2"
 
 # Cryptographic curve arithmetic (already transitive deps via airbender-crypto)
 ark-ff = { version = "0.5", default-features = false }
@@ -91,7 +99,9 @@ zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = 
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airbender-eravm" } # TODO: Must be pinned before merge
 
 # Local dependencies in this workspace
+eravm-prover-host = { path = "host" }
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }
+zksync_prover_metrics = { version = "29.7.1-non-semver-compat", path = "crates/prover_metrics" }
 zksync_cli_utils = { version = "29.7.1-non-semver-compat", path = "crates/cli_utils" }
 zksync_contracts = { version = "29.7.1-non-semver-compat", path = "crates/contracts" }
 zksync_crypto_primitives = { version = "29.7.1-non-semver-compat", path = "crates/crypto_primitives" }
@@ -99,7 +109,7 @@ zksync_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/merk
 zksync_mini_merkle_tree = { version = "29.7.1-non-semver-compat", path = "crates/mini_merkle_tree" }
 zksync_multivm = { version = "29.7.1-non-semver-compat", path = "crates/multivm" }
 zksync_system_constants = { version = "29.7.1-non-semver-compat", path = "crates/constants" }
-zksync_tee_verifier = { version = "29.7.1-non-semver-compat", path = "crates/tee_verifier" }
+zksync_airbender_verifier = { version = "29.7.1-non-semver-compat", path = "crates/airbender_verifier" }
 zksync_types = { version = "29.7.1-non-semver-compat", path = "crates/types" }
 zksync_vm_compare = { version = "29.7.1-non-semver-compat", path = "crates/vm_compare" }
 zksync_vm_interface = { version = "29.7.1-non-semver-compat", path = "crates/vm_interface" }

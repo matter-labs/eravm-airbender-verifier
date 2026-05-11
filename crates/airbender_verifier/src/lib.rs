@@ -43,7 +43,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    CommitmentInput, StorageLogMetadata, TeeVerifierInput, V1TeeVerifierInput,
+    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
@@ -81,7 +81,7 @@ pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
 
-impl Verify for TeeVerifierInput {
+impl Verify for AirbenderVerifierInput {
     /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
     /// payload, so it produces an error.
     fn verify(self) -> anyhow::Result<VerificationResult> {
@@ -89,14 +89,14 @@ impl Verify for TeeVerifierInput {
     }
 }
 
-impl Verify for V1TeeVerifierInput {
+impl Verify for V1AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some`.
     fn verify(mut self) -> anyhow::Result<VerificationResult> {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
         let commitment_input = self.commitment_input.take().context(
-            "V1TeeVerifierInput::verify requires `commitment_input`; \
+            "V1AirbenderVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;
         let state = execute(self)?;
@@ -140,7 +140,7 @@ impl VmExecutionState {
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -320,9 +320,11 @@ pub fn execute(input: V1TeeVerifierInput) -> anyhow::Result<VmExecutionState> {
 
     block_output_with_proofs
         .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
-        .context("Failed to verify_proofs {l1_batch_number} correctly!")?;
+        .with_context(|| format!("Failed to verify_proofs {batch_number} correctly!"))?;
 
-    let new_root_hash = block_output_with_proofs.root_hash().unwrap();
+    let new_root_hash = block_output_with_proofs
+        .root_hash()
+        .context("root_hash unavailable after verify_proofs")?;
     // The new enumeration index is the old index + number of newly inserted leaves.
     // Only TreeLogEntry::Inserted entries increment the index — Updated entries reuse
     // their existing leaf_index and don't allocate a new slot.
@@ -532,9 +534,6 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                 let base: TreeLogEntry = match (is_write, first_write, leaf_enumeration_index) {
                     (false, _, 0) => TreeLogEntry::ReadMissingKey,
                     (false, false, _) => {
-                        // This is a special U256 here, which needs `to_little_endian`
-                        let mut hashed_key = [0_u8; 32];
-                        leaf_storage_key.to_little_endian(&mut hashed_key);
                         tracing::trace!(
                             "TreeLogEntry::Read {leaf_storage_key:x} = {:x}",
                             StorageValue::from(value_read)
@@ -550,9 +549,6 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                     }
                     (true, true, _) => TreeLogEntry::Inserted,
                     (true, false, _) => {
-                        // This is a special U256 here, which needs `to_little_endian`
-                        let mut hashed_key = [0_u8; 32];
-                        leaf_storage_key.to_little_endian(&mut hashed_key);
                         tracing::trace!(
                             "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
                             StorageValue::from(value_read)
@@ -603,7 +599,7 @@ where
         for tx in &l2_block_data.txs {
             tracing::trace!("Started execution of tx: {tx:?}");
             execute_tx(tx, &mut vm)
-                .context("failed to execute transaction in TeeVerifierInputProducer")?;
+                .context("failed to execute transaction in AirbenderVerifierInputProducer")?;
             tracing::trace!("Finished execution of tx: {tx:?}");
         }
 
@@ -723,7 +719,7 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{TeeVerifierInput, V1TeeVerifierInput, VMRunWitnessInputData};
+    use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -898,7 +894,7 @@ mod tests {
 
     #[test]
     fn test_serialization_roundtrip() {
-        let v1 = V1TeeVerifierInput {
+        let v1 = V1AirbenderVerifierInput {
             vm_run_data: VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
@@ -950,13 +946,13 @@ mod tests {
             pubdata_params: Default::default(),
             commitment_input: None,
         };
-        let tvi = TeeVerifierInput::V1(v1);
+        let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
-            bincode_v1::serialize(&tvi).expect("Failed to serialize TeeVerifierInput.");
-        let deserialized: TeeVerifierInput =
-            bincode_v1::deserialize(&serialized).expect("Failed to deserialize TeeVerifierInput.");
+            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
+        let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
+            .expect("Failed to deserialize AirbenderVerifierInput.");
 
-        assert_eq!(tvi, deserialized);
+        assert_eq!(avi, deserialized);
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:

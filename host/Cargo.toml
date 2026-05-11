@@ -10,7 +10,7 @@ license.workspace = true
 [dependencies]
 airbender-host = { workspace = true, features = ["gpu-prover"] }
 anyhow.workspace = true
-bincode = { version = "2", features = ["serde"] }
+bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -19,7 +19,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zksync_cli_utils.workspace = true
 zksync_crypto_primitives.workspace = true
 zksync_multivm.workspace = true
-zksync_tee_verifier.workspace = true
+zksync_airbender_verifier.workspace = true
 zksync_types.workspace = true
 zkos-wrapper = { workspace = true }
 

@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
+pub use crate::fri::{dist_dir, FriPipeline, ProveOutput};
 pub use crate::snark::SnarkOptions;
 
-use crate::fri::{
-    build_runner, load_raw_proof, run_batch, save_raw_proof, FriPipeline, FRI_PROOF_FILE_NAME,
-};
+use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
 use crate::snark::SnarkPipeline;
 use crate::statistics::StatisticsCollector;
 
@@ -26,7 +25,7 @@ use crate::statistics::StatisticsCollector;
 // directory conventions.
 
 pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
-    let runner = build_runner(jit)?;
+    let runner = build_runner(&dist_dir(), jit)?;
 
     for batch_input in batch_inputs {
         run_batch(&runner, batch_input.number, &batch_input.path).with_context(|| {
@@ -47,7 +46,7 @@ pub fn prove_batches_fri(
     output_root: &Path,
     security: SecurityLevel,
 ) -> Result<()> {
-    let pipeline = FriPipeline::new(worker_threads, security)?;
+    let pipeline = FriPipeline::new(&dist_dir(), worker_threads, security)?;
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {

@@ -96,18 +96,18 @@ impl Default for CommitmentInput {
 // V1 is large because the verifier payload is large; boxing would add a heap
 // indirection without changing the bincode wire shape, so we accept the size.
 #[allow(clippy::large_enum_variant)]
-pub enum TeeVerifierInput {
+pub enum AirbenderVerifierInput {
     V0,
-    V1(V1TeeVerifierInput),
+    V1(V1AirbenderVerifierInput),
 }
 
-impl TeeVerifierInput {
+impl AirbenderVerifierInput {
     /// Extract the V1 payload, erroring on the reserved `V0` marker.
-    pub fn into_v1(self) -> anyhow::Result<V1TeeVerifierInput> {
+    pub fn into_v1(self) -> anyhow::Result<V1AirbenderVerifierInput> {
         match self {
-            TeeVerifierInput::V1(v1) => Ok(v1),
-            TeeVerifierInput::V0 => {
-                anyhow::bail!("TeeVerifierInput::V0 has no payload — expected V1")
+            AirbenderVerifierInput::V1(v1) => Ok(v1),
+            AirbenderVerifierInput::V0 => {
+                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1")
             }
         }
     }
@@ -121,7 +121,7 @@ impl TeeVerifierInput {
 /// (e.g., the serialization roundtrip test) can construct an input without
 /// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1TeeVerifierInput {
+pub struct V1AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,

@@ -13,7 +13,7 @@ categories.workspace = true
 [dependencies]
 zk_evm_1_5_2.workspace = true
 zksync_multivm.workspace = true
-zksync_tee_verifier.workspace = true
+zksync_airbender_verifier.workspace = true
 zksync_types.workspace = true
 zksync_vm2.workspace = true
 zksync_cli_utils.workspace = true
@@ -21,3 +21,4 @@ zksync_vm_interface.workspace = true
 
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+bincode.workspace = true

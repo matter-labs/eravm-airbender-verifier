@@ -9,4 +9,4 @@ license.workspace = true
 
 [dependencies]
 airbender = { workspace = true, features = ["std"] }
-zksync_tee_verifier.workspace = true
+zksync_airbender_verifier.workspace = true
