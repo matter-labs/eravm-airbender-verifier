@@ -58,6 +58,11 @@ COPY . .
 # Produces guest/dist/app/{app.bin,app.elf,app.text,manifest.toml}.
 RUN cargo airbender build --project guest
 
+# CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
+# build host (which CI lacks) and otherwise falls back to an arch < compute_70,
+# breaking `__grid_constant__`. Mirrors airbender-platform's test-gpu CI.
+ENV CUDAARCHS="80;89;90"
+
 # Step 2: build the server binary.
 RUN cargo build --release --locked --package eravm-prover-server
 

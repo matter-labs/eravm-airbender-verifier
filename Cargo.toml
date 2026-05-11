@@ -99,6 +99,7 @@ zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = 
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", branch = "popzxc-airbender-eravm" } # TODO: Must be pinned before merge
 
 # Local dependencies in this workspace
+eravm-prover-host = { path = "host" }
 zksync_basic_types = { version = "29.7.1-non-semver-compat", path = "crates/basic_types" }
 zksync_prover_metrics = { version = "29.7.1-non-semver-compat", path = "crates/prover_metrics" }
 zksync_cli_utils = { version = "29.7.1-non-semver-compat", path = "crates/cli_utils" }

@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
@@ -23,6 +24,18 @@ pub(crate) struct FriProofArtifact {
     pub(crate) cycles: u64,
 }
 
+/// Result of running the FRI prover on an encoded input.
+///
+/// `proof` is the full `Proof` envelope (real or dev variant) so callers can
+/// either serialize it directly (server flow) or strip it to the raw inner
+/// proof for on-disk storage (host flow).
+pub struct ProveOutput {
+    pub proof: Proof,
+    pub cycles: u64,
+    pub proving_time: Duration,
+    pub output: [u32; 8],
+}
+
 // ==============================================================================
 // FRI Pipeline
 // ==============================================================================
@@ -32,16 +45,19 @@ pub(crate) struct FriProofArtifact {
 // proof" without needing to know how the guest program, GPU prover, or VK cache
 // are assembled.
 
-pub(crate) struct FriPipeline {
+pub struct FriPipeline {
     prover: GpuProver,
     verifier: RealVerifier,
     vk: VerificationKey,
 }
 
 impl FriPipeline {
-    pub(crate) fn new(worker_threads: Option<usize>, security: SecurityLevel) -> Result<Self> {
-        let program =
-            Program::load(dist_dir()).context("while attempting to load guest program")?;
+    pub fn new(
+        dist_dir: &Path,
+        worker_threads: Option<usize>,
+        security: SecurityLevel,
+    ) -> Result<Self> {
+        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
         let verifier = program
             .real_verifier(ProverLevel::RecursionUnified)
             .build()
@@ -75,24 +91,12 @@ impl FriPipeline {
         })
     }
 
-    pub(crate) fn prove_batch(
-        &self,
-        batch_number: u64,
-        batch_path: &Path,
-    ) -> Result<FriProofArtifact> {
-        let input = load_verifier_input(batch_path).with_context(|| {
-            format!(
-                "failed to load batch {batch_number} from {}",
-                batch_path.display()
-            )
-        })?;
-        let mut prover_input = Inputs::new();
-        prover_input
-            .push(&input)
-            .context("failed to encode AirbenderVerifierInput")?;
-
+    /// Proves a preencoded input word stream, checks the output is non-zero,
+    /// and verifies the proof against the cached VK. Returns the full `Proof`
+    /// envelope so callers can choose how to persist it.
+    pub fn prove_input(&self, batch_number: u64, input_words: &[u32]) -> Result<ProveOutput> {
         let proving_started_at = Instant::now();
-        let prove_result = self.prover.prove(prover_input.words()).with_context(|| {
+        let prove_result = self.prover.prove(input_words).with_context(|| {
             format!("while attempting to generate proof for batch {batch_number}")
         })?;
         let proving_time = proving_started_at.elapsed();
@@ -125,7 +129,47 @@ impl FriPipeline {
 
         info!(batch_number, "Finished FRI proof verification");
 
-        let proof = match prove_result.proof {
+        Ok(ProveOutput {
+            proof: prove_result.proof,
+            cycles,
+            proving_time,
+            output,
+        })
+    }
+
+    /// Proves an `AirbenderVerifierInput` by encoding it to the prover word
+    /// stream first, then delegating to [`Self::prove_input`].
+    pub fn prove_verifier_input(
+        &self,
+        batch_number: u64,
+        input: &AirbenderVerifierInput,
+    ) -> Result<ProveOutput> {
+        let mut prover_input = Inputs::new();
+        prover_input
+            .push(input)
+            .context("failed to encode AirbenderVerifierInput")?;
+        self.prove_input(batch_number, prover_input.words())
+    }
+
+    pub(crate) fn prove_batch(
+        &self,
+        batch_number: u64,
+        batch_path: &Path,
+    ) -> Result<FriProofArtifact> {
+        let input = load_verifier_input(batch_path).with_context(|| {
+            format!(
+                "failed to load batch {batch_number} from {}",
+                batch_path.display()
+            )
+        })?;
+        let ProveOutput {
+            proof,
+            cycles,
+            proving_time,
+            ..
+        } = self.prove_verifier_input(batch_number, &input)?;
+
+        let proof = match proof {
             Proof::Real(proof) => proof.into_inner(),
             Proof::Dev(_) => {
                 anyhow::bail!("GPU prover returned a development proof unexpectedly")
@@ -140,8 +184,8 @@ impl FriPipeline {
     }
 }
 
-pub(crate) fn build_runner(jit: bool) -> Result<TranspilerRunner> {
-    let program = Program::load(dist_dir()).context("while attempting to load guest program")?;
+pub(crate) fn build_runner(dist_dir: &Path, jit: bool) -> Result<TranspilerRunner> {
+    let program = Program::load(dist_dir).context("while attempting to load guest program")?;
     let mut runner_builder = program.transpiler_runner().with_cycles(usize::MAX);
 
     if jit {
@@ -311,11 +355,11 @@ fn vk_cache_path(program: &Program, security: SecurityLevel) -> Result<PathBuf> 
     )))
 }
 
-fn dist_dir() -> PathBuf {
-    // Allow overriding via env var so a binary built on one machine can find
-    // the guest dist on another (the CI prove-batch flow builds host on a
-    // CPU runner and runs it on the GPU runner). Falls back to the
-    // workspace-relative path baked in at compile time.
+/// Resolves the guest dist directory: `ERAVM_PROVER_HOST_GUEST_DIR` env var if
+/// set, otherwise the workspace-relative path baked in at compile time. Lets a
+/// binary built on one machine find the guest dist on another (e.g. the CI
+/// prove-batch flow builds host on a CPU runner and runs it on the GPU runner).
+pub fn dist_dir() -> PathBuf {
     if let Ok(p) = std::env::var("ERAVM_PROVER_HOST_GUEST_DIR") {
         return PathBuf::from(p);
     }

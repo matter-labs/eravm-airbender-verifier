@@ -8,14 +8,14 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
+use eravm_prover_host::FriPipeline;
 use tracing::info;
 
 use network::{network_worker, NetworkWorkerConfig};
 use worker::prover_worker;
-
-use airbender_host::{Program, ProverLevel};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -64,16 +64,8 @@ fn main() -> Result<()> {
     }
 
     let dist_dir = cli.guest_dist_dir.unwrap_or_else(default_dist_dir);
-    let program = Program::load(&dist_dir).context("while loading guest program")?;
-    let mut prover_builder = program
-        .gpu_prover()
-        .with_level(ProverLevel::RecursionUnified);
-    if let Some(threads) = cli.worker_threads {
-        prover_builder = prover_builder.with_worker_threads(threads);
-    }
-    let prover = prover_builder
-        .build()
-        .context("while building GPU prover")?;
+    let pipeline = FriPipeline::new(&dist_dir, cli.worker_threads, SecurityLevel::default())
+        .context("while building FRI pipeline")?;
 
     let client = reqwest::blocking::Client::new();
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
@@ -96,7 +88,7 @@ fn main() -> Result<()> {
     info!(server_url = %cli.server_url, "Starting prover server");
 
     let prover_handle = std::thread::spawn(move || {
-        prover_worker(prover, job_rx, result_tx);
+        prover_worker(pipeline, job_rx, result_tx);
     });
 
     network_worker(NetworkWorkerConfig {

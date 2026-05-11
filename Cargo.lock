@@ -1813,6 +1813,7 @@ dependencies = [
  "bincode 2.0.1",
  "clap 4.5.57",
  "ctrlc",
+ "eravm-prover-host",
  "hex",
  "reqwest",
  "serde",
@@ -1822,10 +1823,7 @@ dependencies = [
  "tracing-subscriber",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
- "zksync_contracts",
- "zksync_multivm",
  "zksync_prover_metrics",
- "zksync_types",
 ]
 
 [[package]]
