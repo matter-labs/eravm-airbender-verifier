@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -67,7 +67,7 @@ ENV CUDAARCHS="80;89;90"
 RUN cargo build --release --locked --package eravm-prover-server
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+FROM nvidia/cuda:12.9.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
