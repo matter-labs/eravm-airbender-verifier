@@ -134,8 +134,6 @@ jobs:
           rustc --version
 
       # Build era-bellman-cuda so we can link the host with `--features snark_gpu`.
-      # NB: zksync-crypto-gpu's `gpu-ffi` build script reads `BELLMAN_CUDA_DIR`,
-      # not the `BELLMAN_DIR` in our top-level README.
       - name: Build era-bellman-cuda
         run: |
           git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git

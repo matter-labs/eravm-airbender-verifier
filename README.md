@@ -1,6 +1,8 @@
-# eravm-airbender-verifier
+# EraVM Airbender Verifier
 
-This repository combines the reduced Era verifier libraries and the Airbender proving app in one workspace.
+This repository combines reduced EraVM verifier libraries with an Airbender guest and host proving app.
+It is used to reproduce ZKsync Era mainnet batch verification, compare VM execution, generate Airbender
+FRI proofs, and wrap those proofs into SNARK proofs.
 
 ## Layout
 
@@ -134,10 +136,10 @@ fi
 cmake -Bera-bellman-cuda/build -Sera-bellman-cuda/ -DCMAKE_BUILD_TYPE=Release
 cmake --build era-bellman-cuda/build/ -j16
 
-BELLMAN_DIR="$(pwd)/era-bellman-cuda"
+BELLMAN_CUDA_DIR="$(pwd)/era-bellman-cuda"
 
 # === IMPORTANT ===
-# Add BELLMAN_DIR to your *rc file (e.g. `.bashrc` / `.zshrc`)!
+# Add BELLMAN_CUDA_DIR to your *rc file (e.g. `.bashrc` / `.zshrc`)!
 ```
 Then you can use the following flow:
 
@@ -175,3 +177,32 @@ RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --featur
 ```
 
 Note: `--features snark_gpu` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
+
+## Policies
+
+- [Security policy](SECURITY.md)
+- [Contribution policy](CONTRIBUTING.md)
+
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+## Official Links
+
+- [Website](https://zksync.io/)
+- [GitHub](https://github.com/matter-labs)
+- [ZK Credo](https://github.com/zksync/credo)
+- [Twitter](https://twitter.com/zksync)
+- [Twitter for Developers](https://twitter.com/zkSyncDevs)
+- [Discord](https://join.zksync.dev/)
+- [Mirror](https://zksync.mirror.xyz/)
+- [Youtube](https://www.youtube.com/@zkSync-era)
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
