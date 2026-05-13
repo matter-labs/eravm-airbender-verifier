@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{dist_dir, FriPipeline, ProveOutput};
-pub use crate::snark::SnarkOptions;
+pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
+pub use crate::snark::{SnarkArtifactBytes, SnarkOptions, SnarkPipeline};
 
 use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
-use crate::snark::SnarkPipeline;
 use crate::statistics::StatisticsCollector;
 
 // ==============================================================================

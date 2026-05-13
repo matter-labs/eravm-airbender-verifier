@@ -16,7 +16,7 @@ use zksync_airbender_verifier::Verify;
 /// The actual value is batch-specific and verified by L1 against stored commitments.
 pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
-pub(crate) type RawFriProof = airbender_host::raw::UnrolledProgramProof;
+pub type RawFriProof = airbender_host::raw::UnrolledProgramProof;
 
 pub(crate) struct FriProofArtifact {
     pub(crate) proof: RawFriProof,
@@ -45,18 +45,17 @@ pub struct ProveOutput {
 // proof" without needing to know how the guest program, GPU prover, or VK cache
 // are assembled.
 
-pub struct FriPipeline {
-    prover: GpuProver,
+/// Verifier-only counterpart to [`FriPipeline`]. Holds the real verifier and a
+/// cached/generated verification key, but no GPU prover — built when callers
+/// (like the `snark-only` server mode) need to validate incoming FRI proofs
+/// without proving anything themselves.
+pub struct FriVerifier {
     verifier: RealVerifier,
     vk: VerificationKey,
 }
 
-impl FriPipeline {
-    pub fn new(
-        dist_dir: &Path,
-        worker_threads: Option<usize>,
-        security: SecurityLevel,
-    ) -> Result<Self> {
+impl FriVerifier {
+    pub fn new(dist_dir: &Path, security: SecurityLevel) -> Result<Self> {
         let program = Program::load(dist_dir).context("while attempting to load guest program")?;
         let verifier = program
             .real_verifier(ProverLevel::RecursionUnified)
@@ -72,6 +71,49 @@ impl FriPipeline {
             )
         })?;
 
+        Ok(Self { verifier, vk })
+    }
+
+    /// Verifies a FRI proof envelope against the cached VK, binding it to a
+    /// specific guest output. The output must be non-zero — a zero output
+    /// signals the guest's own verification + commitment step failed.
+    pub fn verify(&self, batch_number: u64, proof: &Proof, output: [u32; 8]) -> Result<()> {
+        if output == [0u32; 8] {
+            anyhow::bail!(
+                "batch {batch_number} proof returned zero output — verification or commitment failed"
+            );
+        }
+        self.verifier
+            .verify(proof, &self.vk, VerificationRequest::real(&output))
+            .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
+    }
+
+    /// Verifies a FRI proof envelope against the cached VK without binding to
+    /// a specific guest output — only structural / cryptographic validity is
+    /// checked. Used by the SNARK-only server mode, which receives proofs from
+    /// the job server and does not have the original receipt at hand.
+    pub fn verify_envelope(&self, batch_number: u64, proof: &Proof) -> Result<()> {
+        self.verifier
+            .verify(proof, &self.vk, VerificationRequest::empty())
+            .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
+    }
+}
+
+pub struct FriPipeline {
+    prover: GpuProver,
+    verifier: FriVerifier,
+}
+
+impl FriPipeline {
+    pub fn new(
+        dist_dir: &Path,
+        worker_threads: Option<usize>,
+        security: SecurityLevel,
+    ) -> Result<Self> {
+        let verifier = FriVerifier::new(dist_dir, security)?;
+        // Reload the program for the prover builder. Cheap relative to GPU init.
+        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
+
         let mut prover = program
             .gpu_prover()
             .with_level(ProverLevel::RecursionUnified)
@@ -84,11 +126,7 @@ impl FriPipeline {
             .build()
             .context("while attempting to build GPU prover")?;
 
-        Ok(Self {
-            prover,
-            verifier,
-            vk,
-        })
+        Ok(Self { prover, verifier })
     }
 
     /// Proves a preencoded input word stream, checks the output is non-zero,
@@ -111,21 +149,8 @@ impl FriPipeline {
             "Finished FRI proof generation"
         );
 
-        if output == [0u32; 8] {
-            anyhow::bail!(
-                "batch {batch_number} proof returned zero output — verification or commitment failed"
-            );
-        }
-
         self.verifier
-            .verify(
-                &prove_result.proof,
-                &self.vk,
-                VerificationRequest::real(&output),
-            )
-            .with_context(|| {
-                format!("while attempting to verify proof for batch {batch_number}")
-            })?;
+            .verify(batch_number, &prove_result.proof, output)?;
 
         info!(batch_number, "Finished FRI proof verification");
 

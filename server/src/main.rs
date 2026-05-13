@@ -11,11 +11,12 @@ use std::time::Duration;
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
-use eravm_prover_host::FriPipeline;
+use eravm_prover_host::{FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline};
 use tracing::info;
 
 use network::{network_worker, NetworkWorkerConfig};
-use worker::prover_worker;
+use types::ProverMode;
+use worker::{prover_worker, WorkerPipelines};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,11 +28,18 @@ struct Cli {
     #[arg(long, env = "PROVER_SERVER_URL")]
     server_url: String,
 
+    /// Pipeline this prover runs:
+    /// `fri-only` (default) — proves FRI, submits FRI;
+    /// `fri-snark` — proves FRI + SNARK, submits both;
+    /// `snark-only` — wraps FRI proofs into SNARKs, submits SNARK.
+    #[arg(long, env = "PROVER_MODE", value_enum, default_value_t = ProverMode::FriOnly)]
+    mode: ProverMode,
+
     /// How long to wait between polls when no job is available (milliseconds)
     #[arg(long, env = "PROVER_POLL_INTERVAL_MS", default_value = "5000")]
     poll_interval_ms: u64,
 
-    /// Number of worker threads for the GPU prover
+    /// Number of worker threads for the GPU FRI prover
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
@@ -51,6 +59,24 @@ struct Cli {
     /// Path to the compiled guest program directory
     #[arg(long, env = "PROVER_GUEST_DIST_DIR")]
     guest_dist_dir: Option<PathBuf>,
+
+    /// Path to the bellman trusted setup (CRS) for the SNARK wrapper.
+    /// Required when `--mode` is `fri-snark` or `snark-only`.
+    #[arg(long, env = "SNARK_TRUSTED_SETUP")]
+    snark_trusted_setup: Option<PathBuf>,
+
+    /// Use a zero-knowledge SNARK wrapping path. Off by default.
+    #[arg(long, env = "SNARK_USE_ZK")]
+    snark_use_zk: bool,
+
+    /// Worker threads for the SNARK wrapper (defaults to wrapper's own default).
+    #[arg(long, env = "SNARK_THREADS")]
+    snark_threads: Option<usize>,
+
+    /// Save SNARK intermediate artifacts (phase 1/2 proofs and VKs) to disk.
+    /// Diagnostic flag — off by default in server mode.
+    #[arg(long, env = "SNARK_SAVE_INTERMEDIATES")]
+    snark_save_intermediates: bool,
 }
 
 fn main() -> Result<()> {
@@ -63,17 +89,18 @@ fn main() -> Result<()> {
         info!(port, "Metrics server started");
     }
 
-    let dist_dir = cli.guest_dist_dir.unwrap_or_else(default_dist_dir);
-    let pipeline = FriPipeline::new(&dist_dir, cli.worker_threads, SecurityLevel::default())
-        .context("while building FRI pipeline")?;
+    let dist_dir = cli.guest_dist_dir.clone().unwrap_or_else(default_dist_dir);
+    let security = SecurityLevel::default();
+
+    let pipelines = build_pipelines(&cli, &dist_dir, security)?;
 
     let client = reqwest::blocking::Client::new();
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
 
     // Channel capacity 1: the network worker can buffer one job ahead while the prover is busy.
     let (job_tx, job_rx) = mpsc::sync_channel(1);
-    // Channel capacity 1: the prover sends one result at a time.
-    let (result_tx, result_rx) = mpsc::sync_channel(1);
+    // Channel capacity 2 to accommodate `fri-snark` mode emitting two results per job.
+    let (result_tx, result_rx) = mpsc::sync_channel(2);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     ctrlc::set_handler({
@@ -85,13 +112,18 @@ fn main() -> Result<()> {
     })
     .context("while setting Ctrl-C handler")?;
 
-    info!(server_url = %cli.server_url, "Starting prover server");
+    info!(
+        server_url = %cli.server_url,
+        mode = ?cli.mode,
+        "Starting prover server"
+    );
 
     let prover_handle = std::thread::spawn(move || {
-        prover_worker(pipeline, job_rx, result_tx);
+        prover_worker(pipelines, job_rx, result_tx);
     });
 
     network_worker(NetworkWorkerConfig {
+        mode: cli.mode,
         job_tx,
         result_rx,
         client,
@@ -104,6 +136,65 @@ fn main() -> Result<()> {
 
     info!("Waiting for prover to finish current job...");
     prover_handle.join().expect("prover thread panicked");
+    Ok(())
+}
+
+fn build_pipelines(
+    cli: &Cli,
+    dist_dir: &std::path::Path,
+    security: SecurityLevel,
+) -> Result<WorkerPipelines> {
+    let snark_options = SnarkOptions {
+        worker_threads: cli.snark_threads,
+        trusted_setup: cli.snark_trusted_setup.clone(),
+        use_zk: cli.snark_use_zk,
+        save_intermediates: cli.snark_save_intermediates,
+    };
+
+    let mut pipelines = WorkerPipelines {
+        mode: cli.mode,
+        fri: None,
+        fri_verifier: None,
+        snark: None,
+    };
+
+    match cli.mode {
+        ProverMode::FriOnly => {
+            pipelines.fri = Some(
+                FriPipeline::new(dist_dir, cli.worker_threads, security)
+                    .context("while building FRI pipeline")?,
+            );
+        }
+        ProverMode::FriSnark => {
+            ensure_snark_setup_present(cli)?;
+            pipelines.fri = Some(
+                FriPipeline::new(dist_dir, cli.worker_threads, security)
+                    .context("while building FRI pipeline")?,
+            );
+            pipelines.snark =
+                Some(SnarkPipeline::new(&snark_options).context("while building SNARK pipeline")?);
+        }
+        ProverMode::SnarkOnly => {
+            ensure_snark_setup_present(cli)?;
+            pipelines.fri_verifier = Some(
+                FriVerifier::new(dist_dir, security)
+                    .context("while building FRI verifier for snark-only mode")?,
+            );
+            pipelines.snark =
+                Some(SnarkPipeline::new(&snark_options).context("while building SNARK pipeline")?);
+        }
+    }
+
+    Ok(pipelines)
+}
+
+fn ensure_snark_setup_present(cli: &Cli) -> Result<()> {
+    if cli.snark_trusted_setup.is_none() {
+        anyhow::bail!(
+            "--snark-trusted-setup is required when --mode is {:?}",
+            cli.mode
+        );
+    }
     Ok(())
 }
 

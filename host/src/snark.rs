@@ -30,14 +30,22 @@ pub struct SnarkOptions {
 // final SNARK artifacts. Owning the stateful wrapper here lets one `prove-snark`
 // invocation reuse setup and VK caches across every proof file it wraps.
 
-pub(crate) struct SnarkPipeline {
+pub struct SnarkPipeline {
     wrapper: SnarkWrapper,
     use_zk: bool,
     save_intermediates: bool,
 }
 
+/// In-memory variant of the SNARK pipeline output, for callers (e.g. the prover
+/// server) that submit the proof + VK over the network instead of persisting
+/// them to disk. Bytes are JSON-encoded to match `zkos-wrapper`'s on-disk format.
+pub struct SnarkArtifactBytes {
+    pub snark_proof: Vec<u8>,
+    pub snark_vk: Vec<u8>,
+}
+
 impl SnarkPipeline {
-    pub(crate) fn new(options: &SnarkOptions) -> Result<Self> {
+    pub fn new(options: &SnarkOptions) -> Result<Self> {
         let wrapper = SnarkWrapper::new(SnarkWrapperConfig {
             bin: None,
             text: None,
@@ -53,6 +61,38 @@ impl SnarkPipeline {
             wrapper,
             use_zk: options.use_zk,
             save_intermediates: options.save_intermediates,
+        })
+    }
+
+    /// Wraps a raw FRI proof into a SNARK and returns the proof + VK as
+    /// serialized bytes, without writing anything to disk. Reuses the cached
+    /// wrapper setup across calls.
+    pub fn prove_to_bytes(&mut self, raw_proof: RawFriProof) -> Result<SnarkArtifactBytes> {
+        let risc_wrapper_proof = self
+            .wrapper
+            .prove_risc_wrapper(raw_proof)
+            .context("while attempting to run wrapper phase 1")?;
+        let compression_proof = self
+            .wrapper
+            .prove_compression(risc_wrapper_proof)
+            .context("while attempting to run wrapper phase 2")?;
+        let snark_proof = self
+            .wrapper
+            .prove_snark(compression_proof, self.use_zk)
+            .context("while attempting to run wrapper phase 3")?;
+
+        let snark_proof_bytes = serde_json::to_vec(&snark_proof)
+            .context("while attempting to JSON-encode the SNARK proof for transport")?;
+        let snark_vk = self
+            .wrapper
+            .snark_vk()
+            .context("while attempting to resolve wrapper phase 3 VK")?;
+        let snark_vk_bytes = serde_json::to_vec(snark_vk)
+            .context("while attempting to JSON-encode the SNARK VK for transport")?;
+
+        Ok(SnarkArtifactBytes {
+            snark_proof: snark_proof_bytes,
+            snark_vk: snark_vk_bytes,
         })
     }
 
