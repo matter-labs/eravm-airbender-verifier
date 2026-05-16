@@ -2,3 +2,9 @@ target/
 SESSION.md
 guest/dist/
 testdata/era_mainnet_batches/binary/*.bin
+
+# Local benchmarking — see scripts/bench/README.md.
+batches.zip
+bench-corpus/
+bench-results/
+vk-cache/
