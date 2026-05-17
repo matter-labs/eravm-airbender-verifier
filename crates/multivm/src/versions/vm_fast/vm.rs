@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt, mem, rc::Rc};
 
-use circuit_sequencer_api::sort_storage_access::sort_storage_access_queries;
 use zk_evm_1_5_2::{
-    aux_structures::LogQuery, zkevm_opcode_defs::system_params::INITIAL_FRAME_FORMAL_EH_LOCATION,
+    aux_structures::{LogQuery, Timestamp},
+    zkevm_opcode_defs::system_params::{INITIAL_FRAME_FORMAL_EH_LOCATION, STORAGE_AUX_BYTE},
 };
 use zksync_types::{
     bytecode::BytecodeHash, h256_to_u256, l1::is_l1_tx_type, l2_to_l1_log::UserL2ToL1Log,
@@ -83,6 +83,19 @@ type InnerVm<S, Tr, Val> =
 /// (the latter is necessary to complete batches). Validation is encapsulated in a separate type param. It should be set to `()`
 /// for "standard" validation (not stopping after validation; no validation-specific checks), or [`FullValidationTracer`](super::FullValidationTracer)
 /// for full validation (stopping after validation; validation-specific checks).
+
+/// Capacity hints for `Vm::reserve_capacities`. Each field is a one-shot
+/// upper bound the caller derives from the witness; the inner `WorldDiff`
+/// uses `reserve_exact`, so the underlying Vecs allocate exactly once and
+/// avoid the transient peak from `Vec` doubling.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VmCapacityHints {
+    pub events: usize,
+    pub pubdata_costs: usize,
+    pub storage_refunds: usize,
+    pub dynamic_heap_groups: usize,
+}
+
 pub struct Vm<S, Tr = (), Val = FastValidationTracer> {
     pub(super) world: World<S, WithBuiltinTracers<Tr, Val>>,
     pub(super) inner: InnerVm<S, Tr, Val>,
@@ -170,6 +183,20 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
         };
         this.write_to_bootloader_heap(bootloader_memory);
         this
+    }
+
+    /// Pre-reserve capacity inside the inner vm2 state to suppress the
+    /// mid-execution Vec doublings that account for the bulk of transient
+    /// memory pressure in the verifier guest. Call once after construction
+    /// with hints derived from the witness.
+    pub fn reserve_capacities(&mut self, hints: VmCapacityHints) {
+        let wd = self.inner.world_diff_mut();
+        wd.reserve_auxiliary_log_capacity(
+            hints.events,
+            hints.pubdata_costs,
+            hints.storage_refunds,
+        );
+        self.inner.reserve_dynamic_heap_capacity(hints.dynamic_heap_groups);
     }
 
     pub fn skip_signature_verification(&mut self) {
@@ -382,12 +409,54 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
         CurrentExecutionState {
             events,
             deduplicated_storage_logs: {
-                let (_, deduped_storage_log_queries) =
-                    sort_storage_access_queries(world_diff.storage_log_queries().iter().copied());
-                deduped_storage_log_queries
-                    .into_iter()
-                    .map(|log_query| StorageLog::from_log_query(&log_query.glue_into()))
-                    .collect()
+                // Derive deduplicated storage logs directly from vm2's
+                // rollback-aware maps instead of accumulating a per-access Vec
+                // and sorting it. Slots that appear in the dedup output are
+                // exactly:
+                //   storage_changes ∪ committed_reads_at_depth_zero
+                // mirroring the dedup's emit-or-skip rule (emit a slot iff
+                // `did_read_at_depth_zero` OR `changes_stack` non-empty).
+                // Both sources iterate in (address, key) sorted order via
+                // their BTreeMap/BTreeSet backings — same order the merkle
+                // witness uses, so the downstream zip in
+                // `generate_tree_instructions` lines up.
+                //
+                // Savings vs the previous path:
+                //   - ~220 MiB: no per-access storage_logs Vec
+                //   - ~50 MiB: no rollback_storage_logs Vec
+                //   - ~330M cycles: no global sort, no full-trace walk
+                use std::collections::BTreeSet;
+                let storage_changes = world_diff.get_storage_state();
+                let mut slots: BTreeSet<(H160, U256)> =
+                    storage_changes.keys().copied().collect();
+                for slot in world_diff.committed_reads_at_depth_zero_iter() {
+                    slots.insert(slot);
+                }
+                let mut out = Vec::with_capacity(slots.len());
+                for (address, key) in slots {
+                    let initial = world_diff
+                        .initial_storage_value(address, key)
+                        .map(|s| s.value)
+                        .unwrap_or(U256::zero());
+                    let final_value =
+                        storage_changes.get(&(address, key)).copied().unwrap_or(initial);
+                    let is_write = initial != final_value;
+                    let log_query = LogQuery {
+                        timestamp: Timestamp(0),
+                        tx_number_in_block: 0,
+                        aux_byte: STORAGE_AUX_BYTE,
+                        shard_id: 0,
+                        address,
+                        key,
+                        read_value: initial,
+                        written_value: final_value,
+                        rw_flag: is_write,
+                        rollback: false,
+                        is_service: false,
+                    };
+                    out.push(StorageLog::from_log_query(&log_query.glue_into()));
+                }
+                out
             },
             used_contract_hashes: self.decommitted_hashes().collect(),
             system_logs: vm.l2_to_l1_logs().map(GlueInto::glue_into).collect(),
