@@ -288,7 +288,26 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
-    let vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
+    // Capacity hints derived from the witness. Each pre-reserves an inner
+    // vm2 Vec exactly once so it never goes through the geometric-growth
+    // sequence that doubles transient peak memory in the guest.
+    let refunds_n = input.vm_run_data.storage_refunds.len();
+    let pubdata_n = input.vm_run_data.pubdata_costs.len();
+    let hints = zksync_multivm::vm_fast::VmCapacityHints {
+        // Events: probe shows ~140K events for ~550K refunds (~25%);
+        // hint with `/3` + 150K floor to absorb spikes.
+        events: (refunds_n / 3).max(150_000),
+        // pubdata_costs and storage_refunds are taken straight from the
+        // witness — exact match, no over-allocation.
+        pubdata_costs: pubdata_n,
+        storage_refunds: refunds_n,
+        // ~0.7× pubdata_costs.len() covers the observed heap-group count;
+        // each group is a small (~72 byte) wrapper struct.
+        dynamic_heap_groups: (pubdata_n * 7 / 10).max(1024),
+    };
+
+    let mut vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
+    vm.reserve_capacities(hints);
 
     let mut vm_out = execute_vm(
         input.l2_blocks_execution_data,
