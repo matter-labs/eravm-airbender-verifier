@@ -27,12 +27,39 @@ impl std::fmt::Display for WorkerJob {
     }
 }
 
-/// Prover pipelines available to the worker; populated per mode.
+/// Prover pipelines available to the worker; populated per mode via the
+/// consuming-builder methods (`with_fri`, `with_fri_verifier`, `with_snark`).
 pub struct WorkerPipelines {
     pub mode: ProverMode,
     pub fri: Option<FriPipeline>,
     pub fri_verifier: Option<FriVerifier>,
     pub snark: Option<SnarkPipeline>,
+}
+
+impl WorkerPipelines {
+    pub fn new(mode: ProverMode) -> Self {
+        Self {
+            mode,
+            fri: None,
+            fri_verifier: None,
+            snark: None,
+        }
+    }
+
+    pub fn with_fri(mut self, fri: FriPipeline) -> Self {
+        self.fri = Some(fri);
+        self
+    }
+
+    pub fn with_fri_verifier(mut self, verifier: FriVerifier) -> Self {
+        self.fri_verifier = Some(verifier);
+        self
+    }
+
+    pub fn with_snark(mut self, snark: SnarkPipeline) -> Self {
+        self.snark = Some(snark);
+        self
+    }
 }
 
 /// Receives jobs, proves them according to the configured mode, and streams

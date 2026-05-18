@@ -155,39 +155,25 @@ fn build_pipelines(
         save_intermediates: cli.snark_save_intermediates,
     };
 
-    let mut pipelines = WorkerPipelines {
-        mode: cli.mode,
-        fri: None,
-        fri_verifier: None,
-        snark: None,
+    let build_fri = || {
+        FriPipeline::new(dist_dir, cli.worker_threads, security)
+            .context("while building FRI pipeline")
     };
+    let build_snark =
+        || SnarkPipeline::new(&snark_options).context("while building SNARK pipeline");
 
-    match cli.mode {
-        ProverMode::FriOnly => {
-            pipelines.fri = Some(
-                FriPipeline::new(dist_dir, cli.worker_threads, security)
-                    .context("while building FRI pipeline")?,
-            );
-        }
-        ProverMode::FriSnark => {
-            pipelines.fri = Some(
-                FriPipeline::new(dist_dir, cli.worker_threads, security)
-                    .context("while building FRI pipeline")?,
-            );
-            pipelines.snark =
-                Some(SnarkPipeline::new(&snark_options).context("while building SNARK pipeline")?);
-        }
+    let pipelines = WorkerPipelines::new(cli.mode);
+    Ok(match cli.mode {
+        ProverMode::FriOnly => pipelines.with_fri(build_fri()?),
+        ProverMode::FriSnark => pipelines.with_fri(build_fri()?).with_snark(build_snark()?),
         ProverMode::SnarkOnly => {
-            pipelines.fri_verifier = Some(
-                FriVerifier::new(dist_dir, security)
-                    .context("while building FRI verifier for snark-only mode")?,
-            );
-            pipelines.snark =
-                Some(SnarkPipeline::new(&snark_options).context("while building SNARK pipeline")?);
+            let verifier = FriVerifier::new(dist_dir, security)
+                .context("while building FRI verifier for snark-only mode")?;
+            pipelines
+                .with_fri_verifier(verifier)
+                .with_snark(build_snark()?)
         }
-    }
-
-    Ok(pipelines)
+    })
 }
 
 fn init_tracing() -> Result<()> {
