@@ -52,6 +52,19 @@ struct Cli {
     #[arg(long, env = "PROVER_SUBMIT_ATTEMPTS", default_value = "3")]
     submit_attempts: usize,
 
+    /// TCP connect timeout for HTTP calls to the job server (milliseconds)
+    #[arg(long, env = "PROVER_HTTP_CONNECT_TIMEOUT_MS", default_value = "5000")]
+    http_connect_timeout_ms: u64,
+
+    /// Per-request timeout for polling job inputs (milliseconds)
+    #[arg(long, env = "PROVER_POLL_TIMEOUT_MS", default_value = "30000")]
+    poll_timeout_ms: u64,
+
+    /// Per-request timeout for submitting proof results (milliseconds).
+    /// SNARK submissions can be large, so this is generally larger than the poll timeout.
+    #[arg(long, env = "PROVER_SUBMIT_TIMEOUT_MS", default_value = "120000")]
+    submit_timeout_ms: u64,
+
     /// Port to expose Prometheus metrics on (disabled if not set)
     #[arg(long, env = "PROVER_METRICS_PORT")]
     metrics_port: Option<u16>,
@@ -98,7 +111,17 @@ fn main() -> Result<()> {
 
     let pipelines = build_pipelines(&cli, &dist_dir, security)?;
 
-    let client = reqwest::blocking::Client::new();
+    let connect_timeout = Duration::from_millis(cli.http_connect_timeout_ms);
+    let poll_client = reqwest::blocking::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(Duration::from_millis(cli.poll_timeout_ms))
+        .build()
+        .context("while building poll HTTP client")?;
+    let submit_client = reqwest::blocking::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(Duration::from_millis(cli.submit_timeout_ms))
+        .build()
+        .context("while building submit HTTP client")?;
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
 
     // Channel capacity 1: the network worker can buffer one job ahead while the prover is busy.
@@ -130,7 +153,8 @@ fn main() -> Result<()> {
         mode: cli.mode,
         job_tx,
         result_rx,
-        client,
+        poll_client,
+        submit_client,
         server_url: cli.server_url,
         prover_id: cli.prover_id,
         poll_interval,

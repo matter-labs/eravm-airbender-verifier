@@ -12,11 +12,19 @@ pub enum ProofStatus {
     Failure,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelValue)]
+#[metrics(rename_all = "snake_case")]
+pub enum ProofType {
+    Fri,
+    Snark,
+}
+
 /// Labels attached to proof generation metrics.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelSet)]
 pub struct ProofLabels {
     pub batch_number: u32,
     pub protocol_version: u16,
+    pub proof_type: ProofType,
     pub status: ProofStatus,
 }
 

@@ -44,11 +44,46 @@ pub struct CompletedSnarkProof {
     pub snark_vk_bytes: Vec<u8>,
 }
 
-/// Output items emitted by the prover worker. The network worker dispatches
-/// each variant to the matching submit endpoint.
-pub enum CompletedWork {
+/// Which phase of the pipeline emitted an outcome.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ProofPhase {
+    Fri,
+    Snark,
+}
+
+impl std::fmt::Display for ProofPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProofPhase::Fri => f.write_str("FRI"),
+            ProofPhase::Snark => f.write_str("SNARK"),
+        }
+    }
+}
+
+/// Successfully produced artifact ready to be submitted.
+pub enum CompletedArtifact {
     Fri(CompletedFriProof),
     Snark(CompletedSnarkProof),
+}
+
+/// A job that did not produce an artifact. Carries enough context for the
+/// network worker to log and settle the job locally.
+pub struct FailedJob {
+    pub batch_number: u32,
+    pub phase: ProofPhase,
+    pub reason: String,
+}
+
+/// Settlement event emitted by the prover worker. Every fetched job results
+/// in at least one `WorkerOutcome` — failures included — so the network
+/// worker can account for it exactly once.
+///
+/// In `fri-snark` mode a single job emits two outcomes (FRI then SNARK);
+/// the FRI outcome is the one that settles the job's accounting, and the
+/// SNARK outcome follows as a post-settlement step.
+pub enum WorkerOutcome {
+    Completed(CompletedArtifact),
+    Failed(FailedJob),
 }
 
 /// Mirrors `SubmitAirbenderProofRequest` from zksync-era.

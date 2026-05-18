@@ -11,8 +11,9 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_prover_metrics::METRICS;
 
 use crate::types::{
-    CompletedFriProof, CompletedSnarkProof, CompletedWork, FriJob, ProverMode, SnarkInputResponse,
-    SnarkJob, SubmitFriProofRequest, SubmitSnarkProofRequest,
+    CompletedArtifact, CompletedFriProof, CompletedSnarkProof, FailedJob, FriJob, ProofPhase,
+    ProverMode, SnarkInputResponse, SnarkJob, SubmitFriProofRequest, SubmitSnarkProofRequest,
+    WorkerOutcome,
 };
 use crate::worker::WorkerJob;
 
@@ -31,8 +32,11 @@ type RequestResult = Result<(), (Option<reqwest::StatusCode>, anyhow::Error)>;
 pub struct NetworkWorker {
     pub mode: ProverMode,
     pub job_tx: SyncSender<WorkerJob>,
-    pub result_rx: Receiver<CompletedWork>,
-    pub client: reqwest::blocking::Client,
+    pub result_rx: Receiver<WorkerOutcome>,
+    /// HTTP client used for polling job inputs (shorter timeout).
+    pub poll_client: reqwest::blocking::Client,
+    /// HTTP client used for submitting proof results (longer timeout for large SNARK payloads).
+    pub submit_client: reqwest::blocking::Client,
     pub server_url: String,
     pub prover_id: String,
     pub poll_interval: Duration,
@@ -62,18 +66,22 @@ impl NetworkWorker {
             }
 
             match self.result_rx.try_recv() {
-                Ok(CompletedWork::Fri(result)) => {
+                Ok(WorkerOutcome::Completed(CompletedArtifact::Fri(result))) => {
                     self.submit_fri(&result);
-                    // FRI completion always counts the job as done for accounting purposes;
-                    // the optional SNARK that follows in fri+snark mode does not re-decrement.
-                    METRICS.pending_jobs.dec_by(1);
-                    did_work = true;
-                }
-                Ok(CompletedWork::Snark(result)) => {
-                    self.submit_snark(&result);
-                    if self.mode == ProverMode::SnarkOnly {
+                    if self.phase_settles_job(ProofPhase::Fri) {
                         METRICS.pending_jobs.dec_by(1);
                     }
+                    did_work = true;
+                }
+                Ok(WorkerOutcome::Completed(CompletedArtifact::Snark(result))) => {
+                    self.submit_snark(&result);
+                    if self.phase_settles_job(ProofPhase::Snark) {
+                        METRICS.pending_jobs.dec_by(1);
+                    }
+                    did_work = true;
+                }
+                Ok(WorkerOutcome::Failed(failure)) => {
+                    self.handle_failed(&failure);
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => {}
@@ -100,6 +108,32 @@ impl NetworkWorker {
             if !did_work {
                 std::thread::sleep(self.poll_interval);
             }
+        }
+    }
+
+    /// Whether an outcome at `phase` is the one that settles the fetched job's
+    /// accounting. Each fetched job must settle exactly once:
+    ///   * `fri-only` / `fri-snark`: the FRI outcome (success or failure) settles.
+    ///   * `snark-only`: the SNARK outcome settles.
+    ///
+    /// In `fri-snark`, the SNARK outcome is post-settlement and does not decrement.
+    fn phase_settles_job(&self, phase: ProofPhase) -> bool {
+        matches!(
+            (self.mode, phase),
+            (ProverMode::FriOnly | ProverMode::FriSnark, ProofPhase::Fri)
+                | (ProverMode::SnarkOnly, ProofPhase::Snark)
+        )
+    }
+
+    fn handle_failed(&self, failure: &FailedJob) {
+        error!(
+            batch_number = failure.batch_number,
+            phase = %failure.phase,
+            reason = %failure.reason,
+            "Job failed; will not be submitted",
+        );
+        if self.phase_settles_job(failure.phase) {
+            METRICS.pending_jobs.dec_by(1);
         }
     }
 
@@ -153,7 +187,7 @@ impl NetworkWorker {
     fn poll_json<R: DeserializeOwned>(&self, path: &str, label: &str) -> Result<Option<R>> {
         let url = format!("{}{path}", self.server_url);
         let response = self
-            .client
+            .poll_client
             .post(&url)
             .send()
             .with_context(|| format!("while polling {url}"))?;
@@ -224,7 +258,7 @@ impl NetworkWorker {
     ) -> RequestResult {
         let url = format!("{}{path}", self.server_url);
         let response = self
-            .client
+            .submit_client
             .post(&url)
             .json(payload)
             .send()

@@ -3,15 +3,18 @@ use std::time::{Duration, Instant};
 
 /// Returned by handlers; the only error case is the result channel being
 /// disconnected — the run loop short-circuits on it and exits.
-type HandlerResult = Result<(), SendError<CompletedWork>>;
+type HandlerResult = Result<(), SendError<WorkerOutcome>>;
 
 use airbender_host::Proof;
 use anyhow::{Context, Result};
 use eravm_prover_host::{FriPipeline, FriVerifier, RawFriProof, SnarkPipeline};
 use tracing::{error, info};
-use zksync_prover_metrics::{ProofLabels, ProofStatus, METRICS};
+use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
-use crate::types::{CompletedFriProof, CompletedSnarkProof, CompletedWork, FriJob, SnarkJob};
+use crate::types::{
+    CompletedArtifact, CompletedFriProof, CompletedSnarkProof, FailedJob, FriJob, ProofPhase,
+    SnarkJob, WorkerOutcome,
+};
 
 /// Jobs received from the network worker. The variant in flight is driven by
 /// the configured [`ProverMode`].
@@ -72,14 +75,14 @@ struct FriOutput {
 pub struct ProverWorker {
     pipelines: WorkerPipelines,
     job_rx: Receiver<WorkerJob>,
-    result_tx: SyncSender<CompletedWork>,
+    result_tx: SyncSender<WorkerOutcome>,
 }
 
 impl ProverWorker {
     pub fn new(
         pipelines: WorkerPipelines,
         job_rx: Receiver<WorkerJob>,
-        result_tx: SyncSender<CompletedWork>,
+        result_tx: SyncSender<WorkerOutcome>,
     ) -> Self {
         Self {
             pipelines,
@@ -108,14 +111,24 @@ impl ProverWorker {
     /// streamed out before the SNARK wrap starts, so the network worker can
     /// submit it in parallel.
     fn handle_fri(&mut self, job: &FriJob) -> HandlerResult {
-        let Some(fri_output) = self.prove_fri(job) else {
-            return Ok(());
+        let fri_output = match self.prove_fri(job) {
+            Some(out) => out,
+            None => {
+                return self.send_failed(
+                    job.batch_number,
+                    ProofPhase::Fri,
+                    "FRI proving failed".to_owned(),
+                );
+            }
         };
 
-        self.result_tx.send(CompletedWork::Fri(CompletedFriProof {
-            batch_number: job.batch_number,
-            proof_bytes: fri_output.proof_bytes,
-        }))?;
+        self.result_tx
+            .send(WorkerOutcome::Completed(CompletedArtifact::Fri(
+                CompletedFriProof {
+                    batch_number: job.batch_number,
+                    proof_bytes: fri_output.proof_bytes,
+                },
+            )))?;
 
         if self.pipelines.snark.is_none() {
             return Ok(());
@@ -128,17 +141,27 @@ impl ProverWorker {
                     batch_number = job.batch_number,
                     "GPU prover returned a development proof unexpectedly; skipping SNARK wrap"
                 );
-                return Ok(());
+                return self.send_failed(
+                    job.batch_number,
+                    ProofPhase::Snark,
+                    "GPU prover returned a development proof".to_owned(),
+                );
             }
         };
 
-        let Some(snark_completed) =
-            self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof)
-        else {
-            // FRI was already streamed out; nothing more to do for this job.
-            return Ok(());
-        };
-        self.result_tx.send(CompletedWork::Snark(snark_completed))
+        match self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof) {
+            Some(snark_completed) => {
+                self.result_tx
+                    .send(WorkerOutcome::Completed(CompletedArtifact::Snark(
+                        snark_completed,
+                    )))
+            }
+            None => self.send_failed(
+                job.batch_number,
+                ProofPhase::Snark,
+                "SNARK wrap failed".to_owned(),
+            ),
+        }
     }
 
     /// snark-only entry point: verifies the incoming FRI proof, wraps it, ships
@@ -152,15 +175,35 @@ impl ProverWorker {
                     ?err,
                     "Rejected FRI proof input for SNARK wrapping"
                 );
-                return Ok(());
+                return self.send_failed(
+                    job.batch_number,
+                    ProofPhase::Snark,
+                    format!("rejected FRI input: {err:#}"),
+                );
             }
         };
 
-        let Some(completed) = self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof)
-        else {
-            return Ok(());
-        };
-        self.result_tx.send(CompletedWork::Snark(completed))
+        match self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof) {
+            Some(completed) => {
+                self.result_tx
+                    .send(WorkerOutcome::Completed(CompletedArtifact::Snark(
+                        completed,
+                    )))
+            }
+            None => self.send_failed(
+                job.batch_number,
+                ProofPhase::Snark,
+                "SNARK wrap failed".to_owned(),
+            ),
+        }
+    }
+
+    fn send_failed(&self, batch_number: u32, phase: ProofPhase, reason: String) -> HandlerResult {
+        self.result_tx.send(WorkerOutcome::Failed(FailedJob {
+            batch_number,
+            phase,
+            reason,
+        }))
     }
 
     fn prove_fri(&self, job: &FriJob) -> Option<FriOutput> {
@@ -173,6 +216,7 @@ impl ProverWorker {
                 Self::record_metrics(
                     job.batch_number,
                     job.protocol_version,
+                    ProofType::Fri,
                     ProofStatus::Failure,
                     started_at.elapsed(),
                 );
@@ -189,6 +233,7 @@ impl ProverWorker {
         Self::record_metrics(
             job.batch_number,
             job.protocol_version,
+            ProofType::Fri,
             ProofStatus::Success,
             started_at.elapsed(),
         );
@@ -237,6 +282,7 @@ impl ProverWorker {
                 Self::record_metrics(
                     batch_number,
                     protocol_version,
+                    ProofType::Snark,
                     ProofStatus::Failure,
                     started_at.elapsed(),
                 );
@@ -247,6 +293,7 @@ impl ProverWorker {
                 Self::record_metrics(
                     batch_number,
                     protocol_version,
+                    ProofType::Snark,
                     ProofStatus::Success,
                     started_at.elapsed(),
                 );
@@ -293,12 +340,14 @@ impl ProverWorker {
     fn record_metrics(
         batch_number: u32,
         protocol_version: u16,
+        proof_type: ProofType,
         status: ProofStatus,
         elapsed: Duration,
     ) {
         let labels = ProofLabels {
             batch_number,
             protocol_version,
+            proof_type,
             status,
         };
         METRICS.proof_duration[&labels].observe(elapsed);
