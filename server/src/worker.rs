@@ -18,6 +18,15 @@ pub enum WorkerJob {
     Snark(SnarkJob),
 }
 
+impl WorkerJob {
+    pub fn batch_number(&self) -> u32 {
+        match self {
+            WorkerJob::Fri(j) => j.batch_number,
+            WorkerJob::Snark(j) => j.batch_number,
+        }
+    }
+}
+
 impl std::fmt::Display for WorkerJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

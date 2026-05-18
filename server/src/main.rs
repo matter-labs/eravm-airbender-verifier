@@ -14,7 +14,7 @@ use clap::Parser;
 use eravm_prover_host::{FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline};
 use tracing::info;
 
-use network::{network_worker, NetworkWorkerConfig};
+use network::NetworkWorker;
 use types::ProverMode;
 use worker::{prover_worker, WorkerPipelines};
 
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
         prover_worker(pipelines, job_rx, result_tx);
     });
 
-    network_worker(NetworkWorkerConfig {
+    NetworkWorker {
         mode: cli.mode,
         job_tx,
         result_rx,
@@ -136,7 +136,8 @@ fn main() -> Result<()> {
         poll_interval,
         submit_attempts: cli.submit_attempts,
         shutdown,
-    });
+    }
+    .run();
 
     info!("Waiting for prover to finish current job...");
     prover_handle.join().expect("prover thread panicked");

@@ -2,3 +2,4 @@ target/
 SESSION.md
 guest/dist/
 testdata/era_mainnet_batches/binary/*.bin
+.DS_Store
