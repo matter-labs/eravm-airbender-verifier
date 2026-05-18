@@ -18,6 +18,15 @@ pub enum WorkerJob {
     Snark(SnarkJob),
 }
 
+impl std::fmt::Display for WorkerJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkerJob::Fri(_) => f.write_str("FRI"),
+            WorkerJob::Snark(_) => f.write_str("SNARK"),
+        }
+    }
+}
+
 /// Prover pipelines available to the worker; populated per mode.
 pub struct WorkerPipelines {
     pub mode: ProverMode,
@@ -26,58 +35,75 @@ pub struct WorkerPipelines {
     pub snark: Option<SnarkPipeline>,
 }
 
-/// Receives jobs, proves them according to the configured mode, and sends
-/// completed work back to the network worker.
+/// Receives jobs, proves them according to the configured mode, and streams
+/// completed work back to the network worker as soon as each piece is ready —
+/// in `fri-snark` mode the FRI proof is sent before SNARK wrapping starts,
+/// so the network worker can submit it to the job server in parallel.
 pub fn prover_worker(
     mut pipelines: WorkerPipelines,
     job_rx: Receiver<WorkerJob>,
     result_tx: SyncSender<CompletedWork>,
 ) {
     for job in job_rx {
-        let outputs = match (pipelines.mode, job) {
-            (ProverMode::FriOnly, WorkerJob::Fri(fri_job)) => run_fri_only(&pipelines, &fri_job),
-            (ProverMode::FriSnark, WorkerJob::Fri(fri_job)) => {
-                run_fri_then_snark(&mut pipelines, &fri_job)
+        let kept_running = match (pipelines.mode, job) {
+            (ProverMode::FriOnly, WorkerJob::Fri(j)) => run_fri_only(&pipelines, &j, &result_tx),
+            (ProverMode::FriSnark, WorkerJob::Fri(j)) => {
+                run_fri_then_snark(&mut pipelines, &j, &result_tx)
             }
-            (ProverMode::SnarkOnly, WorkerJob::Snark(snark_job)) => {
-                run_snark_only(&mut pipelines, &snark_job)
+            (ProverMode::SnarkOnly, WorkerJob::Snark(j)) => {
+                run_snark_only(&mut pipelines, &j, &result_tx)
             }
             (mode, job) => {
-                let kind = match job {
-                    WorkerJob::Fri(_) => "FRI",
-                    WorkerJob::Snark(_) => "SNARK",
-                };
-                error!(?mode, kind, "Worker received job that does not match mode");
-                continue;
+                error!(?mode, %job, "Worker received job that does not match mode");
+                true
             }
         };
-
-        for output in outputs {
-            if result_tx.send(output).is_err() {
-                return;
-            }
+        if !kept_running {
+            return;
         }
     }
 }
 
-fn run_fri_only(pipelines: &WorkerPipelines, job: &FriJob) -> Vec<CompletedWork> {
-    let fri = pipelines.fri.as_ref().expect("FRI pipeline missing");
-    match prove_fri(fri, job) {
-        Some(completed) => vec![CompletedWork::Fri(completed)],
-        None => Vec::new(),
-    }
+/// Returns `false` if the result channel was disconnected — caller should exit.
+fn emit(tx: &SyncSender<CompletedWork>, item: CompletedWork) -> bool {
+    tx.send(item).is_ok()
 }
 
-fn run_fri_then_snark(pipelines: &mut WorkerPipelines, job: &FriJob) -> Vec<CompletedWork> {
+fn run_fri_only(pipelines: &WorkerPipelines, job: &FriJob, tx: &SyncSender<CompletedWork>) -> bool {
     let fri = pipelines.fri.as_ref().expect("FRI pipeline missing");
-    let Some(fri_output) = prove_fri_full(fri, job) else {
-        return Vec::new();
+    let Some(fri_output) = prove_fri(fri, job) else {
+        return true;
+    };
+    emit(
+        tx,
+        CompletedWork::Fri(CompletedFriProof {
+            batch_number: job.batch_number,
+            proof_bytes: fri_output.proof_bytes,
+        }),
+    )
+}
+
+fn run_fri_then_snark(
+    pipelines: &mut WorkerPipelines,
+    job: &FriJob,
+    tx: &SyncSender<CompletedWork>,
+) -> bool {
+    let fri = pipelines.fri.as_ref().expect("FRI pipeline missing");
+    let Some(fri_output) = prove_fri(fri, job) else {
+        return true;
     };
 
-    let mut outputs = vec![CompletedWork::Fri(CompletedFriProof {
-        batch_number: job.batch_number,
-        proof_bytes: fri_output.proof_bytes,
-    })];
+    // Hand off the FRI proof to the network worker immediately so the job
+    // server can advance the downstream pipeline while we wrap into SNARK.
+    if !emit(
+        tx,
+        CompletedWork::Fri(CompletedFriProof {
+            batch_number: job.batch_number,
+            proof_bytes: fri_output.proof_bytes,
+        }),
+    ) {
+        return false;
+    }
 
     let raw_proof = match fri_output.proof {
         Proof::Real(real) => real.into_inner(),
@@ -86,21 +112,25 @@ fn run_fri_then_snark(pipelines: &mut WorkerPipelines, job: &FriJob) -> Vec<Comp
                 batch_number = job.batch_number,
                 "GPU prover returned a development proof unexpectedly; skipping SNARK wrap"
             );
-            return outputs;
+            return true;
         }
     };
 
     let snark = pipelines.snark.as_mut().expect("SNARK pipeline missing");
-    match prove_snark(snark, job.batch_number, job.protocol_version, raw_proof) {
-        Some(snark_completed) => outputs.push(CompletedWork::Snark(snark_completed)),
-        None => {
-            // FRI is already in `outputs`; submitting it alone is still useful.
-        }
-    }
-    outputs
+    let Some(snark_completed) =
+        prove_snark(snark, job.batch_number, job.protocol_version, raw_proof)
+    else {
+        // FRI was already streamed out; nothing more to do for this job.
+        return true;
+    };
+    emit(tx, CompletedWork::Snark(snark_completed))
 }
 
-fn run_snark_only(pipelines: &mut WorkerPipelines, job: &SnarkJob) -> Vec<CompletedWork> {
+fn run_snark_only(
+    pipelines: &mut WorkerPipelines,
+    job: &SnarkJob,
+    tx: &SyncSender<CompletedWork>,
+) -> bool {
     let raw_proof = match decode_and_verify_fri_proof(pipelines, job) {
         Ok(raw) => raw,
         Err(err) => {
@@ -109,15 +139,16 @@ fn run_snark_only(pipelines: &mut WorkerPipelines, job: &SnarkJob) -> Vec<Comple
                 ?err,
                 "Rejected FRI proof input for SNARK wrapping"
             );
-            return Vec::new();
+            return true;
         }
     };
 
     let snark = pipelines.snark.as_mut().expect("SNARK pipeline missing");
-    match prove_snark(snark, job.batch_number, job.protocol_version, raw_proof) {
-        Some(completed) => vec![CompletedWork::Snark(completed)],
-        None => Vec::new(),
-    }
+    let Some(completed) = prove_snark(snark, job.batch_number, job.protocol_version, raw_proof)
+    else {
+        return true;
+    };
+    emit(tx, CompletedWork::Snark(completed))
 }
 
 fn decode_and_verify_fri_proof(pipelines: &WorkerPipelines, job: &SnarkJob) -> Result<RawFriProof> {
@@ -149,14 +180,7 @@ struct FriOutputBytes {
     proof_bytes: Vec<u8>,
 }
 
-fn prove_fri(pipeline: &FriPipeline, job: &FriJob) -> Option<CompletedFriProof> {
-    prove_fri_full(pipeline, job).map(|out| CompletedFriProof {
-        batch_number: job.batch_number,
-        proof_bytes: out.proof_bytes,
-    })
-}
-
-fn prove_fri_full(pipeline: &FriPipeline, job: &FriJob) -> Option<FriOutputBytes> {
+fn prove_fri(pipeline: &FriPipeline, job: &FriJob) -> Option<FriOutputBytes> {
     info!(batch_number = job.batch_number, "Starting FRI proof...");
     let started_at = Instant::now();
 
@@ -206,7 +230,7 @@ fn prove_snark(
 ) -> Option<CompletedSnarkProof> {
     info!(batch_number, "Starting SNARK wrapping...");
     let started_at = Instant::now();
-    match pipeline.prove_to_bytes(raw_proof) {
+    match pipeline.wrap_fri(raw_proof) {
         Err(err) => {
             record_snark_metrics(
                 batch_number,

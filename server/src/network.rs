@@ -108,15 +108,14 @@ pub fn network_worker(cfg: NetworkWorkerConfig) {
 }
 
 fn submit_fri_proof(cfg: &NetworkWorkerConfig, result: &CompletedFriProof) {
-    let outcome = submit_with_retries(cfg.submit_attempts, |attempt| {
-        let attempt_info = (result.batch_number, attempt, cfg.submit_attempts);
+    let outcome = submit_with_retries("FRI", result.batch_number, cfg.submit_attempts, |attempt| {
         submit_fri_result(
-            &cfg.client,
-            &cfg.server_url,
-            &cfg.prover_id,
-            result.batch_number,
-            &result.proof_bytes,
-            attempt_info,
+            cfg,
+            result,
+            AttemptCount {
+                attempt,
+                attempts: cfg.submit_attempts,
+            },
         )
     });
 
@@ -139,18 +138,21 @@ fn submit_fri_proof(cfg: &NetworkWorkerConfig, result: &CompletedFriProof) {
 }
 
 fn submit_snark_proof(cfg: &NetworkWorkerConfig, result: &CompletedSnarkProof) {
-    let outcome = submit_with_retries(cfg.submit_attempts, |attempt| {
-        let attempt_info = (result.batch_number, attempt, cfg.submit_attempts);
-        submit_snark_result(
-            &cfg.client,
-            &cfg.server_url,
-            &cfg.prover_id,
-            result.batch_number,
-            &result.snark_proof_bytes,
-            &result.snark_vk_bytes,
-            attempt_info,
-        )
-    });
+    let outcome = submit_with_retries(
+        "SNARK",
+        result.batch_number,
+        cfg.submit_attempts,
+        |attempt| {
+            submit_snark_result(
+                cfg,
+                result,
+                AttemptCount {
+                    attempt,
+                    attempts: cfg.submit_attempts,
+                },
+            )
+        },
+    );
 
     match outcome {
         Err(err) => {
@@ -250,7 +252,12 @@ fn fetch_snark_job(client: &reqwest::blocking::Client, base_url: &str) -> Result
     }
 }
 
-fn submit_with_retries<F>(attempts: usize, mut once: F) -> Result<()>
+fn submit_with_retries<F>(
+    label: &str,
+    batch_number: u32,
+    attempts: usize,
+    mut once: F,
+) -> Result<()>
 where
     F: FnMut(usize) -> Result<(), (Option<reqwest::StatusCode>, anyhow::Error)>,
 {
@@ -265,6 +272,14 @@ where
                 if !retriable {
                     return Err(err);
                 }
+                warn!(
+                    label,
+                    batch_number,
+                    attempt,
+                    attempts,
+                    ?err,
+                    "Submit attempt failed"
+                );
                 last_err = err;
                 if attempt < attempts {
                     std::thread::sleep(Duration::from_millis(100));
@@ -275,29 +290,33 @@ where
     Err(last_err)
 }
 
+struct AttemptCount {
+    attempt: usize,
+    attempts: usize,
+}
+
 /// Submits a FRI proof to `POST /airbender/submit_proofs`. See `SubmitFriProofRequest`.
 fn submit_fri_result(
-    client: &reqwest::blocking::Client,
-    base_url: &str,
-    prover_id: &str,
-    batch_number: u32,
-    proof_bytes: &[u8],
-    attempt_info: (u32, usize, usize),
+    cfg: &NetworkWorkerConfig,
+    result: &CompletedFriProof,
+    count: AttemptCount,
 ) -> Result<(), (Option<reqwest::StatusCode>, anyhow::Error)> {
-    let url = format!("{base_url}/airbender/submit_proofs");
+    let batch_number = result.batch_number;
+    let url = format!("{}/airbender/submit_proofs", cfg.server_url);
     let payload = SubmitFriProofRequest {
         l1_batch_number: batch_number,
-        prover_id: prover_id.to_owned(),
-        proof: proof_bytes,
+        prover_id: cfg.prover_id.clone(),
+        proof: &result.proof_bytes,
     };
     info!(
         batch_number,
-        proof_bytes = proof_bytes.len(),
-        attempt = attempt_info.1,
-        attempts = attempt_info.2,
+        proof_bytes = result.proof_bytes.len(),
+        attempt = count.attempt,
+        attempts = count.attempts,
         "Submitting FRI proof"
     );
-    let response = client
+    let response = cfg
+        .client
         .post(&url)
         .json(&payload)
         .send()
@@ -318,30 +337,28 @@ fn submit_fri_result(
 
 /// Submits a SNARK proof + VK to `POST /airbender/submit_snark_proofs`.
 fn submit_snark_result(
-    client: &reqwest::blocking::Client,
-    base_url: &str,
-    prover_id: &str,
-    batch_number: u32,
-    snark_proof_bytes: &[u8],
-    snark_vk_bytes: &[u8],
-    attempt_info: (u32, usize, usize),
+    cfg: &NetworkWorkerConfig,
+    result: &CompletedSnarkProof,
+    count: AttemptCount,
 ) -> Result<(), (Option<reqwest::StatusCode>, anyhow::Error)> {
-    let url = format!("{base_url}/airbender/submit_snark_proofs");
+    let batch_number = result.batch_number;
+    let url = format!("{}/airbender/submit_snark_proofs", cfg.server_url);
     let payload = SubmitSnarkProofRequest {
         l1_batch_number: batch_number,
-        prover_id: prover_id.to_owned(),
-        snark_proof: snark_proof_bytes,
-        snark_vk: snark_vk_bytes,
+        prover_id: cfg.prover_id.clone(),
+        snark_proof: &result.snark_proof_bytes,
+        snark_vk: &result.snark_vk_bytes,
     };
     info!(
         batch_number,
-        snark_proof_bytes = snark_proof_bytes.len(),
-        snark_vk_bytes = snark_vk_bytes.len(),
-        attempt = attempt_info.1,
-        attempts = attempt_info.2,
+        snark_proof_bytes = result.snark_proof_bytes.len(),
+        snark_vk_bytes = result.snark_vk_bytes.len(),
+        attempt = count.attempt,
+        attempts = count.attempts,
         "Submitting SNARK proof"
     );
-    let response = client
+    let response = cfg
+        .client
         .post(&url)
         .json(&payload)
         .send()

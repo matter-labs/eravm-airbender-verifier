@@ -62,7 +62,11 @@ struct Cli {
 
     /// Path to the bellman trusted setup (CRS) for the SNARK wrapper.
     /// Required when `--mode` is `fri-snark` or `snark-only`.
-    #[arg(long, env = "SNARK_TRUSTED_SETUP")]
+    #[arg(
+        long,
+        env = "SNARK_TRUSTED_SETUP",
+        required_if_eq_any = [("mode", "fri-snark"), ("mode", "snark-only")],
+    )]
     snark_trusted_setup: Option<PathBuf>,
 
     /// Use a zero-knowledge SNARK wrapping path. Off by default.
@@ -166,7 +170,6 @@ fn build_pipelines(
             );
         }
         ProverMode::FriSnark => {
-            ensure_snark_setup_present(cli)?;
             pipelines.fri = Some(
                 FriPipeline::new(dist_dir, cli.worker_threads, security)
                     .context("while building FRI pipeline")?,
@@ -175,7 +178,6 @@ fn build_pipelines(
                 Some(SnarkPipeline::new(&snark_options).context("while building SNARK pipeline")?);
         }
         ProverMode::SnarkOnly => {
-            ensure_snark_setup_present(cli)?;
             pipelines.fri_verifier = Some(
                 FriVerifier::new(dist_dir, security)
                     .context("while building FRI verifier for snark-only mode")?,
@@ -186,16 +188,6 @@ fn build_pipelines(
     }
 
     Ok(pipelines)
-}
-
-fn ensure_snark_setup_present(cli: &Cli) -> Result<()> {
-    if cli.snark_trusted_setup.is_none() {
-        anyhow::bail!(
-            "--snark-trusted-setup is required when --mode is {:?}",
-            cli.mode
-        );
-    }
-    Ok(())
 }
 
 fn init_tracing() -> Result<()> {

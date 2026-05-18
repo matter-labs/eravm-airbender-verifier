@@ -65,9 +65,10 @@ impl SnarkPipeline {
     }
 
     /// Wraps a raw FRI proof into a SNARK and returns the proof + VK as
-    /// serialized bytes, without writing anything to disk. Reuses the cached
-    /// wrapper setup across calls.
-    pub fn prove_to_bytes(&mut self, raw_proof: RawFriProof) -> Result<SnarkArtifactBytes> {
+    /// JSON-serialized bytes, without writing anything to disk. Reuses the
+    /// cached wrapper setup across calls. Companion to [`Self::prove`], which
+    /// writes the same artifacts to disk.
+    pub fn wrap_fri(&mut self, raw_proof: RawFriProof) -> Result<SnarkArtifactBytes> {
         let risc_wrapper_proof = self
             .wrapper
             .prove_risc_wrapper(raw_proof)
