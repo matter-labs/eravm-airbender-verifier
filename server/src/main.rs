@@ -16,7 +16,7 @@ use tracing::info;
 
 use network::NetworkWorker;
 use types::ProverMode;
-use worker::{prover_worker, WorkerPipelines};
+use worker::{ProverWorker, WorkerPipelines};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -123,7 +123,7 @@ fn main() -> Result<()> {
     );
 
     let prover_handle = std::thread::spawn(move || {
-        prover_worker(pipelines, job_rx, result_tx);
+        ProverWorker::new(pipelines, job_rx, result_tx).run();
     });
 
     NetworkWorker {
@@ -163,7 +163,7 @@ fn build_pipelines(
     let build_snark =
         || SnarkPipeline::new(&snark_options).context("while building SNARK pipeline");
 
-    let pipelines = WorkerPipelines::new(cli.mode);
+    let pipelines = WorkerPipelines::default();
     Ok(match cli.mode {
         ProverMode::FriOnly => pipelines.with_fri(build_fri()?),
         ProverMode::FriSnark => pipelines.with_fri(build_fri()?).with_snark(build_snark()?),
