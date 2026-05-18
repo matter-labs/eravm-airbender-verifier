@@ -1,23 +1,16 @@
 use std::sync::mpsc::{Receiver, SendError, SyncSender};
 use std::time::{Duration, Instant};
 
-/// Returned by handlers; the only error case is the result channel being
-/// disconnected — the run loop short-circuits on it and exits.
-type HandlerResult = Result<(), SendError<WorkerOutcome>>;
-
 use airbender_host::Proof;
-use anyhow::{Context, Result};
+use anyhow::Context;
 use eravm_prover_host::{FriPipeline, FriVerifier, RawFriProof, SnarkPipeline};
 use tracing::{error, info};
 use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
-use crate::types::{
-    CompletedArtifact, CompletedFriProof, CompletedSnarkProof, FailedJob, FriJob, ProofPhase,
-    SnarkJob, WorkerOutcome,
-};
+use crate::types::{Artifact, FriJob, Outcome, ProofKind, SnarkJob};
 
-/// Jobs received from the network worker. The variant in flight is driven by
-/// the configured [`ProverMode`].
+/// Jobs received from the network worker. The variant is implied by
+/// `PipelineMode`; a mismatch is a network-worker bug.
 pub enum WorkerJob {
     Fri(FriJob),
     Snark(SnarkJob),
@@ -41,316 +34,257 @@ impl std::fmt::Display for WorkerJob {
     }
 }
 
-/// Prover pipelines available to the worker; which ones are populated
-/// implicitly encodes the operating mode (see [`ProverMode`][crate::types::ProverMode]).
-#[derive(Default)]
-pub struct WorkerPipelines {
-    pub fri: Option<FriPipeline>,
-    pub fri_verifier: Option<FriVerifier>,
-    pub snark: Option<SnarkPipeline>,
-}
-
-impl WorkerPipelines {
-    pub fn with_fri(mut self, fri: FriPipeline) -> Self {
-        self.fri = Some(fri);
-        self
-    }
-
-    pub fn with_fri_verifier(mut self, verifier: FriVerifier) -> Self {
-        self.fri_verifier = Some(verifier);
-        self
-    }
-
-    pub fn with_snark(mut self, snark: SnarkPipeline) -> Self {
-        self.snark = Some(snark);
-        self
-    }
-}
-
-struct FriOutput {
-    proof: Proof,
-    proof_bytes: Vec<u8>,
+/// Pipelines required by each operating mode. Owning the pipelines in the
+/// variant means a missing pipeline is impossible at runtime.
+pub enum PipelineMode {
+    FriOnly(FriPipeline),
+    FriSnark(FriPipeline, SnarkPipeline),
+    SnarkOnly(FriVerifier, SnarkPipeline),
 }
 
 pub struct ProverWorker {
-    pipelines: WorkerPipelines,
+    mode: PipelineMode,
     job_rx: Receiver<WorkerJob>,
-    result_tx: SyncSender<WorkerOutcome>,
+    result_tx: SyncSender<Outcome>,
 }
 
 impl ProverWorker {
     pub fn new(
-        pipelines: WorkerPipelines,
+        mode: PipelineMode,
         job_rx: Receiver<WorkerJob>,
-        result_tx: SyncSender<WorkerOutcome>,
+        result_tx: SyncSender<Outcome>,
     ) -> Self {
         Self {
-            pipelines,
+            mode,
             job_rx,
             result_tx,
         }
     }
 
-    /// Receives jobs, proves them according to the configured mode, and streams
-    /// completed work back to the network worker as soon as each piece is ready —
-    /// in `fri-snark` mode the FRI proof is sent before SNARK wrapping starts,
-    /// so the network worker can submit it to the job server in parallel.
+    /// Receives jobs and streams settlement outcomes back. Exits when either
+    /// channel is closed.
     pub fn run(mut self) {
         while let Ok(job) = self.job_rx.recv() {
-            let result = match job {
-                WorkerJob::Fri(j) => self.handle_fri(&j),
-                WorkerJob::Snark(j) => self.handle_snark(&j),
-            };
-            if result.is_err() {
+            if self.process(job).is_err() {
                 return;
             }
         }
     }
 
-    /// FRI-only and FRI+SNARK both start here. In FRI+SNARK the FRI proof is
-    /// streamed out before the SNARK wrap starts, so the network worker can
-    /// submit it in parallel.
-    fn handle_fri(&mut self, job: &FriJob) -> HandlerResult {
-        let fri_output = match self.prove_fri(job) {
-            Some(out) => out,
-            None => {
-                return self.send_failed(
-                    job.batch_number,
-                    ProofPhase::Fri,
-                    "FRI proving failed".to_owned(),
-                );
+    fn process(&mut self, job: WorkerJob) -> Result<(), SendError<Outcome>> {
+        match (&mut self.mode, job) {
+            (PipelineMode::FriOnly(fri), WorkerJob::Fri(j)) => {
+                prove_fri(fri, &j, &self.result_tx).map(|_| ())
             }
-        };
+            (PipelineMode::FriSnark(fri, snark), WorkerJob::Fri(j)) => {
+                let Some(proof) = prove_fri(fri, &j, &self.result_tx)? else {
+                    return Ok(());
+                };
+                let raw = match unwrap_real_proof(proof, j.batch_number) {
+                    Ok(raw) => raw,
+                    Err(outcome) => return self.result_tx.send(outcome),
+                };
+                let outcome = wrap_snark(snark, j.batch_number, j.protocol_version, raw);
+                self.result_tx.send(outcome)
+            }
+            (PipelineMode::SnarkOnly(verifier, snark), WorkerJob::Snark(j)) => {
+                let raw = match decode_and_verify(verifier, &j) {
+                    Ok(raw) => raw,
+                    Err(reason) => {
+                        return self.result_tx.send(Outcome {
+                            batch_number: j.batch_number,
+                            kind: ProofKind::Snark,
+                            result: Err(reason),
+                        });
+                    }
+                };
+                let outcome = wrap_snark(snark, j.batch_number, j.protocol_version, raw);
+                self.result_tx.send(outcome)
+            }
+            _ => unreachable!("network worker fetched a job that doesn't match PipelineMode"),
+        }
+    }
+}
 
-        self.result_tx
-            .send(WorkerOutcome::Completed(CompletedArtifact::Fri(
-                CompletedFriProof {
+/// Runs the FRI prover and emits exactly one `Outcome` (kind = `Fri`).
+/// Returns the in-memory `Proof` so `FriSnark` mode can wrap it without
+/// re-decoding the serialized bytes.
+fn prove_fri(
+    pipeline: &FriPipeline,
+    job: &FriJob,
+    tx: &SyncSender<Outcome>,
+) -> Result<Option<Proof>, SendError<Outcome>> {
+    info!(batch_number = job.batch_number, "Starting FRI proof...");
+    let started_at = Instant::now();
+
+    let output = match pipeline.prove_input(job.batch_number as u64, &job.input_words) {
+        Ok(o) => {
+            record_metrics(
+                job.batch_number,
+                job.protocol_version,
+                ProofType::Fri,
+                ProofStatus::Success,
+                started_at.elapsed(),
+            );
+            o
+        }
+        Err(err) => {
+            record_metrics(
+                job.batch_number,
+                job.protocol_version,
+                ProofType::Fri,
+                ProofStatus::Failure,
+                started_at.elapsed(),
+            );
+            error!(
+                batch_number = job.batch_number,
+                ?err,
+                "Failed to prove batch"
+            );
+            tx.send(Outcome {
+                batch_number: job.batch_number,
+                kind: ProofKind::Fri,
+                result: Err("FRI proving failed".to_owned()),
+            })?;
+            return Ok(None);
+        }
+    };
+
+    let proof_bytes =
+        match bincode::serde::encode_to_vec(&output.proof, bincode::config::standard()) {
+            Ok(b) => b,
+            Err(err) => {
+                error!(
+                    batch_number = job.batch_number,
+                    ?err,
+                    "Failed to serialize proof"
+                );
+                tx.send(Outcome {
                     batch_number: job.batch_number,
-                    proof_bytes: fri_output.proof_bytes,
-                },
-            )))?;
-
-        if self.pipelines.snark.is_none() {
-            return Ok(());
-        }
-
-        let raw_proof = match fri_output.proof {
-            Proof::Real(real) => real.into_inner(),
-            Proof::Dev(_) => {
-                error!(
-                    batch_number = job.batch_number,
-                    "GPU prover returned a development proof unexpectedly; skipping SNARK wrap"
-                );
-                return self.send_failed(
-                    job.batch_number,
-                    ProofPhase::Snark,
-                    "GPU prover returned a development proof".to_owned(),
-                );
+                    kind: ProofKind::Fri,
+                    result: Err("FRI proof serialization failed".to_owned()),
+                })?;
+                return Ok(None);
             }
         };
 
-        match self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof) {
-            Some(snark_completed) => {
-                self.result_tx
-                    .send(WorkerOutcome::Completed(CompletedArtifact::Snark(
-                        snark_completed,
-                    )))
+    info!(
+        batch_number = job.batch_number,
+        cycles = output.cycles,
+        output = ?output.output,
+        "FRI proof complete"
+    );
+    tx.send(Outcome {
+        batch_number: job.batch_number,
+        kind: ProofKind::Fri,
+        result: Ok(Artifact::Fri { proof: proof_bytes }),
+    })?;
+    Ok(Some(output.proof))
+}
+
+fn wrap_snark(
+    pipeline: &mut SnarkPipeline,
+    batch_number: u32,
+    protocol_version: u16,
+    raw_proof: RawFriProof,
+) -> Outcome {
+    info!(batch_number, "Starting SNARK wrapping...");
+    let started_at = Instant::now();
+    match pipeline.wrap_fri(raw_proof) {
+        Ok(artifact) => {
+            record_metrics(
+                batch_number,
+                protocol_version,
+                ProofType::Snark,
+                ProofStatus::Success,
+                started_at.elapsed(),
+            );
+            info!(
+                batch_number,
+                snark_proof_bytes = artifact.snark_proof.len(),
+                snark_vk_bytes = artifact.snark_vk.len(),
+                "SNARK wrap complete"
+            );
+            Outcome {
+                batch_number,
+                kind: ProofKind::Snark,
+                result: Ok(Artifact::Snark {
+                    proof: artifact.snark_proof,
+                    vk: artifact.snark_vk,
+                }),
             }
-            None => self.send_failed(
-                job.batch_number,
-                ProofPhase::Snark,
-                "SNARK wrap failed".to_owned(),
-            ),
         }
-    }
-
-    /// snark-only entry point: verifies the incoming FRI proof, wraps it, ships
-    /// the SNARK back to the network worker.
-    fn handle_snark(&mut self, job: &SnarkJob) -> HandlerResult {
-        let raw_proof = match self.decode_and_verify_fri_proof(job) {
-            Ok(raw) => raw,
-            Err(err) => {
-                error!(
-                    batch_number = job.batch_number,
-                    ?err,
-                    "Rejected FRI proof input for SNARK wrapping"
-                );
-                return self.send_failed(
-                    job.batch_number,
-                    ProofPhase::Snark,
-                    format!("rejected FRI input: {err:#}"),
-                );
-            }
-        };
-
-        match self.wrap_to_snark(job.batch_number, job.protocol_version, raw_proof) {
-            Some(completed) => {
-                self.result_tx
-                    .send(WorkerOutcome::Completed(CompletedArtifact::Snark(
-                        completed,
-                    )))
-            }
-            None => self.send_failed(
-                job.batch_number,
-                ProofPhase::Snark,
-                "SNARK wrap failed".to_owned(),
-            ),
-        }
-    }
-
-    fn send_failed(&self, batch_number: u32, phase: ProofPhase, reason: String) -> HandlerResult {
-        self.result_tx.send(WorkerOutcome::Failed(FailedJob {
-            batch_number,
-            phase,
-            reason,
-        }))
-    }
-
-    fn prove_fri(&self, job: &FriJob) -> Option<FriOutput> {
-        let pipeline = self.pipelines.fri.as_ref().expect("FRI pipeline missing");
-        info!(batch_number = job.batch_number, "Starting FRI proof...");
-        let started_at = Instant::now();
-
-        let prove_output = match pipeline.prove_input(job.batch_number as u64, &job.input_words) {
-            Err(err) => {
-                Self::record_metrics(
-                    job.batch_number,
-                    job.protocol_version,
-                    ProofType::Fri,
-                    ProofStatus::Failure,
-                    started_at.elapsed(),
-                );
-                error!(
-                    batch_number = job.batch_number,
-                    ?err,
-                    "Failed to prove batch"
-                );
-                return None;
-            }
-            Ok(out) => out,
-        };
-
-        Self::record_metrics(
-            job.batch_number,
-            job.protocol_version,
-            ProofType::Fri,
-            ProofStatus::Success,
-            started_at.elapsed(),
-        );
-
-        let proof_bytes =
-            match bincode::serde::encode_to_vec(&prove_output.proof, bincode::config::standard()) {
-                Err(err) => {
-                    error!(
-                        batch_number = job.batch_number,
-                        ?err,
-                        "Failed to serialize proof"
-                    );
-                    return None;
-                }
-                Ok(bytes) => bytes,
-            };
-
-        info!(
-            batch_number = job.batch_number,
-            cycles = prove_output.cycles,
-            output = ?prove_output.output,
-            "FRI proof complete"
-        );
-        Some(FriOutput {
-            proof: prove_output.proof,
-            proof_bytes,
-        })
-    }
-
-    fn wrap_to_snark(
-        &mut self,
-        batch_number: u32,
-        protocol_version: u16,
-        raw_proof: RawFriProof,
-    ) -> Option<CompletedSnarkProof> {
-        let pipeline = self
-            .pipelines
-            .snark
-            .as_mut()
-            .expect("SNARK pipeline missing");
-        info!(batch_number, "Starting SNARK wrapping...");
-        let started_at = Instant::now();
-
-        match pipeline.wrap_fri(raw_proof) {
-            Err(err) => {
-                Self::record_metrics(
-                    batch_number,
-                    protocol_version,
-                    ProofType::Snark,
-                    ProofStatus::Failure,
-                    started_at.elapsed(),
-                );
-                error!(batch_number, ?err, "Failed to wrap batch into SNARK");
-                None
-            }
-            Ok(artifact) => {
-                Self::record_metrics(
-                    batch_number,
-                    protocol_version,
-                    ProofType::Snark,
-                    ProofStatus::Success,
-                    started_at.elapsed(),
-                );
-                info!(
-                    batch_number,
-                    snark_proof_bytes = artifact.snark_proof.len(),
-                    snark_vk_bytes = artifact.snark_vk.len(),
-                    "SNARK wrap complete"
-                );
-                Some(CompletedSnarkProof {
-                    batch_number,
-                    snark_proof_bytes: artifact.snark_proof,
-                    snark_vk_bytes: artifact.snark_vk,
-                })
+        Err(err) => {
+            record_metrics(
+                batch_number,
+                protocol_version,
+                ProofType::Snark,
+                ProofStatus::Failure,
+                started_at.elapsed(),
+            );
+            error!(batch_number, ?err, "Failed to wrap batch into SNARK");
+            Outcome {
+                batch_number,
+                kind: ProofKind::Snark,
+                result: Err("SNARK wrap failed".to_owned()),
             }
         }
     }
+}
 
-    fn decode_and_verify_fri_proof(&self, job: &SnarkJob) -> Result<RawFriProof> {
-        let (proof, decoded_len): (Proof, usize) =
-            bincode::serde::decode_from_slice(&job.fri_proof_bytes, bincode::config::standard())
-                .context("failed to bincode-decode incoming FRI proof envelope")?;
-        if decoded_len != job.fri_proof_bytes.len() {
-            anyhow::bail!("incoming FRI proof envelope has trailing bytes");
-        }
-
-        let verifier = self
-            .pipelines
-            .fri_verifier
-            .as_ref()
-            .context("snark-only mode is missing the FRI verifier")?;
-        verifier.verify_envelope(job.batch_number as u64, &proof)?;
-        info!(
-            batch_number = job.batch_number,
-            "Verified incoming FRI proof"
-        );
-
-        match proof {
-            Proof::Real(real) => Ok(real.into_inner()),
-            Proof::Dev(_) => anyhow::bail!("snark-only mode received a dev proof"),
+/// Unwraps a Real proof for SNARK wrapping; a Dev proof in production is a bug
+/// that yields a SNARK-phase failure outcome.
+fn unwrap_real_proof(proof: Proof, batch_number: u32) -> Result<RawFriProof, Outcome> {
+    match proof {
+        Proof::Real(real) => Ok(real.into_inner()),
+        Proof::Dev(_) => {
+            error!(
+                batch_number,
+                "GPU prover returned a development proof unexpectedly; skipping SNARK wrap"
+            );
+            Err(Outcome {
+                batch_number,
+                kind: ProofKind::Snark,
+                result: Err("GPU prover returned a development proof".to_owned()),
+            })
         }
     }
+}
 
-    fn record_metrics(
-        batch_number: u32,
-        protocol_version: u16,
-        proof_type: ProofType,
-        status: ProofStatus,
-        elapsed: Duration,
-    ) {
-        let labels = ProofLabels {
-            batch_number,
-            protocol_version,
-            proof_type,
-            status,
-        };
-        METRICS.proof_duration[&labels].observe(elapsed);
-        METRICS.proof_count[&labels].inc();
+fn decode_and_verify(verifier: &FriVerifier, job: &SnarkJob) -> Result<RawFriProof, String> {
+    let (proof, len): (Proof, usize) =
+        bincode::serde::decode_from_slice(&job.fri_proof_bytes, bincode::config::standard())
+            .context("failed to bincode-decode incoming FRI proof envelope")
+            .map_err(|err| format!("{err:#}"))?;
+    if len != job.fri_proof_bytes.len() {
+        return Err("incoming FRI proof envelope has trailing bytes".to_owned());
     }
+    verifier
+        .verify_envelope(job.batch_number as u64, &proof)
+        .map_err(|err| format!("FRI verification failed: {err:#}"))?;
+    info!(
+        batch_number = job.batch_number,
+        "Verified incoming FRI proof"
+    );
+    match proof {
+        Proof::Real(real) => Ok(real.into_inner()),
+        Proof::Dev(_) => Err("snark-only mode received a dev proof".to_owned()),
+    }
+}
+
+fn record_metrics(
+    batch_number: u32,
+    protocol_version: u16,
+    proof_type: ProofType,
+    status: ProofStatus,
+    elapsed: Duration,
+) {
+    let labels = ProofLabels {
+        batch_number,
+        protocol_version,
+        proof_type,
+        status,
+    };
+    METRICS.proof_duration[&labels].observe(elapsed);
+    METRICS.proof_count[&labels].inc();
 }

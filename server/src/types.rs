@@ -28,62 +28,47 @@ pub struct SnarkJob {
     pub fri_proof_bytes: Vec<u8>,
 }
 
-/// A completed FRI proof ready to be submitted.
-pub struct CompletedFriProof {
-    pub batch_number: u32,
-    /// Bincode-encoded `airbender_host::Proof`.
-    pub proof_bytes: Vec<u8>,
-}
-
-/// A completed SNARK proof + verification key ready to be submitted.
-pub struct CompletedSnarkProof {
-    pub batch_number: u32,
-    /// JSON-encoded SNARK wrapper proof.
-    pub snark_proof_bytes: Vec<u8>,
-    /// JSON-encoded SNARK wrapper verification key.
-    pub snark_vk_bytes: Vec<u8>,
-}
-
-/// Which phase of the pipeline emitted an outcome.
+/// Which phase of the pipeline an outcome came from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ProofPhase {
+pub enum ProofKind {
     Fri,
     Snark,
 }
 
-impl std::fmt::Display for ProofPhase {
+impl std::fmt::Display for ProofKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProofPhase::Fri => f.write_str("FRI"),
-            ProofPhase::Snark => f.write_str("SNARK"),
+            ProofKind::Fri => f.write_str("FRI"),
+            ProofKind::Snark => f.write_str("SNARK"),
         }
     }
 }
 
-/// Successfully produced artifact ready to be submitted.
-pub enum CompletedArtifact {
-    Fri(CompletedFriProof),
-    Snark(CompletedSnarkProof),
+/// Submission payload produced on success.
+pub enum Artifact {
+    Fri { proof: Vec<u8> },
+    Snark { proof: Vec<u8>, vk: Vec<u8> },
 }
 
-/// A job that did not produce an artifact. Carries enough context for the
-/// network worker to log and settle the job locally.
-pub struct FailedJob {
+/// Settlement event emitted by the prover worker. Every fetched job produces
+/// at least one outcome — failures included — so the network worker can
+/// account for it exactly once. In `fri-snark` mode a single job emits two
+/// outcomes (FRI then SNARK); the FRI outcome settles accounting and the
+/// SNARK outcome is a post-settlement step.
+pub struct Outcome {
     pub batch_number: u32,
-    pub phase: ProofPhase,
-    pub reason: String,
+    pub kind: ProofKind,
+    pub result: Result<Artifact, String>,
 }
 
-/// Settlement event emitted by the prover worker. Every fetched job results
-/// in at least one `WorkerOutcome` — failures included — so the network
-/// worker can account for it exactly once.
-///
-/// In `fri-snark` mode a single job emits two outcomes (FRI then SNARK);
-/// the FRI outcome is the one that settles the job's accounting, and the
-/// SNARK outcome follows as a post-settlement step.
-pub enum WorkerOutcome {
-    Completed(CompletedArtifact),
-    Failed(FailedJob),
+impl Outcome {
+    pub fn settles_job(&self, mode: ProverMode) -> bool {
+        matches!(
+            (mode, self.kind),
+            (ProverMode::FriOnly | ProverMode::FriSnark, ProofKind::Fri)
+                | (ProverMode::SnarkOnly, ProofKind::Snark)
+        )
+    }
 }
 
 /// Mirrors `SubmitAirbenderProofRequest` from zksync-era.

@@ -16,7 +16,7 @@ use tracing::info;
 
 use network::NetworkWorker;
 use types::ProverMode;
-use worker::{ProverWorker, WorkerPipelines};
+use worker::{PipelineMode, ProverWorker};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -89,11 +89,6 @@ struct Cli {
     /// Worker threads for the SNARK wrapper (defaults to wrapper's own default).
     #[arg(long, env = "SNARK_THREADS")]
     snark_threads: Option<usize>,
-
-    /// Save SNARK intermediate artifacts (phase 1/2 proofs and VKs) to disk.
-    /// Diagnostic flag — off by default in server mode.
-    #[arg(long, env = "SNARK_SAVE_INTERMEDIATES")]
-    snark_save_intermediates: bool,
 }
 
 fn main() -> Result<()> {
@@ -109,7 +104,7 @@ fn main() -> Result<()> {
     let dist_dir = cli.guest_dist_dir.clone().unwrap_or_else(default_dist_dir);
     let security = SecurityLevel::default();
 
-    let pipelines = build_pipelines(&cli, &dist_dir, security)?;
+    let pipeline_mode = build_pipeline_mode(&cli, &dist_dir, security)?;
 
     let connect_timeout = Duration::from_millis(cli.http_connect_timeout_ms);
     let poll_client = reqwest::blocking::Client::builder()
@@ -146,7 +141,7 @@ fn main() -> Result<()> {
     );
 
     let prover_handle = std::thread::spawn(move || {
-        ProverWorker::new(pipelines, job_rx, result_tx).run();
+        ProverWorker::new(pipeline_mode, job_rx, result_tx).run();
     });
 
     NetworkWorker {
@@ -168,16 +163,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn build_pipelines(
+fn build_pipeline_mode(
     cli: &Cli,
     dist_dir: &std::path::Path,
     security: SecurityLevel,
-) -> Result<WorkerPipelines> {
+) -> Result<PipelineMode> {
     let snark_options = SnarkOptions {
         worker_threads: cli.snark_threads,
         trusted_setup: cli.snark_trusted_setup.clone(),
         use_zk: cli.snark_use_zk,
-        save_intermediates: cli.snark_save_intermediates,
+        // Server path uses `wrap_fri`, which never persists intermediates.
+        save_intermediates: false,
     };
 
     let build_fri = || {
@@ -187,16 +183,13 @@ fn build_pipelines(
     let build_snark =
         || SnarkPipeline::new(&snark_options).context("while building SNARK pipeline");
 
-    let pipelines = WorkerPipelines::default();
     Ok(match cli.mode {
-        ProverMode::FriOnly => pipelines.with_fri(build_fri()?),
-        ProverMode::FriSnark => pipelines.with_fri(build_fri()?).with_snark(build_snark()?),
+        ProverMode::FriOnly => PipelineMode::FriOnly(build_fri()?),
+        ProverMode::FriSnark => PipelineMode::FriSnark(build_fri()?, build_snark()?),
         ProverMode::SnarkOnly => {
             let verifier = FriVerifier::new(dist_dir, security)
                 .context("while building FRI verifier for snark-only mode")?;
-            pipelines
-                .with_fri_verifier(verifier)
-                .with_snark(build_snark()?)
+            PipelineMode::SnarkOnly(verifier, build_snark()?)
         }
     })
 }

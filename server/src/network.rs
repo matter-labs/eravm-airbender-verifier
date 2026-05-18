@@ -11,9 +11,8 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_prover_metrics::METRICS;
 
 use crate::types::{
-    CompletedArtifact, CompletedFriProof, CompletedSnarkProof, FailedJob, FriJob, ProofPhase,
-    ProverMode, SnarkInputResponse, SnarkJob, SubmitFriProofRequest, SubmitSnarkProofRequest,
-    WorkerOutcome,
+    Artifact, FriJob, Outcome, ProverMode, SnarkInputResponse, SnarkJob, SubmitFriProofRequest,
+    SubmitSnarkProofRequest,
 };
 use crate::worker::WorkerJob;
 
@@ -32,7 +31,7 @@ type RequestResult = Result<(), (Option<reqwest::StatusCode>, anyhow::Error)>;
 pub struct NetworkWorker {
     pub mode: ProverMode,
     pub job_tx: SyncSender<WorkerJob>,
-    pub result_rx: Receiver<WorkerOutcome>,
+    pub result_rx: Receiver<Outcome>,
     /// HTTP client used for polling job inputs (shorter timeout).
     pub poll_client: reqwest::blocking::Client,
     /// HTTP client used for submitting proof results (longer timeout for large SNARK payloads).
@@ -66,22 +65,8 @@ impl NetworkWorker {
             }
 
             match self.result_rx.try_recv() {
-                Ok(WorkerOutcome::Completed(CompletedArtifact::Fri(result))) => {
-                    self.submit_fri(&result);
-                    if self.phase_settles_job(ProofPhase::Fri) {
-                        METRICS.pending_jobs.dec_by(1);
-                    }
-                    did_work = true;
-                }
-                Ok(WorkerOutcome::Completed(CompletedArtifact::Snark(result))) => {
-                    self.submit_snark(&result);
-                    if self.phase_settles_job(ProofPhase::Snark) {
-                        METRICS.pending_jobs.dec_by(1);
-                    }
-                    did_work = true;
-                }
-                Ok(WorkerOutcome::Failed(failure)) => {
-                    self.handle_failed(&failure);
+                Ok(outcome) => {
+                    self.handle_outcome(outcome);
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => {}
@@ -111,28 +96,21 @@ impl NetworkWorker {
         }
     }
 
-    /// Whether an outcome at `phase` is the one that settles the fetched job's
-    /// accounting. Each fetched job must settle exactly once:
-    ///   * `fri-only` / `fri-snark`: the FRI outcome (success or failure) settles.
-    ///   * `snark-only`: the SNARK outcome settles.
-    ///
-    /// In `fri-snark`, the SNARK outcome is post-settlement and does not decrement.
-    fn phase_settles_job(&self, phase: ProofPhase) -> bool {
-        matches!(
-            (self.mode, phase),
-            (ProverMode::FriOnly | ProverMode::FriSnark, ProofPhase::Fri)
-                | (ProverMode::SnarkOnly, ProofPhase::Snark)
-        )
-    }
-
-    fn handle_failed(&self, failure: &FailedJob) {
-        error!(
-            batch_number = failure.batch_number,
-            phase = %failure.phase,
-            reason = %failure.reason,
-            "Job failed; will not be submitted",
-        );
-        if self.phase_settles_job(failure.phase) {
+    fn handle_outcome(&self, outcome: Outcome) {
+        let settles = outcome.settles_job(self.mode);
+        match outcome.result {
+            Ok(Artifact::Fri { proof }) => self.submit_fri(outcome.batch_number, &proof),
+            Ok(Artifact::Snark { proof, vk }) => {
+                self.submit_snark(outcome.batch_number, &proof, &vk)
+            }
+            Err(reason) => error!(
+                batch_number = outcome.batch_number,
+                kind = %outcome.kind,
+                %reason,
+                "Job failed; will not be submitted",
+            ),
+        }
+        if settles {
             METRICS.pending_jobs.dec_by(1);
         }
     }
@@ -207,12 +185,11 @@ impl NetworkWorker {
 
     // ----- submit --------------------------------------------------------
 
-    fn submit_fri(&self, result: &CompletedFriProof) {
-        let batch_number = result.batch_number;
+    fn submit_fri(&self, batch_number: u32, proof: &[u8]) {
         self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
-                proof_bytes = result.proof_bytes.len(),
+                proof_bytes = proof.len(),
                 attempt,
                 attempts,
                 "Submitting FRI proof"
@@ -220,19 +197,18 @@ impl NetworkWorker {
             let payload = SubmitFriProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                proof: &result.proof_bytes,
+                proof,
             };
             self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
         });
     }
 
-    fn submit_snark(&self, result: &CompletedSnarkProof) {
-        let batch_number = result.batch_number;
+    fn submit_snark(&self, batch_number: u32, proof: &[u8], vk: &[u8]) {
         self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
-                snark_proof_bytes = result.snark_proof_bytes.len(),
-                snark_vk_bytes = result.snark_vk_bytes.len(),
+                snark_proof_bytes = proof.len(),
+                snark_vk_bytes = vk.len(),
                 attempt,
                 attempts,
                 "Submitting SNARK proof"
@@ -240,8 +216,8 @@ impl NetworkWorker {
             let payload = SubmitSnarkProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                snark_proof: &result.snark_proof_bytes,
-                snark_vk: &result.snark_vk_bytes,
+                snark_proof: proof,
+                snark_vk: vk,
             };
             self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
         });
