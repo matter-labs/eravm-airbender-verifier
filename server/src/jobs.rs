@@ -13,7 +13,9 @@ use crate::types::{ProofKind, ProofOutcome, ProverMode, ProverResult, WorkerJob}
 /// Orchestrates the network side of the prover: fetches jobs from the
 /// [`JobServerClient`], forwards them to the prover thread, and submits
 /// completed proofs through the client. Uses a one-slot pending buffer so a
-/// job can be pre-fetched while the prover is busy.
+/// server-fetched FRI job can be pre-fetched while the prover is busy. In
+/// `fri-snark` mode, a finished FRI produces a local SNARK follow-up that
+/// lives in its own slot so it never clobbers the prefetched FRI.
 pub struct JobWorker {
     mode: ProverMode,
     client: JobServerClient,
@@ -22,6 +24,7 @@ pub struct JobWorker {
     poll_interval: Duration,
     shutdown: Arc<AtomicBool>,
     pending_job: Option<WorkerJob>,
+    snark_followup: Option<WorkerJob>,
 }
 
 impl JobWorker {
@@ -41,6 +44,7 @@ impl JobWorker {
             poll_interval,
             shutdown,
             pending_job: None,
+            snark_followup: None,
         }
     }
 
@@ -50,6 +54,17 @@ impl JobWorker {
             let mut did_work = false;
 
             if !shutting_down {
+                // Drain the local SNARK follow-up before the prefetched FRI:
+                // it represents work whose FRI half is already settled, and
+                // keeping the order stable means a fresh prefetched FRI can
+                // sit safely in `pending_job` until the prover is free again.
+                if let Some(job) = self.snark_followup.take() {
+                    match self.job_tx.try_send(job) {
+                        Ok(()) => did_work = true,
+                        Err(TrySendError::Full(job)) => self.snark_followup = Some(job),
+                        Err(TrySendError::Disconnected(_)) => break,
+                    }
+                }
                 if let Some(job) = self.pending_job.take() {
                     match self.job_tx.try_send(job) {
                         Ok(()) => did_work = true,
@@ -121,7 +136,10 @@ impl JobWorker {
                 let submit = self.client.submit_fri(batch_number, proof.as_ref());
                 // In `fri-snark` mode, the SNARK job needs the FRI proof, so we can set the new pending job immediately instead of waiting for the next fetch cycle. The in-memory `Proof` is fed directly to the SNARK pipeline without an extra encode/decode round trip.
                 if self.mode == ProverMode::FriSnark {
-                    self.pending_job = Some(WorkerJob::Snark {
+                    // FRI jobs are processed serially, so the previous SNARK
+                    // follow-up must have been drained before this one lands.
+                    debug_assert!(self.snark_followup.is_none());
+                    self.snark_followup = Some(WorkerJob::Snark {
                         batch_number,
                         proof,
                     });
