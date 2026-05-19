@@ -188,10 +188,31 @@ impl L2PubdataValidator {
     }
 }
 
-#[derive(Copy, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Debug, Clone, PartialEq, Serialize)]
 pub struct PubdataParams {
     pubdata_validator: L2PubdataValidator,
     pubdata_type: PubdataType,
+}
+
+// Route `Deserialize` through `PubdataParams::new` so untrusted wire payloads
+// can't construct the `CommitmentScheme(None)` shape `new` rejects. Matches
+// upstream zksync-era's behavior (see `core/lib/basic_types/src/commitment.rs`).
+impl<'de> Deserialize<'de> for PubdataParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Repr {
+            pubdata_validator: L2PubdataValidator,
+            pubdata_type: PubdataType,
+        }
+        let Repr {
+            pubdata_validator,
+            pubdata_type,
+        } = Repr::deserialize(deserializer)?;
+        Self::new(pubdata_validator, pubdata_type).map_err(serde::de::Error::custom)
+    }
 }
 
 impl PubdataParams {
@@ -231,5 +252,43 @@ impl PubdataParams {
             pubdata_validator: L2PubdataValidator::Address(Address::zero()),
             pubdata_type: PubdataType::Rollup,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Deserialize` must route through `PubdataParams::new` so untrusted wire
+    /// payloads cannot construct the `CommitmentScheme(None)` shape that
+    /// `new()` itself rejects.
+    #[test]
+    fn pubdata_params_deserialize_rejects_commitment_scheme_none() {
+        let invalid = serde_json::json!({
+            "pubdata_validator": { "CommitmentScheme": "None" },
+            "pubdata_type": "Rollup",
+        });
+        let err = serde_json::from_value::<PubdataParams>(invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("None"),
+            "expected None-rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn pubdata_params_serde_roundtrip_json() {
+        let params = PubdataParams::genesis();
+        let json = serde_json::to_string(&params).unwrap();
+        let back: PubdataParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, params);
+    }
+
+    #[test]
+    fn pubdata_params_serde_roundtrip_bincode() {
+        let params = PubdataParams::pre_gateway();
+        let bytes = bincode::serde::encode_to_vec(params, bincode::config::standard()).unwrap();
+        let (back, _): (PubdataParams, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(back, params);
     }
 }
