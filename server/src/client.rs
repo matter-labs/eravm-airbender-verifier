@@ -67,10 +67,14 @@ impl JobServerClient {
         else {
             return Ok(None);
         };
-        let AirbenderVerifierInput::V1(ref v1) = input else {
-            anyhow::bail!("expected AirbenderVerifierInput::V1");
-        };
-        let batch_number = v1.vm_run_data.l1_batch_number.0;
+        // The verifier needs a V2 payload; V1 corpus upgrades transparently
+        // via the wire adapter. Metadata is read from the upgraded payload
+        // but the original `input` is what the guest encoder consumes.
+        let v2 = input
+            .clone()
+            .into_v2()
+            .context("proof generation data has no payload (V0)")?;
+        let batch_number = v2.vm_run_data.l1_batch_number.0;
         let mut inputs = Inputs::new();
         inputs
             .push(&input)
