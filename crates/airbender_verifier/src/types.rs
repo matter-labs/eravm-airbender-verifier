@@ -9,8 +9,6 @@ use zksync_types::{
 };
 use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
-use crate::v1_compat::{L1BatchEnvV1, PubdataParamsV1};
-
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
 const HASH_LEN: usize = 32;
@@ -92,58 +90,30 @@ impl Default for CommitmentInput {
 /// the payload changes. `V0` is reserved (no payload) and pins later
 /// discriminants in place.
 ///
-/// `V1` is the pre-v31 layout (see [`crate::v1_compat`]) kept solely so the
-/// existing on-disk corpus still loads. Verification goes through V2:
-/// decoded V1 inputs are upgraded with [`V1AirbenderVerifierInput::into_v2`]
-/// at the first opportunity.
+/// `V1` and `V2` carry the same canonical payload — only the wire layout
+/// differs. `V1` deserializes the pre-v31 bincode shape via
+/// [`crate::v1_compat`], filling `interop_fee` and `settlement_layer` with
+/// defaults; `V2` uses the canonical post-v31 layout. `into_v2` strips the
+/// version tag.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
     V0,
-    V1(V1AirbenderVerifierInput),
+    V1(#[serde(with = "crate::v1_compat")] V2AirbenderVerifierInput),
     V2(V2AirbenderVerifierInput),
 }
 
 impl AirbenderVerifierInput {
-    /// Extract a V2 payload, upgrading V1 in place. Errors on the reserved
-    /// `V0` marker.
+    /// Strip the wire-version tag. Errors on the reserved `V0` marker.
     pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
             Self::V0 => anyhow::bail!("AirbenderVerifierInput::V0 has no payload"),
-            Self::V1(v1) => Ok(v1.into_v2()),
-            Self::V2(v2) => Ok(v2),
+            Self::V1(payload) | Self::V2(payload) => Ok(payload),
         }
     }
 }
 
-/// Pre-v31 verifier input payload. Snapshotted in [`crate::v1_compat`] so the
-/// on-disk corpus keeps decoding; verification always runs against V2.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1AirbenderVerifierInput {
-    pub vm_run_data: VMRunWitnessInputData,
-    pub merkle_paths: WitnessInputMerklePaths,
-    pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-    pub l1_batch_env: L1BatchEnvV1,
-    pub system_env: SystemEnv,
-    pub pubdata_params: PubdataParamsV1,
-    pub commitment_input: Option<CommitmentInput>,
-}
-
-impl V1AirbenderVerifierInput {
-    pub fn into_v2(self) -> V2AirbenderVerifierInput {
-        V2AirbenderVerifierInput {
-            vm_run_data: self.vm_run_data,
-            merkle_paths: self.merkle_paths,
-            l2_blocks_execution_data: self.l2_blocks_execution_data,
-            l1_batch_env: self.l1_batch_env.upgrade(),
-            system_env: self.system_env,
-            pubdata_params: self.pubdata_params.upgrade(),
-            commitment_input: self.commitment_input,
-        }
-    }
-}
-
-/// Post-v31 verifier input payload.
+/// Canonical verifier input payload.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
