@@ -770,11 +770,7 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{
-        AirbenderVerifierInput, V1AirbenderVerifierInput, V2AirbenderVerifierInput,
-        VMRunWitnessInputData,
-    };
-    use crate::v1_compat::{L1BatchEnvV1, PubdataParamsV1};
+    use crate::types::{AirbenderVerifierInput, V2AirbenderVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -994,11 +990,10 @@ mod tests {
         }
     }
 
-    /// Post-medium-interop fixture. The verifier checks
-    /// `protocol_version.is_pre_medium_interop()`, so V2 must carry a
-    /// `>= Version31` version to exercise the `CommitmentScheme` path.
-    fn sample_v2() -> V2AirbenderVerifierInput {
-        let version = ProtocolVersionId::Version31;
+    fn sample_payload(
+        version: ProtocolVersionId,
+        pubdata_validator: L2PubdataValidator,
+    ) -> V2AirbenderVerifierInput {
         V2AirbenderVerifierInput {
             vm_run_data: sample_vm_run_data(version),
             merkle_paths: WitnessInputMerklePaths::new(0),
@@ -1012,47 +1007,30 @@ mod tests {
                 fee_account: Default::default(),
                 enforced_base_fee: None,
                 first_l2_block: sample_first_l2_block(),
-                settlement_layer: SettlementLayer::for_tests(),
+                settlement_layer: SettlementLayer::default(),
             },
             system_env: sample_system_env(version),
-            pubdata_params: PubdataParams::new(
-                L2PubdataValidator::CommitmentScheme(
-                    L2DACommitmentScheme::BlobsAndPubdataKeccak256,
-                ),
-                Default::default(),
-            )
-            .unwrap(),
+            pubdata_params: PubdataParams::new(pubdata_validator, Default::default()).unwrap(),
             commitment_input: None,
         }
     }
 
-    /// Pre-medium-interop fixture mirroring the on-disk corpus shape: pre-v31
-    /// protocol version + a zero `l2_da_validator_address`. Pre-gateway batches
-    /// commonly carried `Address::zero()`, which the bootloader still reads via
-    /// `l2_da_validator()` — a regression in V1→V2 upgrade (e.g. mapping zero
-    /// to `CommitmentScheme`) would panic on `expect("L2 DA validator must be set")`.
-    fn sample_v1() -> V1AirbenderVerifierInput {
-        let version = ProtocolVersionId::Version29;
-        V1AirbenderVerifierInput {
-            vm_run_data: sample_vm_run_data(version),
-            merkle_paths: WitnessInputMerklePaths::new(0),
-            l2_blocks_execution_data: vec![],
-            l1_batch_env: L1BatchEnvV1 {
-                previous_batch_hash: Some(H256([1; 32])),
-                number: Default::default(),
-                timestamp: 0,
-                fee_input: Default::default(),
-                fee_account: Default::default(),
-                enforced_base_fee: None,
-                first_l2_block: sample_first_l2_block(),
-            },
-            system_env: sample_system_env(version),
-            pubdata_params: PubdataParamsV1 {
-                l2_da_validator_address: Address::zero(),
-                pubdata_type: Default::default(),
-            },
-            commitment_input: None,
-        }
+    /// V2 wire fixture: post-v31 protocol with the `CommitmentScheme` validator.
+    fn sample_v2() -> V2AirbenderVerifierInput {
+        sample_payload(
+            ProtocolVersionId::Version31,
+            L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
+        )
+    }
+
+    /// V1 wire fixture: pre-v31 protocol with a zero `Address` validator —
+    /// the exact pre-gateway shape that exercises the
+    /// `l2_da_validator().expect(...)` path post-decode.
+    fn sample_v1() -> V2AirbenderVerifierInput {
+        sample_payload(
+            ProtocolVersionId::Version29,
+            L2PubdataValidator::Address(Address::zero()),
+        )
     }
 
     fn bincode_roundtrip(avi: AirbenderVerifierInput) {
@@ -1086,41 +1064,32 @@ mod tests {
     }
 
     /// Pins the V1 bincode wire. The on-disk corpus in
-    /// `testdata/era_mainnet_batches/` is encoded as `V1(...)` with the
-    /// pre-v31 `L1BatchEnv` / `PubdataParams` shapes; if this breaks, the
+    /// `testdata/era_mainnet_batches/` rides `V1(...)`; if this breaks, the
     /// corpus stops loading.
     #[test]
     fn test_serialization_roundtrip_v1() {
         bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
     }
 
-    /// V1 inputs upgrade to V2 with `interop_fee=0`, the default
-    /// `settlement_layer`, and the validator address wrapped in
-    /// `L2PubdataValidator::Address` — including when the address is zero,
-    /// which is the pre-gateway corpus default and the path the bootloader's
-    /// `l2_da_validator().expect(...)` actually exercises.
+    /// V1 wire is lossy in one direction: post-v31-only state on a V2 payload
+    /// (non-default `interop_fee` / `settlement_layer`, `CommitmentScheme`
+    /// validator) cannot be encoded — V1 only exists to consume legacy bytes.
     #[test]
-    fn test_v1_upgrade_to_v2() {
-        let v1 = sample_v1();
-        let upgraded = v1.clone().into_v2();
+    fn test_v1_wire_rejects_post_v31_state() {
+        let mut payload = sample_v1();
+        payload.l1_batch_env.interop_fee = U256::from(1);
+        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
 
-        assert_eq!(upgraded.l1_batch_env.interop_fee, U256::zero());
-        assert_eq!(
-            upgraded.l1_batch_env.settlement_layer,
-            SettlementLayer::default()
-        );
-        assert_eq!(upgraded.l1_batch_env.number, v1.l1_batch_env.number);
-        assert_eq!(
-            upgraded.pubdata_params.pubdata_validator(),
-            L2PubdataValidator::Address(v1.pubdata_params.l2_da_validator_address),
-        );
-        assert_eq!(
-            upgraded.pubdata_params.pubdata_type(),
-            v1.pubdata_params.pubdata_type
-        );
+        let mut payload = sample_v1();
+        payload.l1_batch_env.settlement_layer = SettlementLayer::for_tests();
+        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
 
-        // Dispatch through the enum: V1 takes the same path, V0 bails.
-        assert_eq!(AirbenderVerifierInput::V1(v1).into_v2().unwrap(), upgraded);
+        let payload = sample_v2(); // CommitmentScheme validator
+        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+    }
+
+    #[test]
+    fn test_into_v2_rejects_v0() {
         assert!(AirbenderVerifierInput::V0.into_v2().is_err());
     }
 
