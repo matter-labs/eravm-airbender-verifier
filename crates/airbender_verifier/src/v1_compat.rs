@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 use zksync_types::{
-    commitment::{L2DACommitmentScheme, L2PubdataValidator, PubdataParams, PubdataType},
+    commitment::{L2PubdataValidator, PubdataParams, PubdataType},
     fee_model::BatchFeeInput,
     settlement::SettlementLayer,
     Address, L1BatchNumber, H256, U256,
@@ -24,16 +24,16 @@ pub struct PubdataParamsV1 {
 }
 
 impl PubdataParamsV1 {
+    /// Wrap the address in `L2PubdataValidator::Address`, preserving the zero
+    /// address. Pre-medium-interop dispatch reads back through
+    /// `l2_da_validator()`, so the variant must be `Address` regardless of
+    /// the underlying value.
     pub fn upgrade(self) -> PubdataParams {
-        // Pre-gateway corpus carries the zero address; map it to the v31
-        // genesis default rather than wrapping a meaningless `Address::zero()`.
-        let validator = if self.l2_da_validator_address == Address::zero() {
-            L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256)
-        } else {
-            L2PubdataValidator::Address(self.l2_da_validator_address)
-        };
-        PubdataParams::new(validator, self.pubdata_type)
-            .expect("upgrade never yields CommitmentScheme(None)")
+        PubdataParams::new(
+            L2PubdataValidator::Address(self.l2_da_validator_address),
+            self.pubdata_type,
+        )
+        .expect("Address variant is always a valid PubdataParams")
     }
 }
 
