@@ -989,7 +989,13 @@ mod tests {
                 default_validation_computational_gas_limit: 0,
                 chain_id: Default::default(),
             },
-            pubdata_params: Default::default(),
+            pubdata_params: zksync_types::commitment::PubdataParams::new(
+                zksync_types::commitment::L2PubdataValidator::CommitmentScheme(
+                    zksync_types::commitment::L2DACommitmentScheme::BlobsAndPubdataKeccak256,
+                ),
+                Default::default(),
+            )
+            .unwrap(),
             commitment_input: None,
         };
         let avi = AirbenderVerifierInput::V1(v1);
