@@ -124,7 +124,8 @@ mod tests {
         let gw = serde_json::to_string(&SettlementLayer::Gateway(SLChainId(7))).unwrap();
         assert_eq!(gw, r#"{"type":"Gateway","chain_id":7}"#);
 
-        let parsed: SettlementLayer = serde_json::from_str(r#"{"type":"L1","chain_id":42}"#).unwrap();
+        let parsed: SettlementLayer =
+            serde_json::from_str(r#"{"type":"L1","chain_id":42}"#).unwrap();
         assert_eq!(parsed, SettlementLayer::L1(SLChainId(42)));
     }
 

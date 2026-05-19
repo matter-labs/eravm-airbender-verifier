@@ -227,7 +227,7 @@ fn bootloader_memory_input(
             ethabi::Token::Address(
                 pubdata_builder
                     .l2_da_validator()
-                    .expect("For pre-medium-interop, L2 DA validator must be set"),
+                    .expect("For pre-interop, L2 DA validator must be set"),
             ),
             ethabi::Token::Bytes(operator_input),
         ])
@@ -236,7 +236,7 @@ fn bootloader_memory_input(
             ethabi::Token::Uint(
                 (pubdata_builder
                     .l2_da_commitment_scheme()
-                    .expect("For post-medium-interop, L2 DA commitment scheme must be set")
+                    .expect("For post-interop, L2 DA commitment scheme must be set")
                     as u64)
                     .into(),
             ),
