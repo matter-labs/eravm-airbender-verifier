@@ -56,7 +56,9 @@ pub fn get_batch_base_fee(l1_batch_env: &L1BatchEnv, vm_version: VmVersion) -> u
         | VmVersion::VmEvmEmulator
         | VmVersion::VmEcPrecompiles
         | VmVersion::VmInterop
-        | VmVersion::VmMediumInterop => crate::vm_latest::utils::fee::get_batch_base_fee(l1_batch_env),
+        | VmVersion::VmMediumInterop => {
+            crate::vm_latest::utils::fee::get_batch_base_fee(l1_batch_env)
+        }
         _ => panic!("Unsupported"),
     }
 }
@@ -144,7 +146,9 @@ pub fn derive_overhead(
         | VmVersion::VmEvmEmulator
         | VmVersion::VmEcPrecompiles
         | VmVersion::VmInterop
-        | VmVersion::VmMediumInterop => crate::vm_latest::utils::overhead::derive_overhead(encoded_len),
+        | VmVersion::VmMediumInterop => {
+            crate::vm_latest::utils::overhead::derive_overhead(encoded_len)
+        }
         _ => panic!("Unsupported"),
     }
 }
