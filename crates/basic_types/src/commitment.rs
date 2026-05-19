@@ -188,15 +188,17 @@ impl L2PubdataValidator {
     }
 }
 
+// `Serialize` is derived; `Deserialize` is hand-rolled below to route through
+// `PubdataParams::new` so the wire layer also enforces the invariant that
+// `CommitmentScheme(None)` is rejected. Field names and order must stay in
+// lockstep with the `Repr` helper below — a reorder here will break wire
+// compatibility without breaking the bincode round-trip test.
 #[derive(Copy, Debug, Clone, PartialEq, Serialize)]
 pub struct PubdataParams {
     pubdata_validator: L2PubdataValidator,
     pubdata_type: PubdataType,
 }
 
-// Route `Deserialize` through `PubdataParams::new` so untrusted wire payloads
-// can't construct the `CommitmentScheme(None)` shape `new` rejects. Matches
-// upstream zksync-era's behavior (see `core/lib/basic_types/src/commitment.rs`).
 impl<'de> Deserialize<'de> for PubdataParams {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

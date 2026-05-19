@@ -27,7 +27,8 @@ pub struct L1BatchEnv {
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
-    /// Introduced in v31. No `#[serde(default)]` — matches upstream's
-    /// strictness: a missing field on the JSON wire is an error.
+    /// Introduced in v31. A missing `settlement_layer` field on the JSON wire
+    /// is a hard error — pair the `#[serde(default)]` on `interop_fee` above
+    /// against this strictness deliberately.
     pub settlement_layer: SettlementLayer,
 }
