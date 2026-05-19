@@ -37,7 +37,7 @@ use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
 };
-use zksync_airbender_verifier::types::{AirbenderVerifierInput, V1AirbenderVerifierInput};
+use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -59,9 +59,9 @@ type CapturedFriProof = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
 #[derive(Clone)]
 struct TestServerState {
-    /// Stored as the bare V1 payload so the test mock matches the upstream
+    /// Stored as the bare V2 payload so the test mock matches the upstream
     /// zksync-era wire format (a flat struct, no version enum wrapper).
-    verifier_input: Arc<V1AirbenderVerifierInput>,
+    verifier_input: Arc<V2AirbenderVerifierInput>,
     /// One-shot latch for `/airbender/proof_inputs`: serve the job once, then 204.
     fri_input_served: Arc<AtomicBool>,
     /// Latest FRI submission captured by `/airbender/submit_proofs`. Read by
@@ -77,7 +77,7 @@ struct TestServerState {
 struct BatchTestInput {
     number: u32,
     filename: String,
-    verifier_input: V1AirbenderVerifierInput,
+    verifier_input: V2AirbenderVerifierInput,
     expected_public_input: [u32; 8],
 }
 
@@ -666,13 +666,15 @@ fn load_batch_and_expected_public_input(filename: &str) -> BatchTestInput {
         number: number.into(),
         path: batch_path,
     };
-    let loaded = load_batch(&batch_input).expect("failed to load batch");
-    let AirbenderVerifierInput::V1(v1) = loaded else {
-        panic!("expected AirbenderVerifierInput::V1 from disk");
-    };
-    let expected_public_input = v1
-        .clone()
+    // The era-mainnet corpus is V1 bincode; `into_v2()` upgrades it through
+    // the same adapter the production decode path uses. The mock HTTP server
+    // then serves the flat V2 payload that zksync-era puts on the wire.
+    let v2 = load_batch(&batch_input)
+        .expect("failed to load batch")
         .into_v2()
+        .expect("expected V1 or V2 payload from disk");
+    let expected_public_input = v2
+        .clone()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
@@ -682,7 +684,7 @@ fn load_batch_and_expected_public_input(filename: &str) -> BatchTestInput {
     BatchTestInput {
         number,
         filename: filename.to_owned(),
-        verifier_input: v1,
+        verifier_input: v2,
         expected_public_input,
     }
 }
