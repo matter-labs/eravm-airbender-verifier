@@ -9,6 +9,8 @@ use zksync_types::{
 };
 use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
+use crate::v1_compat::{L1BatchEnvV1, PubdataParamsV1};
+
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
 const HASH_LEN: usize = 32;
@@ -87,18 +89,13 @@ impl Default for CommitmentInput {
 ///
 /// The bincode payload begins with a variant tag so the on-disk corpus and
 /// the host↔guest channel can evolve without rewriting the format each time
-/// the payload changes.
+/// the payload changes. `V0` is reserved (no payload) and pins later
+/// discriminants in place.
 ///
-/// `V0` is a placeholder with no payload. It pins later discriminants so
-/// removing or shuffling variants does not silently change the encoding of
-/// every existing dump.
-///
-/// - `V1` matches the pre-v31 bincode shape and exists solely for backward
-///   compatibility with the on-disk corpus in
-///   `testdata/era_mainnet_batches/`. Decoded V1 inputs are upgraded to V2
-///   via `V1AirbenderVerifierInput::into_v2` before verification.
-/// - `V2` carries the post-v31 wire format used by the prover server and
-///   by all newly produced inputs.
+/// `V1` is the pre-v31 layout (see [`crate::v1_compat`]) kept solely so the
+/// existing on-disk corpus still loads. Verification goes through V2:
+/// decoded V1 inputs are upgraded with [`V1AirbenderVerifierInput::into_v2`]
+/// at the first opportunity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
@@ -112,34 +109,27 @@ impl AirbenderVerifierInput {
     /// `V0` marker.
     pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
-            AirbenderVerifierInput::V0 => {
-                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1 or V2")
-            }
-            AirbenderVerifierInput::V1(v1) => Ok(v1.into_v2()),
-            AirbenderVerifierInput::V2(v2) => Ok(v2),
+            Self::V0 => anyhow::bail!("AirbenderVerifierInput::V0 has no payload"),
+            Self::V1(v1) => Ok(v1.into_v2()),
+            Self::V2(v2) => Ok(v2),
         }
     }
 }
 
-/// Pre-v31 verifier input payload, kept for backward compatibility with the
-/// on-disk corpus. Field types snapshot the wire shape that existed before
-/// the v31 refactor of `L1BatchEnv` and `PubdataParams` — see
-/// [`crate::v1_compat`]. New inputs should be encoded as `V2`.
+/// Pre-v31 verifier input payload. Snapshotted in [`crate::v1_compat`] so the
+/// on-disk corpus keeps decoding; verification always runs against V2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct V1AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
-    pub l1_batch_env: crate::v1_compat::L1BatchEnvV1,
+    pub l1_batch_env: L1BatchEnvV1,
     pub system_env: SystemEnv,
-    pub pubdata_params: crate::v1_compat::PubdataParamsV1,
+    pub pubdata_params: PubdataParamsV1,
     pub commitment_input: Option<CommitmentInput>,
 }
 
 impl V1AirbenderVerifierInput {
-    /// Upgrade to the post-v31 payload shape, filling the new `interop_fee` and
-    /// `settlement_layer` fields with the implicit values a pre-v31 chain
-    /// would have carried (see [`crate::v1_compat`]).
     pub fn into_v2(self) -> V2AirbenderVerifierInput {
         V2AirbenderVerifierInput {
             vm_run_data: self.vm_run_data,
