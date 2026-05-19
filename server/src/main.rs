@@ -174,7 +174,7 @@ fn build_prover(
         worker_threads: cli.snark_threads,
         trusted_setup: cli.snark_trusted_setup.clone(),
         use_zk: cli.snark_use_zk,
-        // Server path uses `wrap_snark`, which never persists intermediates.
+        // Server path drives the wrapper directly and never persists intermediates.
         save_intermediates: false,
     };
 

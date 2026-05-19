@@ -61,7 +61,9 @@ impl JobWorker {
 
             match self.result_rx.try_recv() {
                 Ok(outcome) => {
-                    self.handle_outcome(outcome);
+                    if let Err(err) = self.handle_prover_result(outcome) {
+                        error!(?err, "Failed to handle prover outcome");
+                    }
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => {}
@@ -98,7 +100,7 @@ impl JobWorker {
         }
     }
 
-    fn handle_outcome(&mut self, outcome: ProverResult) {
+    fn handle_prover_result(&mut self, outcome: ProverResult) -> Result<()> {
         let kind = match &outcome {
             Ok(o) => o.kind(),
             Err(f) => f.kind,
@@ -108,12 +110,15 @@ impl JobWorker {
             (ProverMode::FriOnly | ProverMode::FriSnark, ProofKind::Fri)
                 | (ProverMode::SnarkOnly, ProofKind::Snark)
         );
-        match outcome {
+        if settles {
+            METRICS.pending_jobs.dec_by(1);
+        }
+        let batch_number = match outcome {
             Ok(ProofOutcome::Fri {
                 batch_number,
                 proof,
             }) => {
-                self.client.submit_fri(batch_number, proof.as_ref());
+                let submit = self.client.submit_fri(batch_number, proof.as_ref());
                 // In `fri-snark` mode, the SNARK job needs the FRI proof, so we can set the new pending job immediately instead of waiting for the next fetch cycle. The in-memory `Proof` is fed directly to the SNARK pipeline without an extra encode/decode round trip.
                 if self.mode == ProverMode::FriSnark {
                     self.pending_job = Some(WorkerJob::Snark {
@@ -121,20 +126,26 @@ impl JobWorker {
                         proof,
                     });
                 }
+                submit?;
+                batch_number
             }
             Ok(ProofOutcome::Snark {
                 batch_number,
                 proof,
-            }) => self.client.submit_snark(batch_number, proof.as_ref()),
-            Err(failure) => error!(
-                batch_number = failure.batch_number,
-                kind = %failure.kind,
-                reason = %failure.reason,
-                "Job failed; will not be submitted",
-            ),
-        }
-        if settles {
-            METRICS.pending_jobs.dec_by(1);
-        }
+            }) => {
+                self.client.submit_snark(batch_number, proof.as_ref())?;
+                batch_number
+            }
+            Err(failure) => {
+                anyhow::bail!(
+                    "prover job for batch {} ({}) failed: {}",
+                    failure.batch_number,
+                    failure.kind,
+                    failure.reason,
+                );
+            }
+        };
+        info!(batch_number, kind = %kind, "Successfully submitted proof");
+        Ok(())
     }
 }

@@ -1809,7 +1809,6 @@ dependencies = [
  "zksync_cli_utils",
  "zksync_crypto_primitives",
  "zksync_multivm",
- "zksync_prover_metrics",
  "zksync_types",
 ]
 

@@ -1,13 +1,10 @@
-use crate::fri::{record_proof_metrics, RawFriProof};
-use airbender_host::Proof;
+use crate::fri::RawFriProof;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 use tracing::info;
 use zkos_wrapper::{
     serialize_to_file, SnarkWrapper, SnarkWrapperConfig, SnarkWrapperProof, SnarkWrapperVK,
 };
-use zksync_prover_metrics::{ProofStatus, ProofType};
 
 // Mirror `zkos-wrapper`'s artifact names so operators can switch between the
 // standalone wrapper CLI and the integrated host without translating outputs.
@@ -70,33 +67,11 @@ impl SnarkPipeline {
         })
     }
 
-    /// Wraps a `Proof` envelope into a SNARK. The wrapper's phase 1 proves
-    /// (and then verifies) the FRI proof inside the recursion circuit, so the
-    /// envelope does not need a separate pre-flight verification step.
-    pub fn wrap_snark(&mut self, batch_number: u32, proof: Proof) -> Result<SnarkWrapperProof> {
-        let raw_proof = match proof {
-            Proof::Real(real) => real.into_inner(),
-            Proof::Dev(_) => {
-                anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
-            }
-        };
-        info!(batch_number, "Starting SNARK wrapping...");
-        let started_at = Instant::now();
-        let result = self.run_wrap_pipeline(raw_proof);
-
-        let status = if result.is_ok() {
-            ProofStatus::Success
-        } else {
-            ProofStatus::Failure
-        };
-        record_proof_metrics(batch_number, ProofType::Snark, status, started_at.elapsed());
-
-        let snark_proof = result.map_err(|err| err.context("SNARK wrap failed"))?;
-        info!(batch_number, "SNARK wrap complete");
-        Ok(snark_proof)
-    }
-
-    fn run_wrap_pipeline(&mut self, raw_proof: RawFriProof) -> Result<SnarkWrapperProof> {
+    /// Runs the three-phase wrapping pipeline (risc wrapper → compression →
+    /// SNARK) on a raw FRI proof. The phase-1 step proves and then verifies
+    /// the FRI proof inside the recursion circuit, so callers don't need a
+    /// separate pre-flight verification step.
+    pub fn run_wrap_pipeline(&mut self, raw_proof: RawFriProof) -> Result<SnarkWrapperProof> {
         let risc_wrapper_proof = self
             .wrapper
             .prove_risc_wrapper(raw_proof)

@@ -1,7 +1,10 @@
 use std::sync::mpsc::{Receiver, SendError, SyncSender};
+use std::time::{Duration, Instant};
 
+use airbender_host::Proof;
 use anyhow::Result;
 use eravm_prover_host::{FriPipeline, SnarkPipeline};
+use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
 use crate::types::{FailedProof, ProofKind, ProofOutcome, ProverResult, WorkerJob};
 
@@ -71,30 +74,82 @@ impl ProverWorker {
             WorkerJob::Fri {
                 batch_number,
                 input_words,
-            } => self
-                .fri
-                .as_mut()
-                .unwrap()
-                .prove_fri(batch_number, &input_words)
-                .map(|proof| ProofOutcome::Fri {
+            } => {
+                let started = Instant::now();
+                let result = self
+                    .fri
+                    .as_mut()
+                    .unwrap()
+                    .prove_input(batch_number as u64, &input_words)
+                    .map(|out| out.proof);
+                record_proof_metrics(
                     batch_number,
-                    proof: Box::new(proof),
-                })
-                .map_err(|err| FailedProof::new(batch_number, ProofKind::Fri, err)),
+                    ProofType::Fri,
+                    status_of(&result),
+                    started.elapsed(),
+                );
+                result
+                    .map(|proof| ProofOutcome::Fri {
+                        batch_number,
+                        proof: Box::new(proof),
+                    })
+                    .map_err(|err| FailedProof::new(batch_number, ProofKind::Fri, err))
+            }
             WorkerJob::Snark {
                 batch_number,
                 proof,
-            } => self
-                .snark
-                .as_mut()
-                .unwrap()
-                .wrap_snark(batch_number, *proof)
-                .map(|proof| ProofOutcome::Snark {
-                    batch_number,
-                    proof: Box::new(proof),
-                })
-                .map_err(|err| FailedProof::new(batch_number, ProofKind::Snark, err)),
+            } => match into_raw_fri_proof(*proof) {
+                Ok(raw_proof) => {
+                    let started = Instant::now();
+                    let result = self.snark.as_mut().unwrap().run_wrap_pipeline(raw_proof);
+                    record_proof_metrics(
+                        batch_number,
+                        ProofType::Snark,
+                        status_of(&result),
+                        started.elapsed(),
+                    );
+                    result
+                        .map(|proof| ProofOutcome::Snark {
+                            batch_number,
+                            proof: Box::new(proof),
+                        })
+                        .map_err(|err| FailedProof::new(batch_number, ProofKind::Snark, err))
+                }
+                Err(err) => Err(FailedProof::new(batch_number, ProofKind::Snark, err)),
+            },
         };
         self.result_tx.send(result)
     }
+}
+
+fn into_raw_fri_proof(proof: Proof) -> Result<eravm_prover_host::RawFriProof> {
+    match proof {
+        Proof::Real(real) => Ok(real.into_inner()),
+        Proof::Dev(_) => {
+            anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
+        }
+    }
+}
+
+fn status_of<T>(result: &Result<T>) -> ProofStatus {
+    if result.is_ok() {
+        ProofStatus::Success
+    } else {
+        ProofStatus::Failure
+    }
+}
+
+fn record_proof_metrics(
+    batch_number: u32,
+    proof_type: ProofType,
+    status: ProofStatus,
+    elapsed: Duration,
+) {
+    let labels = ProofLabels {
+        batch_number,
+        proof_type,
+        status,
+    };
+    METRICS.proof_duration[&labels].observe(elapsed);
+    METRICS.proof_count[&labels].inc();
 }

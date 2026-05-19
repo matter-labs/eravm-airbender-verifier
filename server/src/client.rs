@@ -4,7 +4,7 @@ use airbender_host::{Inputs, Proof};
 use anyhow::{Context, Result};
 use eravm_prover_host::SnarkWrapperProof;
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
 use crate::types::{SubmitFriProofRequest, SubmitSnarkProofRequest, WorkerJob};
@@ -104,18 +104,9 @@ impl JobServerClient {
         }))
     }
 
-    pub fn submit_fri(&self, batch_number: u32, proof: &Proof) {
-        let proof_bytes = match bincode::serde::encode_to_vec(proof, bincode::config::standard()) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                error!(
-                    batch_number,
-                    ?err,
-                    "Failed to bincode-encode FRI proof; skipping submission",
-                );
-                return;
-            }
-        };
+    pub fn submit_fri(&self, batch_number: u32, proof: &Proof) -> Result<()> {
+        let proof_bytes = bincode::serde::encode_to_vec(proof, bincode::config::standard())
+            .context("failed to bincode-encode FRI proof")?;
         self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
@@ -130,21 +121,11 @@ impl JobServerClient {
                 proof: &proof_bytes,
             };
             self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
-        });
+        })
     }
 
-    pub fn submit_snark(&self, batch_number: u32, proof: &SnarkWrapperProof) {
-        let proof_bytes = match serde_json::to_vec(proof) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                error!(
-                    batch_number,
-                    ?err,
-                    "Failed to JSON-encode SNARK proof; skipping submission",
-                );
-                return;
-            }
-        };
+    pub fn submit_snark(&self, batch_number: u32, proof: &SnarkWrapperProof) -> Result<()> {
+        let proof_bytes = serde_json::to_vec(proof).context("failed to JSON-encode SNARK proof")?;
         self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
@@ -159,7 +140,7 @@ impl JobServerClient {
                 snark_proof: &proof_bytes,
             };
             self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
-        });
+        })
     }
 
     /// POSTs to `path` and decodes the JSON body. Returns `None` on 204 No
@@ -216,9 +197,14 @@ impl JobServerClient {
     }
 
     /// Retries `attempt_fn` up to `submit_attempts` times for retriable errors
-    /// (transport-level or 429/5xx). Emits per-attempt warnings on failure
-    /// and a single final success/error log.
-    fn submit_with_retries<F>(&self, label: &str, batch_number: u32, mut attempt_fn: F)
+    /// (transport-level or 429/5xx). Per-attempt warnings are emitted here;
+    /// the caller logs the final success/error.
+    fn submit_with_retries<F>(
+        &self,
+        label: &str,
+        batch_number: u32,
+        mut attempt_fn: F,
+    ) -> Result<()>
     where
         F: FnMut(usize, usize) -> RequestResult,
     {
@@ -226,22 +212,15 @@ impl JobServerClient {
         let mut last_err = anyhow::anyhow!("no attempts made");
         for attempt in 1..=attempts {
             match attempt_fn(attempt, attempts) {
-                Ok(()) => {
-                    info!(batch_number, label, "Successfully submitted proof");
-                    return;
-                }
+                Ok(()) => return Ok(()),
                 Err((status, err)) => {
                     let retriable = status.is_none_or(|s| {
                         s == reqwest::StatusCode::TOO_MANY_REQUESTS || s.is_server_error()
                     });
                     if !retriable {
-                        error!(
-                            batch_number,
-                            label,
-                            ?err,
-                            "Failed to submit proof (non-retriable status)"
-                        );
-                        return;
+                        return Err(err.context(format!(
+                            "non-retriable status submitting {label} proof for batch {batch_number}"
+                        )));
                     }
                     warn!(
                         label,
@@ -258,12 +237,8 @@ impl JobServerClient {
                 }
             }
         }
-        error!(
-            batch_number,
-            label,
-            submit_attempts = attempts,
-            err = ?last_err,
-            "Failed to submit proof after all attempts"
-        );
+        Err(last_err.context(format!(
+            "failed to submit {label} proof for batch {batch_number} after {attempts} attempts"
+        )))
     }
 }
