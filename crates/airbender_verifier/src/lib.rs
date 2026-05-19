@@ -83,8 +83,8 @@ pub trait Verify {
 }
 
 impl Verify for AirbenderVerifierInput {
-    /// Unwrap the payload (upgrading V1 to V2) and verify it. The reserved
-    /// `V0` marker has no payload, so it produces an error.
+    /// Strip the wire-version tag and verify the payload. Errors on the
+    /// reserved `V0` marker.
     fn verify(self) -> anyhow::Result<VerificationResult> {
         self.into_v2()?.verify()
     }
@@ -1023,9 +1023,8 @@ mod tests {
         )
     }
 
-    /// V1 wire fixture: pre-v31 protocol with a zero `Address` validator —
-    /// the exact pre-gateway shape that exercises the
-    /// `l2_da_validator().expect(...)` path post-decode.
+    /// V1 wire fixture: pre-v31 protocol with an address-shaped validator
+    /// (zero address — the legacy default for chains that didn't set one).
     fn sample_v1() -> V2AirbenderVerifierInput {
         sample_payload(
             ProtocolVersionId::Version29,
@@ -1033,10 +1032,22 @@ mod tests {
         )
     }
 
+    /// Encodes / decodes via the same bincode config (`bincode 2`, varint
+    /// `standard()`) that `cli_utils::load_batch` uses, so this round-trip
+    /// pins the exact wire shape the on-disk corpus is loaded against.
     fn bincode_roundtrip(avi: AirbenderVerifierInput) {
-        let bytes = bincode_v1::serialize(&avi).expect("serialize");
-        let decoded: AirbenderVerifierInput = bincode_v1::deserialize(&bytes).expect("deserialize");
+        let bytes =
+            bincode::serde::encode_to_vec(&avi, bincode::config::standard()).expect("serialize");
+        let (decoded, _): (AirbenderVerifierInput, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .expect("deserialize");
         assert_eq!(avi, decoded);
+    }
+
+    fn try_bincode_serialize(
+        avi: &AirbenderVerifierInput,
+    ) -> Result<Vec<u8>, impl std::error::Error> {
+        bincode::serde::encode_to_vec(avi, bincode::config::standard())
     }
 
     /// Pins the V2 bincode wire so future struct changes can't silently
@@ -1078,14 +1089,14 @@ mod tests {
     fn test_v1_wire_rejects_post_v31_state() {
         let mut payload = sample_v1();
         payload.l1_batch_env.interop_fee = U256::from(1);
-        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
 
         let mut payload = sample_v1();
         payload.l1_batch_env.settlement_layer = SettlementLayer::for_tests();
-        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
 
         let payload = sample_v2(); // CommitmentScheme validator
-        assert!(bincode_v1::serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
     }
 
     #[test]

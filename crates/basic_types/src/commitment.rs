@@ -114,9 +114,12 @@ impl L2DACommitmentScheme {
     }
 }
 
-// Matches upstream zksync-era exactly: `BlobsZksyncOS` is reachable as a Rust
-// value but intentionally not externally constructible via `TryFrom<u8>` or
-// `FromStr` (zksync-os only). If upstream ever adds it, mirror that here.
+// `BlobsZksyncOS = 4` is a zksync-os-only variant: reachable as a Rust value
+// but intentionally rejected by `TryFrom<u8>` and `FromStr`. Note this only
+// gates external constructors — a hostile `serde::Deserialize` payload can
+// still produce variant 4 since the derived impl reads the tag directly. The
+// verifier never pattern-matches on the scheme, only passes it through to
+// the bootloader, so the residual surface is benign here.
 impl TryFrom<u8> for L2DACommitmentScheme {
     type Error = &'static str;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
