@@ -1,8 +1,10 @@
-use crate::fri::RawFriProof;
+use crate::fri::{record_proof_metrics, RawFriProof};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::info;
 use zkos_wrapper::{serialize_to_file, SnarkWrapper, SnarkWrapperConfig};
+use zksync_prover_metrics::{ProofStatus, ProofType};
 
 // Mirror `zkos-wrapper`'s artifact names so operators can switch between the
 // standalone wrapper CLI and the integrated host without translating outputs.
@@ -95,6 +97,47 @@ impl SnarkPipeline {
             snark_proof: snark_proof_bytes,
             snark_vk: snark_vk_bytes,
         })
+    }
+
+    /// Wraps a raw FRI proof into a SNARK and records prover metrics. Returns
+    /// the JSON-serialized proof and VK bytes ready for transport.
+    pub fn wrap_snark(
+        &mut self,
+        batch_number: u32,
+        protocol_version: u16,
+        raw_proof: RawFriProof,
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        info!(batch_number, "Starting SNARK wrapping...");
+        let started_at = Instant::now();
+        let artifact = match self.wrap_fri(raw_proof) {
+            Ok(a) => {
+                record_proof_metrics(
+                    batch_number,
+                    protocol_version,
+                    ProofType::Snark,
+                    ProofStatus::Success,
+                    started_at.elapsed(),
+                );
+                a
+            }
+            Err(err) => {
+                record_proof_metrics(
+                    batch_number,
+                    protocol_version,
+                    ProofType::Snark,
+                    ProofStatus::Failure,
+                    started_at.elapsed(),
+                );
+                return Err(err.context("SNARK wrap failed"));
+            }
+        };
+        info!(
+            batch_number,
+            snark_proof_bytes = artifact.snark_proof.len(),
+            snark_vk_bytes = artifact.snark_vk.len(),
+            "SNARK wrap complete"
+        );
+        Ok((artifact.snark_proof, artifact.snark_vk))
     }
 
     pub(crate) fn prove(&mut self, raw_proof: RawFriProof, output_dir: &Path) -> Result<()> {

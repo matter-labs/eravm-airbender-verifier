@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tracing::info;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
+use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
 /// We no longer check against a fixed expected output; any non-zero output
@@ -162,6 +163,55 @@ impl FriPipeline {
         })
     }
 
+    /// Proves a preencoded input word stream, records prover metrics, and
+    /// bincode-serializes the resulting `Proof` envelope for transport.
+    ///
+    /// Returns both the serialized bytes (for submission to the job server) and
+    /// the in-memory [`Proof`] (so callers running FRI + SNARK back-to-back can
+    /// hand the proof straight to the SNARK pipeline without redeserializing).
+    pub fn prove_fri(
+        &self,
+        batch_number: u32,
+        protocol_version: u16,
+        input_words: &[u32],
+    ) -> Result<(Vec<u8>, Proof)> {
+        info!(batch_number, "Starting FRI proof...");
+        let started_at = Instant::now();
+        let output = match self.prove_input(batch_number as u64, input_words) {
+            Ok(out) => {
+                record_proof_metrics(
+                    batch_number,
+                    protocol_version,
+                    ProofType::Fri,
+                    ProofStatus::Success,
+                    started_at.elapsed(),
+                );
+                out
+            }
+            Err(err) => {
+                record_proof_metrics(
+                    batch_number,
+                    protocol_version,
+                    ProofType::Fri,
+                    ProofStatus::Failure,
+                    started_at.elapsed(),
+                );
+                return Err(err.context("FRI proving failed"));
+            }
+        };
+
+        let proof_bytes = bincode::serde::encode_to_vec(&output.proof, bincode::config::standard())
+            .context("failed to bincode-serialize FRI proof")?;
+
+        info!(
+            batch_number,
+            cycles = output.cycles,
+            output = ?output.output,
+            "FRI proof complete"
+        );
+        Ok((proof_bytes, output.proof))
+    }
+
     /// Proves an `AirbenderVerifierInput` by encoding it to the prover word
     /// stream first, then delegating to [`Self::prove_input`].
     pub fn prove_verifier_input(
@@ -207,6 +257,23 @@ impl FriPipeline {
             cycles,
         })
     }
+}
+
+pub(crate) fn record_proof_metrics(
+    batch_number: u32,
+    protocol_version: u16,
+    proof_type: ProofType,
+    status: ProofStatus,
+    elapsed: Duration,
+) {
+    let labels = ProofLabels {
+        batch_number,
+        protocol_version,
+        proof_type,
+        status,
+    };
+    METRICS.proof_duration[&labels].observe(elapsed);
+    METRICS.proof_count[&labels].inc();
 }
 
 pub(crate) fn build_runner(dist_dir: &Path, jit: bool) -> Result<TranspilerRunner> {
