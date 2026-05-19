@@ -8,8 +8,7 @@ use tracing::{debug, error, info, warn};
 use zksync_prover_metrics::METRICS;
 
 use crate::client::JobServerClient;
-use crate::types::{Artifact, ProofOutcome, ProverMode, SnarkJob};
-use crate::worker::WorkerJob;
+use crate::types::{ProofKind, ProofOutcome, ProverMode, ProverResult, WorkerJob};
 
 /// Orchestrates the network side of the prover: fetches jobs from the
 /// [`JobServerClient`], forwards them to the prover thread, and submits
@@ -19,7 +18,7 @@ pub struct JobWorker {
     mode: ProverMode,
     client: JobServerClient,
     job_tx: SyncSender<WorkerJob>,
-    result_rx: Receiver<ProofOutcome>,
+    result_rx: Receiver<ProverResult>,
     poll_interval: Duration,
     shutdown: Arc<AtomicBool>,
     pending_job: Option<WorkerJob>,
@@ -29,7 +28,7 @@ impl JobWorker {
     pub fn new(
         client: JobServerClient,
         job_tx: SyncSender<WorkerJob>,
-        result_rx: Receiver<ProofOutcome>,
+        result_rx: Receiver<ProverResult>,
         shutdown: Arc<AtomicBool>,
         mode: ProverMode,
         poll_interval: Duration,
@@ -76,7 +75,7 @@ impl JobWorker {
             if self.pending_job.is_none() {
                 match self.fetch_job() {
                     Ok(Some(job)) => {
-                        info!(batch_number = job.batch_number(), %job, "Received job");
+                        info!(batch_number = job.batch_number(), kind = %job.kind(), "Received job");
                         METRICS.pending_jobs.inc_by(1);
                         self.pending_job = Some(job);
                         did_work = true;
@@ -94,31 +93,42 @@ impl JobWorker {
 
     fn fetch_job(&self) -> Result<Option<WorkerJob>> {
         match self.mode {
-            ProverMode::FriOnly | ProverMode::FriSnark => {
-                Ok(self.client.fetch_fri_job()?.map(WorkerJob::Fri))
-            }
-            ProverMode::SnarkOnly => Ok(self.client.fetch_snark_job()?.map(WorkerJob::Snark)),
+            ProverMode::FriOnly | ProverMode::FriSnark => self.client.fetch_fri_job(),
+            ProverMode::SnarkOnly => self.client.fetch_snark_job(),
         }
     }
 
-    fn handle_outcome(&mut self, outcome: ProofOutcome) {
-        let settles = outcome.settles_job(self.mode);
-        match outcome.result {
-            Ok(Artifact::Fri { proof }) => {
-                self.client.submit_fri(outcome.batch_number, &proof);
+    fn handle_outcome(&mut self, outcome: ProverResult) {
+        let kind = match &outcome {
+            Ok(o) => o.kind(),
+            Err(f) => f.kind,
+        };
+        let settles = matches!(
+            (self.mode, kind),
+            (ProverMode::FriOnly | ProverMode::FriSnark, ProofKind::Fri)
+                | (ProverMode::SnarkOnly, ProofKind::Snark)
+        );
+        match outcome {
+            Ok(ProofOutcome::Fri {
+                batch_number,
+                proof,
+            }) => {
+                self.client.submit_fri(batch_number, &proof);
                 // In `fri-snark` mode, the SNARK job depends on the FRI proof bytes, so we can set the new pending job immediately instead of waiting for the next fetch cycle.
                 if self.mode == ProverMode::FriSnark {
-                    self.pending_job = Some(WorkerJob::Snark(SnarkJob {
-                        batch_number: outcome.batch_number,
+                    self.pending_job = Some(WorkerJob::Snark {
+                        batch_number,
                         fri_proof_bytes: proof,
-                    }));
+                    });
                 }
             }
-            Ok(Artifact::Snark { proof, vk }) => {
-                self.client.submit_snark(outcome.batch_number, &proof, &vk)
-            }
+            Ok(ProofOutcome::Snark {
+                batch_number,
+                proof,
+                vk,
+            }) => self.client.submit_snark(batch_number, &proof, &vk),
             Err(failure) => error!(
-                batch_number = outcome.batch_number,
+                batch_number = failure.batch_number,
                 kind = %failure.kind,
                 reason = %failure.reason,
                 "Job failed; will not be submitted",

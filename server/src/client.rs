@@ -6,9 +6,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, info, warn};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
-use crate::types::{
-    FriJob, SnarkInputResponse, SnarkJob, SubmitFriProofRequest, SubmitSnarkProofRequest,
-};
+use crate::types::{SubmitFriProofRequest, SubmitSnarkProofRequest, WorkerJob};
 
 const FRI_INPUTS_PATH: &str = "/airbender/proof_inputs";
 const SNARK_INPUTS_PATH: &str = "/airbender/snark_inputs";
@@ -63,7 +61,7 @@ impl JobServerClient {
         }
     }
 
-    pub fn fetch_fri_job(&self) -> Result<Option<FriJob>> {
+    pub fn fetch_fri_job(&self) -> Result<Option<WorkerJob>> {
         let Some(input) = self.poll_json::<AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
         else {
             return Ok(None);
@@ -76,18 +74,24 @@ impl JobServerClient {
         inputs
             .push(&input)
             .context("failed to encode AirbenderVerifierInput")?;
-        Ok(Some(FriJob {
+        Ok(Some(WorkerJob::Fri {
             batch_number,
             input_words: inputs.words().to_vec(),
         }))
     }
 
-    pub fn fetch_snark_job(&self) -> Result<Option<SnarkJob>> {
-        let Some(body) = self.poll_json::<SnarkInputResponse>(SNARK_INPUTS_PATH, SNARK_LABEL)?
-        else {
+    pub fn fetch_snark_job(&self) -> Result<Option<WorkerJob>> {
+        #[serde_with::serde_as]
+        #[derive(serde::Deserialize)]
+        struct SnarkInputBody {
+            l1_batch_number: u32,
+            #[serde_as(as = "serde_with::hex::Hex")]
+            fri_proof: Vec<u8>,
+        }
+        let Some(body) = self.poll_json::<SnarkInputBody>(SNARK_INPUTS_PATH, SNARK_LABEL)? else {
             return Ok(None);
         };
-        Ok(Some(SnarkJob {
+        Ok(Some(WorkerJob::Snark {
             batch_number: body.l1_batch_number,
             fri_proof_bytes: body.fri_proof,
         }))

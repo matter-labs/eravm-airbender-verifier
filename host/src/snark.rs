@@ -35,10 +35,10 @@ pub struct SnarkOptions {
 
 pub struct SnarkPipeline {
     wrapper: SnarkWrapper,
-    /// Optional FRI verifier; only required when the pipeline accepts FRI
-    /// proofs from the network (snark-only server mode) and must validate them
-    /// before wrapping. Locally generated proofs are already verified by
-    /// `FriPipeline`, so this can be left unset.
+    /// Optional FRI verifier. Set when the pipeline accepts FRI proofs from an
+    /// untrusted source (snark-only server mode) and must validate them before
+    /// wrapping; left unset when proofs come from a trusted source (locally
+    /// produced and already verified by `FriPipeline`).
     fri_verifier: Option<FriVerifier>,
     use_zk: bool,
     save_intermediates: bool,
@@ -65,34 +65,36 @@ impl SnarkPipeline {
         })
     }
 
-    /// Attaches a FRI verifier so incoming serialized proofs can be validated
-    /// before SNARK wrapping. Required for the snark-only server flow.
+    /// Attaches a FRI verifier so incoming serialized proofs are validated
+    /// before SNARK wrapping. Required for the snark-only server flow, where
+    /// the FRI proof comes from an untrusted source.
     pub fn with_fri_verifier(mut self, verifier: FriVerifier) -> Self {
         self.fri_verifier = Some(verifier);
         self
     }
 
-    /// Decodes a bincode-encoded `Proof` envelope, verifies it against the
-    /// attached FRI verifier, and wraps the inner raw proof into a SNARK.
-    /// Errors out if no verifier has been attached.
+    /// Decodes a bincode-encoded `Proof` envelope and wraps the inner raw proof
+    /// into a SNARK. If a FRI verifier was attached via [`Self::with_fri_verifier`],
+    /// the envelope is verified before wrapping; otherwise it is wrapped directly
+    /// (used when the caller trusts the source — e.g. locally-produced proofs
+    /// fed back in `fri-snark` server mode).
     pub fn decode_and_wrap_snark(
         &mut self,
         batch_number: u32,
         fri_proof_bytes: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let verifier = self.fri_verifier.as_ref().context(
-            "decode_and_wrap_snark requires a FRI verifier; construct via `with_fri_verifier`",
-        )?;
         let (proof, len): (Proof, usize) =
             bincode::serde::decode_from_slice(fri_proof_bytes, bincode::config::standard())
                 .context("failed to bincode-decode incoming FRI proof envelope")?;
         if len != fri_proof_bytes.len() {
             anyhow::bail!("incoming FRI proof envelope has trailing bytes");
         }
-        verifier
-            .verify_envelope(batch_number as u64, &proof)
-            .context("incoming FRI proof failed verification")?;
-        info!(batch_number, "Verified incoming FRI proof");
+        if let Some(verifier) = self.fri_verifier.as_ref() {
+            verifier
+                .verify_envelope(batch_number as u64, &proof)
+                .context("incoming FRI proof failed verification")?;
+            info!(batch_number, "Verified incoming FRI proof");
+        }
         let raw_proof = match proof {
             Proof::Real(real) => real.into_inner(),
             Proof::Dev(_) => {
@@ -113,30 +115,7 @@ impl SnarkPipeline {
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         info!(batch_number, "Starting SNARK wrapping...");
         let started_at = Instant::now();
-        let result = (|| {
-            let risc_wrapper_proof = self
-                .wrapper
-                .prove_risc_wrapper(raw_proof)
-                .context("while attempting to run wrapper phase 1")?;
-            let compression_proof = self
-                .wrapper
-                .prove_compression(risc_wrapper_proof)
-                .context("while attempting to run wrapper phase 2")?;
-            let snark_proof = self
-                .wrapper
-                .prove_snark(compression_proof, self.use_zk)
-                .context("while attempting to run wrapper phase 3")?;
-
-            let snark_proof_bytes = serde_json::to_vec(&snark_proof)
-                .context("while attempting to JSON-encode the SNARK proof for transport")?;
-            let snark_vk = self
-                .wrapper
-                .snark_vk()
-                .context("while attempting to resolve wrapper phase 3 VK")?;
-            let snark_vk_bytes = serde_json::to_vec(snark_vk)
-                .context("while attempting to JSON-encode the SNARK VK for transport")?;
-            Ok::<_, anyhow::Error>((snark_proof_bytes, snark_vk_bytes))
-        })();
+        let result = self.run_wrap_pipeline(raw_proof);
 
         let status = if result.is_ok() {
             ProofStatus::Success
@@ -153,6 +132,31 @@ impl SnarkPipeline {
             "SNARK wrap complete"
         );
         Ok((snark_proof, snark_vk))
+    }
+
+    fn run_wrap_pipeline(&mut self, raw_proof: RawFriProof) -> Result<(Vec<u8>, Vec<u8>)> {
+        let risc_wrapper_proof = self
+            .wrapper
+            .prove_risc_wrapper(raw_proof)
+            .context("while attempting to run wrapper phase 1")?;
+        let compression_proof = self
+            .wrapper
+            .prove_compression(risc_wrapper_proof)
+            .context("while attempting to run wrapper phase 2")?;
+        let snark_proof = self
+            .wrapper
+            .prove_snark(compression_proof, self.use_zk)
+            .context("while attempting to run wrapper phase 3")?;
+
+        let snark_proof_bytes = serde_json::to_vec(&snark_proof)
+            .context("while attempting to JSON-encode the SNARK proof for transport")?;
+        let snark_vk = self
+            .wrapper
+            .snark_vk()
+            .context("while attempting to resolve wrapper phase 3 VK")?;
+        let snark_vk_bytes = serde_json::to_vec(snark_vk)
+            .context("while attempting to JSON-encode the SNARK VK for transport")?;
+        Ok((snark_proof_bytes, snark_vk_bytes))
     }
 
     pub(crate) fn prove(&mut self, raw_proof: RawFriProof, output_dir: &Path) -> Result<()> {
