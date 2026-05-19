@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
@@ -54,8 +54,8 @@ fn main() -> Result<()> {
                     batch_input.path.display()
                 )
             })?
-            .into_v1()
-            .with_context(|| format!("batch {} has no V1 payload", batch_input.number))?;
+            .into_v2()
+            .with_context(|| format!("batch {} has no V1 or V2 payload", batch_input.number))?;
         let matched = compare_batch(&batch_input, input, options)?;
         if !matched {
             divergent_files.push(batch_input.path.display().to_string());
@@ -80,7 +80,7 @@ fn main() -> Result<()> {
 
 fn compare_batch(
     batch_input: &BatchInputFile,
-    input: V1AirbenderVerifierInput,
+    input: V2AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<bool> {
     let batch_number = batch_input.number;

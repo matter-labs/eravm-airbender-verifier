@@ -37,7 +37,7 @@ use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
 };
-use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::{AirbenderVerifierInput, V1AirbenderVerifierInput};
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -666,12 +666,13 @@ fn load_batch_and_expected_public_input(filename: &str) -> BatchTestInput {
         number: number.into(),
         path: batch_path,
     };
-    let v1 = load_batch(&batch_input)
-        .expect("failed to load batch")
-        .into_v1()
-        .expect("expected AirbenderVerifierInput::V1 from disk");
+    let loaded = load_batch(&batch_input).expect("failed to load batch");
+    let AirbenderVerifierInput::V1(v1) = loaded else {
+        panic!("expected AirbenderVerifierInput::V1 from disk");
+    };
     let expected_public_input = v1
         .clone()
+        .into_v2()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
