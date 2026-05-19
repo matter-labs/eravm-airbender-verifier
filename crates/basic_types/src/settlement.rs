@@ -17,6 +17,10 @@ pub enum SettlementLayer {
 
 impl Serialize for SettlementLayer {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        // The two `Repr` enums below are identical except for the
+        // `#[serde(tag, content)]` attribute on the human-readable branch.
+        // Serde attributes aren't conditional, so the duplication is the
+        // cost of keeping a single `SettlementLayer` type across both wires.
         if ser.is_human_readable() {
             #[derive(Serialize)]
             #[serde(tag = "type", content = "chain_id")]

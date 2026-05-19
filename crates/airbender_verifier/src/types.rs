@@ -85,16 +85,12 @@ impl Default for CommitmentInput {
 
 /// Versioned wire format for verifier input.
 ///
-/// The bincode payload begins with a variant tag so the on-disk corpus and
-/// the host↔guest channel can evolve without rewriting the format each time
-/// the payload changes. `V0` is reserved (no payload) and pins later
-/// discriminants in place.
+/// - `V0`: reserved with no payload; pins later discriminants.
+/// - `V1`: pre-v31 bincode layout, decoded via [`crate::v1_compat`].
+/// - `V2`: canonical post-v31 layout.
 ///
-/// `V1` and `V2` carry the same canonical payload — only the wire layout
-/// differs. `V1` deserializes the pre-v31 bincode shape via
-/// [`crate::v1_compat`], filling `interop_fee` and `settlement_layer` with
-/// defaults; `V2` uses the canonical post-v31 layout. `into_v2` strips the
-/// version tag.
+/// Both `V1` and `V2` carry the same Rust payload; only the on-wire shape
+/// differs. [`AirbenderVerifierInput::into_v2`] strips the tag.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {

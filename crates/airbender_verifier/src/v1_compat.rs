@@ -27,10 +27,9 @@ use crate::types::{
     CommitmentInput, V2AirbenderVerifierInput, VMRunWitnessInputData, WitnessInputMerklePaths,
 };
 
-/// Wire-format mirror of [`V2AirbenderVerifierInput`] as it stood before v31.
-/// If the on-disk corpus stops loading, diff this against the pre-v31
-/// `V1AirbenderVerifierInput` / `L1BatchEnv` / `PubdataParams` field layouts
-/// in `main`'s history — bincode is positional, so field order is load-bearing.
+/// Bincode wire mirror — frozen field set and order pin the on-disk corpus
+/// layout. Bincode is positional; reordering, adding, or removing fields here
+/// silently breaks decode on every existing corpus file.
 #[derive(Serialize, Deserialize)]
 struct Legacy {
     vm_run_data: VMRunWitnessInputData,
