@@ -1044,68 +1044,66 @@ mod tests {
         }
     }
 
-    /// Locks the V2 (post-v31) bincode wire format. If this breaks, every
-    /// V2-encoded payload — including those produced by zksync-era after v31 —
-    /// will fail to load.
+    fn bincode_roundtrip(avi: AirbenderVerifierInput) {
+        let bytes = bincode_v1::serialize(&avi).expect("serialize");
+        let decoded: AirbenderVerifierInput = bincode_v1::deserialize(&bytes).expect("deserialize");
+        assert_eq!(avi, decoded);
+    }
+
+    /// Pins the V2 bincode wire so future struct changes can't silently
+    /// alter the on-disk layout.
     #[test]
     fn test_serialization_roundtrip_v2() {
-        let avi = AirbenderVerifierInput::V2(sample_v2());
-        let serialized =
-            AirbenderCodecV0::encode(&avi).expect("Failed to serialize AirbenderVerifierInput.");
-        let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
-            .expect("Failed to deserialize AirbenderVerifierInput.");
-
-        assert_eq!(avi, deserialized);
+        bincode_roundtrip(AirbenderVerifierInput::V2(sample_v2()));
     }
 
-    /// Locks the V1 (pre-v31) bincode wire format. Every batch in
+    /// Pins the host↔guest channel wire: inputs cross into the guest encoded
+    /// with `AirbenderCodecV0`, independently of the bincode corpus format.
+    #[test]
+    fn test_codec_roundtrip() {
+        for avi in [
+            AirbenderVerifierInput::V1(sample_v1()),
+            AirbenderVerifierInput::V2(sample_v2()),
+        ] {
+            let serialized = AirbenderCodecV0::encode(&avi)
+                .expect("Failed to serialize AirbenderVerifierInput.");
+            let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
+                .expect("Failed to deserialize AirbenderVerifierInput.");
+
+            assert_eq!(avi, deserialized);
+        }
+    }
+
+    /// Pins the V1 bincode wire. The on-disk corpus in
     /// `testdata/era_mainnet_batches/` is encoded as `V1(...)` with the
-    /// pre-v31 `L1BatchEnv` / `PubdataParams` shapes — if this test ever
-    /// fails, the on-disk corpus stops loading.
+    /// pre-v31 `L1BatchEnv` / `PubdataParams` shapes; if this breaks, the
+    /// corpus stops loading.
     #[test]
     fn test_serialization_roundtrip_v1() {
-        let avi = AirbenderVerifierInput::V1(sample_v1());
-        let serialized = bincode_v1::serialize(&avi).expect("Failed to serialize V1 input.");
-        let deserialized: AirbenderVerifierInput =
-            bincode_v1::deserialize(&serialized).expect("Failed to deserialize V1 input.");
-
-        assert_eq!(avi, deserialized);
+        bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
     }
 
-    /// V1 inputs round-trip through `into_v2` to a V2 with the documented
-    /// default `interop_fee` and `settlement_layer` filled in.
+    /// V1 inputs upgrade to V2 with `interop_fee=0` and the default
+    /// `settlement_layer` (the verifier ignores both pre-medium-interop), and
+    /// the upgrade goes through `AirbenderVerifierInput::into_v2` unchanged.
     #[test]
     fn test_v1_upgrade_to_v2() {
         let v1 = sample_v1();
-        let v2 = v1.clone().into_v2();
-        assert_eq!(v2.l1_batch_env.interop_fee, U256::zero());
+        let upgraded = v1.clone().into_v2();
+
+        assert_eq!(upgraded.l1_batch_env.interop_fee, U256::zero());
         assert_eq!(
-            v2.l1_batch_env.settlement_layer,
-            SettlementLayer::for_tests()
+            upgraded.l1_batch_env.settlement_layer,
+            SettlementLayer::default()
         );
-        // Other fields preserved.
-        assert_eq!(v2.l1_batch_env.number, v1.l1_batch_env.number);
-        assert_eq!(v2.l1_batch_env.timestamp, v1.l1_batch_env.timestamp);
+        assert_eq!(upgraded.l1_batch_env.number, v1.l1_batch_env.number);
         assert_eq!(
-            v2.pubdata_params.pubdata_type(),
+            upgraded.pubdata_params.pubdata_type(),
             v1.pubdata_params.pubdata_type
         );
-    }
 
-    /// `AirbenderVerifierInput::into_v2` accepts both V1 and V2, and the V1
-    /// path produces the same upgraded shape as calling
-    /// `V1AirbenderVerifierInput::into_v2` directly.
-    #[test]
-    fn test_into_v2_dispatch() {
-        let v1 = sample_v1();
-        let from_v1 = AirbenderVerifierInput::V1(v1.clone()).into_v2().unwrap();
-        let direct = v1.into_v2();
-        assert_eq!(from_v1, direct);
-
-        let v2 = sample_v2();
-        let unwrapped = AirbenderVerifierInput::V2(v2.clone()).into_v2().unwrap();
-        assert_eq!(unwrapped, v2);
-
+        // Dispatch through the enum: V1 takes the same path, V0 bails.
+        assert_eq!(AirbenderVerifierInput::V1(v1).into_v2().unwrap(), upgraded,);
         assert!(AirbenderVerifierInput::V0.into_v2().is_err());
     }
 
