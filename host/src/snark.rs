@@ -71,23 +71,15 @@ impl SnarkPipeline {
     /// SNARK) on a raw FRI proof. The phase-1 step proves and then verifies
     /// the FRI proof inside the recursion circuit, so callers don't need a
     /// separate pre-flight verification step.
-    pub fn run_wrap_pipeline(&mut self, raw_proof: RawFriProof) -> Result<SnarkWrapperProof> {
-        let risc_wrapper_proof = self
-            .wrapper
-            .prove_risc_wrapper(raw_proof)
-            .context("while attempting to run wrapper phase 1")?;
-        let compression_proof = self
-            .wrapper
-            .prove_compression(risc_wrapper_proof)
-            .context("while attempting to run wrapper phase 2")?;
-        let snark_proof = self
-            .wrapper
-            .prove_snark(compression_proof, self.use_zk)
-            .context("while attempting to run wrapper phase 3")?;
-        Ok(snark_proof)
+    pub fn prove(&mut self, raw_proof: RawFriProof) -> Result<SnarkWrapperProof> {
+        self.run_phases(raw_proof, None)
     }
 
-    pub(crate) fn prove(&mut self, raw_proof: RawFriProof, output_dir: &Path) -> Result<()> {
+    pub(crate) fn prove_and_save_outcome(
+        &mut self,
+        raw_proof: RawFriProof,
+        output_dir: &Path,
+    ) -> Result<()> {
         std::fs::create_dir_all(output_dir)
             .with_context(|| format!("while attempting to create {}", output_dir.display()))?;
 
@@ -96,52 +88,8 @@ impl SnarkPipeline {
             "Starting SNARK wrapper pipeline with the built-in recursion verifier binary"
         );
 
-        let risc_wrapper_proof = self
-            .wrapper
-            .prove_risc_wrapper(raw_proof)
-            .context("while attempting to run wrapper phase 1")?;
-
-        if self.save_intermediates {
-            let risc_wrapper_vk = self
-                .wrapper
-                .risc_wrapper_vk()
-                .context("while attempting to resolve wrapper phase 1 VK")?;
-            save_wrapper_artifact_pair(
-                &risc_wrapper_proof,
-                RISC_WRAPPER_PROOF_FILE_NAME,
-                risc_wrapper_vk,
-                RISC_WRAPPER_VK_FILE_NAME,
-                output_dir,
-                "phase 1",
-            )
-            .context("while attempting to save wrapper phase 1 intermediates")?;
-        }
-
-        let compression_proof = self
-            .wrapper
-            .prove_compression(risc_wrapper_proof)
-            .context("while attempting to run wrapper phase 2")?;
-
-        if self.save_intermediates {
-            let compression_vk = self
-                .wrapper
-                .compression_vk()
-                .context("while attempting to resolve wrapper phase 2 VK")?;
-            save_wrapper_artifact_pair(
-                &compression_proof,
-                COMPRESSION_PROOF_FILE_NAME,
-                compression_vk,
-                COMPRESSION_VK_FILE_NAME,
-                output_dir,
-                "phase 2",
-            )
-            .context("while attempting to save wrapper phase 2 intermediates")?;
-        }
-
-        let snark_proof = self
-            .wrapper
-            .prove_snark(compression_proof, self.use_zk)
-            .context("while attempting to run wrapper phase 3")?;
+        let intermediates_dir = self.save_intermediates.then_some(output_dir);
+        let snark_proof = self.run_phases(raw_proof, intermediates_dir)?;
 
         let proof_path = output_dir.join(SNARK_PROOF_FILE_NAME);
         save_wrapper_artifact(&snark_proof, &proof_path)?;
@@ -161,6 +109,58 @@ impl SnarkPipeline {
         );
 
         Ok(())
+    }
+
+    fn run_phases(
+        &mut self,
+        raw_proof: RawFriProof,
+        intermediates_dir: Option<&Path>,
+    ) -> Result<SnarkWrapperProof> {
+        let risc_wrapper_proof = self
+            .wrapper
+            .prove_risc_wrapper(raw_proof)
+            .context("while attempting to run wrapper phase 1")?;
+
+        if let Some(dir) = intermediates_dir {
+            let risc_wrapper_vk = self
+                .wrapper
+                .risc_wrapper_vk()
+                .context("while attempting to resolve wrapper phase 1 VK")?;
+            save_wrapper_artifact_pair(
+                &risc_wrapper_proof,
+                RISC_WRAPPER_PROOF_FILE_NAME,
+                risc_wrapper_vk,
+                RISC_WRAPPER_VK_FILE_NAME,
+                dir,
+                "phase 1",
+            )
+            .context("while attempting to save wrapper phase 1 intermediates")?;
+        }
+
+        let compression_proof = self
+            .wrapper
+            .prove_compression(risc_wrapper_proof)
+            .context("while attempting to run wrapper phase 2")?;
+
+        if let Some(dir) = intermediates_dir {
+            let compression_vk = self
+                .wrapper
+                .compression_vk()
+                .context("while attempting to resolve wrapper phase 2 VK")?;
+            save_wrapper_artifact_pair(
+                &compression_proof,
+                COMPRESSION_PROOF_FILE_NAME,
+                compression_vk,
+                COMPRESSION_VK_FILE_NAME,
+                dir,
+                "phase 2",
+            )
+            .context("while attempting to save wrapper phase 2 intermediates")?;
+        }
+
+        self.wrapper
+            .prove_snark(compression_proof, self.use_zk)
+            .context("while attempting to run wrapper phase 3")
     }
 }
 

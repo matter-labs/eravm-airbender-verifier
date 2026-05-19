@@ -91,12 +91,14 @@ pub fn wrap_to_snark(
         let raw_proof = load_raw_proof(proof_file)
             .with_context(|| format!("while attempting to load {}", proof_file.display()))?;
         let output_dir = proof_file_output_dir(output_root, proof_file)?;
-        pipeline.prove(raw_proof, &output_dir).with_context(|| {
-            format!(
-                "while attempting to wrap raw proof {} into a SNARK",
-                proof_file.display()
-            )
-        })?;
+        pipeline
+            .prove_and_save_outcome(raw_proof, &output_dir)
+            .with_context(|| {
+                format!(
+                    "while attempting to wrap raw proof {} into a SNARK",
+                    proof_file.display()
+                )
+            })?;
 
         info!(
             proof_file = %proof_file.display(),

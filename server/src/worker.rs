@@ -101,7 +101,7 @@ impl ProverWorker {
             } => match into_raw_fri_proof(*proof) {
                 Ok(raw_proof) => {
                     let started = Instant::now();
-                    let result = self.snark.as_mut().unwrap().run_wrap_pipeline(raw_proof);
+                    let result = self.snark.as_mut().unwrap().prove(raw_proof);
                     record_proof_metrics(
                         batch_number,
                         ProofType::Snark,
