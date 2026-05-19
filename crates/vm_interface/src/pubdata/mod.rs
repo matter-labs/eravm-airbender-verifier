@@ -75,12 +75,12 @@ pub struct PubdataInput {
 /// Trait that encapsulates pubdata building logic. It is implemented for rollup and validium cases.
 /// If chains needs custom pubdata format then another implementation should be added.
 pub trait PubdataBuilder: std::fmt::Debug {
-    /// L2 DA validator address used by pre-v31 chains. Returns `None` when the
-    /// builder was constructed with a `L2DACommitmentScheme` (post-v31).
+    /// Returns `Some(addr)` when the builder was constructed with an address
+    /// validator, `None` when it was constructed with a `L2DACommitmentScheme`.
     fn l2_da_validator(&self) -> Option<Address>;
 
-    /// L2 DA commitment scheme used by post-v31 chains. Returns `None` when the
-    /// builder was constructed with an `Address` validator (pre-v31).
+    /// Returns `Some(scheme)` when the builder was constructed with a
+    /// commitment scheme, `None` when it was constructed with an address validator.
     fn l2_da_commitment_scheme(&self) -> Option<L2DACommitmentScheme>;
 
     fn l1_messenger_operator_input(

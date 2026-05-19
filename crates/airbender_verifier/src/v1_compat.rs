@@ -1,24 +1,19 @@
 //! Pre-v31 bincode wire adapter for `AirbenderVerifierInput::V1`.
 //!
-//! The on-disk corpus in `testdata/era_mainnet_batches/` was produced before
 //! v31 changed `L1BatchEnv` (added `interop_fee`, `settlement_layer`) and
-//! `PubdataParams` (replaced `l2_da_validator_address: Address` with the
-//! `L2PubdataValidator` enum). Bincode is positional, so old bytes don't
-//! decode against the new field layouts.
+//! `PubdataParams` (`l2_da_validator_address: Address` → `L2PubdataValidator`).
+//! Bincode is positional, so the on-disk corpus in
+//! `testdata/era_mainnet_batches/` does not decode against the new layouts.
 //!
-//! Wired in via `#[serde(with = "crate::v1_compat")]` on the V1 enum variant.
-//! The deserializer reads the legacy layout and reconstructs a canonical
+//! Wired in via `#[serde(with = "crate::v1_compat")]` on the V1 enum variant:
+//! deserialize reads the legacy layout and reconstructs a canonical
 //! [`V2AirbenderVerifierInput`] with `interop_fee = 0`, the default
-//! `settlement_layer`, and the address wrapped in
-//! `L2PubdataValidator::Address`. The serializer is lossy in the other
-//! direction: it errors if the payload carries any post-v31-only state
-//! (`CommitmentScheme` validator, non-zero `interop_fee`, non-default
-//! `settlement_layer`) — V1 only exists to consume the old corpus, so the
-//! lossy path is the test round-trip only.
+//! `settlement_layer`, and the address wrapped in `L2PubdataValidator::Address`.
+//! serialize is the lossy inverse — it errors on any state V1 cannot
+//! represent. Production never re-serializes V1; the inverse exists for the
+//! roundtrip test.
 
-use serde::{
-    de::Error as DeError, ser::Error as SerError, Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{ser::Error as SerError, Deserialize, Deserializer, Serialize, Serializer};
 use zksync_types::{
     block::L2BlockExecutionData,
     commitment::{L2PubdataValidator, PubdataParams, PubdataType},
@@ -32,9 +27,10 @@ use crate::types::{
     CommitmentInput, V2AirbenderVerifierInput, VMRunWitnessInputData, WitnessInputMerklePaths,
 };
 
-/// Pre-v31 mirror of [`V2AirbenderVerifierInput`]. Field types match the
-/// canonical payload except for the two that changed shape; field order
-/// matches the bincode layout of the on-disk corpus.
+/// Wire-format mirror of [`V2AirbenderVerifierInput`] as it stood before v31.
+/// If the on-disk corpus stops loading, diff this against the pre-v31
+/// `V1AirbenderVerifierInput` / `L1BatchEnv` / `PubdataParams` field layouts
+/// in `main`'s history — bincode is positional, so field order is load-bearing.
 #[derive(Serialize, Deserialize)]
 struct Legacy {
     vm_run_data: VMRunWitnessInputData,
@@ -112,11 +108,13 @@ pub fn serialize<S: Serializer>(
 
 pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<V2AirbenderVerifierInput, D::Error> {
     let legacy = Legacy::deserialize(de)?;
+    // `PubdataParams::new` only rejects `CommitmentScheme(None)`; the
+    // `Address(_)` variant we pass is always valid.
     let pubdata_params = PubdataParams::new(
         L2PubdataValidator::Address(legacy.pubdata_params.l2_da_validator_address),
         legacy.pubdata_params.pubdata_type,
     )
-    .map_err(D::Error::custom)?;
+    .expect("Address variant is always a valid PubdataParams");
     Ok(V2AirbenderVerifierInput {
         vm_run_data: legacy.vm_run_data,
         merkle_paths: legacy.merkle_paths,
