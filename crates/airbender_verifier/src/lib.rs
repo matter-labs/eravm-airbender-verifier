@@ -914,6 +914,7 @@ mod tests {
                 number: Default::default(),
                 timestamp: 0,
                 fee_input: Default::default(),
+                interop_fee: U256::zero(),
                 fee_account: Default::default(),
                 enforced_base_fee: None,
                 first_l2_block: L2BlockEnv {
@@ -923,6 +924,7 @@ mod tests {
                     max_virtual_blocks_to_create: 0,
                     interop_roots: vec![],
                 },
+                settlement_layer: zksync_types::settlement::SettlementLayer::for_tests(),
             },
             system_env: SystemEnv {
                 zk_porter_available: false,

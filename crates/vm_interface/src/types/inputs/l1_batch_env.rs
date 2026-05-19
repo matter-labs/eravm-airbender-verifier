@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use zksync_types::{fee_model::BatchFeeInput, Address, L1BatchNumber, H256};
+use zksync_types::{
+    fee_model::BatchFeeInput, settlement::SettlementLayer, Address, L1BatchNumber, H256, U256,
+};
 
 use super::L2BlockEnv;
 
@@ -17,7 +19,16 @@ pub struct L1BatchEnv {
 
     /// The fee input into the batch. It contains information such as L1 gas price, L2 fair gas price, etc.
     pub fee_input: BatchFeeInput,
+    /// Interop fee for the batch. Introduced in v31; defaults to zero on the
+    /// JSON wire for older inputs via `#[serde(default)]`. Note that bincode
+    /// payloads remain positional, so pre-v31 corpus files need regeneration.
+    #[serde(default)]
+    pub interop_fee: U256,
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
+    /// Settlement layer the batch is destined for. Introduced in v31; falls
+    /// back to `SettlementLayer::default()` on the JSON wire.
+    #[serde(default)]
+    pub settlement_layer: SettlementLayer,
 }
