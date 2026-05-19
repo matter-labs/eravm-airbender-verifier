@@ -715,7 +715,10 @@ where
 mod tests {
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
-    use zksync_types::commitment::BlobHash;
+    use zksync_types::{
+        commitment::{BlobHash, L2DACommitmentScheme, L2PubdataValidator, PubdataParams},
+        settlement::SettlementLayer,
+    };
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
@@ -924,7 +927,7 @@ mod tests {
                     max_virtual_blocks_to_create: 0,
                     interop_roots: vec![],
                 },
-                settlement_layer: zksync_types::settlement::SettlementLayer::for_tests(),
+                settlement_layer: SettlementLayer::for_tests(),
             },
             system_env: SystemEnv {
                 zk_porter_available: false,
@@ -945,9 +948,9 @@ mod tests {
                 default_validation_computational_gas_limit: 0,
                 chain_id: Default::default(),
             },
-            pubdata_params: zksync_types::commitment::PubdataParams::new(
-                zksync_types::commitment::L2PubdataValidator::CommitmentScheme(
-                    zksync_types::commitment::L2DACommitmentScheme::BlobsAndPubdataKeccak256,
+            pubdata_params: PubdataParams::new(
+                L2PubdataValidator::CommitmentScheme(
+                    L2DACommitmentScheme::BlobsAndPubdataKeccak256,
                 ),
                 Default::default(),
             )
