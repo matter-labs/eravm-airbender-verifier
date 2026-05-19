@@ -719,6 +719,7 @@ mod tests {
     use zksync_types::{
         commitment::{BlobHash, L2DACommitmentScheme, L2PubdataValidator, PubdataParams},
         settlement::SettlementLayer,
+        Address,
     };
 
     use super::*;
@@ -900,12 +901,12 @@ mod tests {
         );
     }
 
-    fn sample_vm_run_data() -> VMRunWitnessInputData {
+    fn sample_vm_run_data(version: ProtocolVersionId) -> VMRunWitnessInputData {
         VMRunWitnessInputData {
             l1_batch_number: Default::default(),
             used_bytecodes: Default::default(),
             initial_heap_content: vec![],
-            protocol_version: Default::default(),
+            protocol_version: version,
             bootloader_code: vec![],
             default_account_code_hash: Default::default(),
             evm_emulator_code_hash: Some(Default::default()),
@@ -925,10 +926,10 @@ mod tests {
         }
     }
 
-    fn sample_system_env() -> SystemEnv {
+    fn sample_system_env(version: ProtocolVersionId) -> SystemEnv {
         SystemEnv {
             zk_porter_available: false,
-            version: Default::default(),
+            version,
             base_system_smart_contracts: BaseSystemContracts {
                 bootloader: SystemContractCode {
                     code: vec![1; 32],
@@ -947,9 +948,13 @@ mod tests {
         }
     }
 
+    /// Post-medium-interop fixture. The verifier checks
+    /// `protocol_version.is_pre_medium_interop()`, so V2 must carry a
+    /// `>= Version31` version to exercise the `CommitmentScheme` path.
     fn sample_v2() -> V2AirbenderVerifierInput {
+        let version = ProtocolVersionId::Version31;
         V2AirbenderVerifierInput {
-            vm_run_data: sample_vm_run_data(),
+            vm_run_data: sample_vm_run_data(version),
             merkle_paths: WitnessInputMerklePaths::new(0),
             l2_blocks_execution_data: vec![],
             l1_batch_env: L1BatchEnv {
@@ -963,7 +968,7 @@ mod tests {
                 first_l2_block: sample_first_l2_block(),
                 settlement_layer: SettlementLayer::for_tests(),
             },
-            system_env: sample_system_env(),
+            system_env: sample_system_env(version),
             pubdata_params: PubdataParams::new(
                 L2PubdataValidator::CommitmentScheme(
                     L2DACommitmentScheme::BlobsAndPubdataKeccak256,
@@ -975,9 +980,15 @@ mod tests {
         }
     }
 
+    /// Pre-medium-interop fixture mirroring the on-disk corpus shape: pre-v31
+    /// protocol version + a zero `l2_da_validator_address`. Pre-gateway batches
+    /// commonly carried `Address::zero()`, which the bootloader still reads via
+    /// `l2_da_validator()` — a regression in V1→V2 upgrade (e.g. mapping zero
+    /// to `CommitmentScheme`) would panic on `expect("L2 DA validator must be set")`.
     fn sample_v1() -> V1AirbenderVerifierInput {
+        let version = ProtocolVersionId::Version29;
         V1AirbenderVerifierInput {
-            vm_run_data: sample_vm_run_data(),
+            vm_run_data: sample_vm_run_data(version),
             merkle_paths: WitnessInputMerklePaths::new(0),
             l2_blocks_execution_data: vec![],
             l1_batch_env: L1BatchEnvV1 {
@@ -989,9 +1000,9 @@ mod tests {
                 enforced_base_fee: None,
                 first_l2_block: sample_first_l2_block(),
             },
-            system_env: sample_system_env(),
+            system_env: sample_system_env(version),
             pubdata_params: PubdataParamsV1 {
-                l2_da_validator_address: Default::default(),
+                l2_da_validator_address: Address::zero(),
                 pubdata_type: Default::default(),
             },
             commitment_input: None,
@@ -1020,9 +1031,11 @@ mod tests {
         bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
     }
 
-    /// V1 inputs upgrade to V2 with `interop_fee=0` and the default
-    /// `settlement_layer` (the verifier ignores both pre-medium-interop), and
-    /// the upgrade goes through `AirbenderVerifierInput::into_v2` unchanged.
+    /// V1 inputs upgrade to V2 with `interop_fee=0`, the default
+    /// `settlement_layer`, and the validator address wrapped in
+    /// `L2PubdataValidator::Address` — including when the address is zero,
+    /// which is the pre-gateway corpus default and the path the bootloader's
+    /// `l2_da_validator().expect(...)` actually exercises.
     #[test]
     fn test_v1_upgrade_to_v2() {
         let v1 = sample_v1();
@@ -1035,12 +1048,16 @@ mod tests {
         );
         assert_eq!(upgraded.l1_batch_env.number, v1.l1_batch_env.number);
         assert_eq!(
+            upgraded.pubdata_params.pubdata_validator(),
+            L2PubdataValidator::Address(v1.pubdata_params.l2_da_validator_address),
+        );
+        assert_eq!(
             upgraded.pubdata_params.pubdata_type(),
             v1.pubdata_params.pubdata_type
         );
 
         // Dispatch through the enum: V1 takes the same path, V0 bails.
-        assert_eq!(AirbenderVerifierInput::V1(v1).into_v2().unwrap(), upgraded,);
+        assert_eq!(AirbenderVerifierInput::V1(v1).into_v2().unwrap(), upgraded);
         assert!(AirbenderVerifierInput::V0.into_v2().is_err());
     }
 
