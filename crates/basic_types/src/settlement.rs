@@ -4,8 +4,12 @@ use crate::SLChainId;
 
 /// An enum which is used to describe whether a zkSync network settles to L1 or to the gateway.
 /// Gateway is an Ethereum-compatible L2 and so it requires different treatment with regards to DA handling.
+///
+/// Note: upstream zksync-era tags this enum with `#[serde(tag = "type", content = "chain_id")]`
+/// for adjacent-tagged JSON output. We omit that here because bincode (which the prover server
+/// uses for wire encoding) does not support adjacent-tagged enums. The struct shape and field
+/// layout remain identical to upstream; only the JSON wire form differs.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", content = "chain_id")]
 pub enum SettlementLayer {
     L1(SLChainId),
     Gateway(SLChainId),
