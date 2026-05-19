@@ -23,7 +23,6 @@ pub enum ProofType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelSet)]
 pub struct ProofLabels {
     pub batch_number: u32,
-    pub protocol_version: u16,
     pub proof_type: ProofType,
     pub status: ProofStatus,
 }

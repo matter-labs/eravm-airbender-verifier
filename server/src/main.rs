@@ -1,4 +1,5 @@
-mod network;
+mod client;
+mod jobs;
 mod types;
 mod worker;
 
@@ -14,7 +15,8 @@ use clap::Parser;
 use eravm_prover_host::{FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline};
 use tracing::info;
 
-use network::NetworkWorker;
+use client::JobServerClient;
+use jobs::JobWorker;
 use types::ProverMode;
 use worker::{ProverWorker, ProverWorkerBuilder};
 
@@ -106,20 +108,9 @@ fn main() -> Result<()> {
 
     let prover_builder = build_prover(&cli, &dist_dir, security)?;
 
-    let connect_timeout = Duration::from_millis(cli.http_connect_timeout_ms);
-    let poll_client = reqwest::blocking::Client::builder()
-        .connect_timeout(connect_timeout)
-        .timeout(Duration::from_millis(cli.poll_timeout_ms))
-        .build()
-        .context("while building poll HTTP client")?;
-    let submit_client = reqwest::blocking::Client::builder()
-        .connect_timeout(connect_timeout)
-        .timeout(Duration::from_millis(cli.submit_timeout_ms))
-        .build()
-        .context("while building submit HTTP client")?;
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
 
-    // Channel capacity 1: the network worker can buffer one job ahead while the prover is busy.
+    // Channel capacity 1: the job worker can buffer one job ahead while the prover is busy.
     let (job_tx, job_rx) = mpsc::sync_channel(1);
     // Channel capacity 2 to accommodate `fri-snark` mode emitting two results per job.
     let (result_tx, result_rx) = mpsc::sync_channel(2);
@@ -143,24 +134,26 @@ fn main() -> Result<()> {
     let prover = prover_builder
         .build(job_rx, result_tx)
         .context("while building prover worker")?;
-    let prover_handle = std::thread::spawn(move || prover.run());
+    let prover_handle: std::thread::JoinHandle<()> = std::thread::spawn(move || prover.run());
 
-    NetworkWorker {
-        mode: cli.mode,
-        job_tx,
-        result_rx,
-        poll_client,
-        submit_client,
-        server_url: cli.server_url,
-        prover_id: cli.prover_id,
-        poll_interval,
-        submit_attempts: cli.submit_attempts,
-        shutdown,
-    }
-    .run();
+    let client = JobServerClient::new(
+        cli.prover_id,
+        cli.submit_attempts,
+        cli.server_url,
+        Duration::from_millis(cli.http_connect_timeout_ms),
+        Duration::from_millis(cli.poll_timeout_ms),
+        Duration::from_millis(cli.submit_timeout_ms),
+    );
+
+    let job_worker_handle: std::thread::JoinHandle<()> = std::thread::spawn(move || {
+        JobWorker::new(client, job_tx, result_rx, shutdown, cli.mode, poll_interval).run()
+    });
 
     info!("Waiting for prover to finish current job...");
     prover_handle.join().expect("prover thread panicked");
+    job_worker_handle
+        .join()
+        .expect("job worker thread panicked");
     Ok(())
 }
 
@@ -173,7 +166,7 @@ fn build_prover(
         worker_threads: cli.snark_threads,
         trusted_setup: cli.snark_trusted_setup.clone(),
         use_zk: cli.snark_use_zk,
-        // Server path uses `wrap_fri`, which never persists intermediates.
+        // Server path uses `wrap_snark`, which never persists intermediates.
         save_intermediates: false,
     };
 
@@ -191,9 +184,7 @@ fn build_prover(
         ProverMode::SnarkOnly => {
             let verifier = FriVerifier::new(dist_dir, security)
                 .context("while building FRI verifier for snark-only mode")?;
-            builder
-                .with_fri_verifier(verifier)
-                .with_snark(build_snark()?)
+            builder.with_snark(build_snark()?.with_fri_verifier(verifier))
         }
     })
 }

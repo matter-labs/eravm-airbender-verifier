@@ -15,14 +15,12 @@ pub enum ProverMode {
 /// A FRI proving job received from the server.
 pub struct FriJob {
     pub batch_number: u32,
-    pub protocol_version: u16,
     pub input_words: Vec<u32>,
 }
 
 /// A SNARK-wrapping job received from the server: a FRI proof envelope to wrap.
 pub struct SnarkJob {
     pub batch_number: u32,
-    pub protocol_version: u16,
     /// Bincode-encoded `airbender_host::Proof`, as produced by the FRI prover
     /// and stored by the job server.
     pub fri_proof_bytes: Vec<u8>,
@@ -50,22 +48,37 @@ pub enum Artifact {
     Snark { proof: Vec<u8>, vk: Vec<u8> },
 }
 
-/// Settlement event emitted by the prover worker. Every fetched job produces
-/// at least one outcome — failures included — so the network worker can
-/// account for it exactly once. In `fri-snark` mode a single job emits two
-/// outcomes (FRI then SNARK); the FRI outcome settles accounting and the
-/// SNARK outcome is a post-settlement step.
-pub struct Outcome {
-    pub batch_number: u32,
-    pub kind: ProofKind,
-    pub result: Result<Artifact, String>,
+impl Artifact {
+    pub fn kind(&self) -> ProofKind {
+        match self {
+            Artifact::Fri { .. } => ProofKind::Fri,
+            Artifact::Snark { .. } => ProofKind::Snark,
+        }
+    }
 }
 
-impl Outcome {
+/// Failure detail carried in the error arm of [`ProofOutcome`]. Holds the kind so
+/// callers can route the failure log without inspecting the outcome variant.
+pub struct FailedProof {
+    pub kind: ProofKind,
+    /// Full anyhow error chain (`{err:#}`) captured at the point of failure.
+    pub reason: String,
+}
+
+/// Settlement event emitted by the prover worker. Every fetched job produces
+/// at least one outcome — failures included — so the job worker can
+/// account for it exactly once. In `fri-snark` mode a single fetched job emits
+/// two outcomes (FRI then SNARK); the FRI outcome settles accounting and the
+/// SNARK outcome is a post-settlement step.
+pub struct ProofOutcome {
+    pub batch_number: u32,
+    pub result: Result<Artifact, FailedProof>,
+}
+
+impl ProofOutcome {
     pub fn fri_success(batch_number: u32, proof: Vec<u8>) -> Self {
         Self {
             batch_number,
-            kind: ProofKind::Fri,
             result: Ok(Artifact::Fri { proof }),
         }
     }
@@ -73,24 +86,30 @@ impl Outcome {
     pub fn snark_success(batch_number: u32, proof: Vec<u8>, vk: Vec<u8>) -> Self {
         Self {
             batch_number,
-            kind: ProofKind::Snark,
             result: Ok(Artifact::Snark { proof, vk }),
         }
     }
 
-    /// Captures the full anyhow error chain (`{err:#}`) in `result` so the
-    /// network worker can log it once on receipt.
     pub fn failed(batch_number: u32, kind: ProofKind, err: anyhow::Error) -> Self {
         Self {
             batch_number,
-            kind,
-            result: Err(format!("{err:#}")),
+            result: Err(FailedProof {
+                kind,
+                reason: format!("{err:#}"),
+            }),
+        }
+    }
+
+    pub fn kind(&self) -> ProofKind {
+        match &self.result {
+            Ok(artifact) => artifact.kind(),
+            Err(failure) => failure.kind,
         }
     }
 
     pub fn settles_job(&self, mode: ProverMode) -> bool {
         matches!(
-            (mode, self.kind),
+            (mode, self.kind()),
             (ProverMode::FriOnly | ProverMode::FriSnark, ProofKind::Fri)
                 | (ProverMode::SnarkOnly, ProofKind::Snark)
         )
@@ -126,8 +145,6 @@ pub struct SubmitSnarkProofRequest<'a> {
 #[derive(serde::Deserialize)]
 pub struct SnarkInputResponse {
     pub l1_batch_number: u32,
-    #[serde(default)]
-    pub protocol_version: u16,
     #[serde_as(as = "serde_with::hex::Hex")]
     pub fri_proof: Vec<u8>,
 }

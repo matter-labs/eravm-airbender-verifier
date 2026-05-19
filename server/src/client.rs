@@ -1,20 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::Arc;
 use std::time::Duration;
 
 use airbender_host::Inputs;
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
-use zksync_prover_metrics::METRICS;
 
 use crate::types::{
-    Artifact, FriJob, Outcome, ProverMode, SnarkInputResponse, SnarkJob, SubmitFriProofRequest,
-    SubmitSnarkProofRequest,
+    FriJob, SnarkInputResponse, SnarkJob, SubmitFriProofRequest, SubmitSnarkProofRequest,
 };
-use crate::worker::WorkerJob;
 
 const FRI_INPUTS_PATH: &str = "/airbender/proof_inputs";
 const SNARK_INPUTS_PATH: &str = "/airbender/snark_inputs";
@@ -28,105 +22,48 @@ const SNARK_LABEL: &str = "SNARK";
 /// transport-level errors that have no server status.
 type RequestResult = Result<(), (Option<reqwest::StatusCode>, anyhow::Error)>;
 
-pub struct NetworkWorker {
-    pub mode: ProverMode,
-    pub job_tx: SyncSender<WorkerJob>,
-    pub result_rx: Receiver<Outcome>,
-    /// HTTP client used for polling job inputs (shorter timeout).
-    pub poll_client: reqwest::blocking::Client,
-    /// HTTP client used for submitting proof results (longer timeout for large SNARK payloads).
-    pub submit_client: reqwest::blocking::Client,
-    pub server_url: String,
-    pub prover_id: String,
-    pub poll_interval: Duration,
-    pub submit_attempts: usize,
-    pub shutdown: Arc<AtomicBool>,
+/// Thin HTTP client for the job server: fetches inputs and submits results.
+/// Stateless beyond its configured endpoints and HTTP clients — owns no
+/// scheduling, channels, or in-flight job state.
+pub struct JobServerClient {
+    /// Used for polling job inputs (shorter timeout).
+    poll_client: reqwest::blocking::Client,
+    /// Used for submitting proof results (longer timeout for large SNARK payloads).
+    submit_client: reqwest::blocking::Client,
+    server_url: String,
+    prover_id: String,
+    submit_attempts: usize,
 }
 
-impl NetworkWorker {
-    /// Fetches jobs from the server, forwards them to the prover, and submits
-    /// completed proofs. Uses a one-slot pending buffer so a job can be
-    /// pre-fetched while the prover is busy.
-    pub fn run(self) {
-        let mut pending_job: Option<WorkerJob> = None;
-
-        loop {
-            let shutting_down = self.shutdown.load(Ordering::Relaxed);
-            let mut did_work = false;
-
-            if !shutting_down {
-                if let Some(job) = pending_job.take() {
-                    match self.job_tx.try_send(job) {
-                        Ok(()) => did_work = true,
-                        Err(TrySendError::Full(job)) => pending_job = Some(job),
-                        Err(TrySendError::Disconnected(_)) => break,
-                    }
-                }
-            }
-
-            match self.result_rx.try_recv() {
-                Ok(outcome) => {
-                    self.handle_outcome(outcome);
-                    did_work = true;
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => break,
-            }
-
-            if shutting_down {
-                break;
-            }
-
-            if pending_job.is_none() {
-                match self.fetch_job() {
-                    Ok(Some(job)) => {
-                        info!(batch_number = job.batch_number(), %job, "Received job");
-                        METRICS.pending_jobs.inc_by(1);
-                        pending_job = Some(job);
-                        did_work = true;
-                    }
-                    Ok(None) => debug!("No jobs available, waiting..."),
-                    Err(err) => warn!(?err, "Failed to fetch job, retrying after poll interval"),
-                }
-            }
-
-            if !did_work {
-                std::thread::sleep(self.poll_interval);
-            }
+impl JobServerClient {
+    pub fn new(
+        prover_id: String,
+        submit_attempts: usize,
+        server_url: String,
+        connection_timeout: Duration,
+        poll_timeout: Duration,
+        submit_timeout: Duration,
+    ) -> Self {
+        let poll_client = reqwest::blocking::Client::builder()
+            .connect_timeout(connection_timeout)
+            .timeout(poll_timeout)
+            .build()
+            .expect("while building poll HTTP client");
+        let submit_client = reqwest::blocking::Client::builder()
+            .connect_timeout(connection_timeout)
+            .timeout(submit_timeout)
+            .build()
+            .expect("while building submit HTTP client");
+        Self {
+            poll_client,
+            submit_client,
+            server_url,
+            prover_id,
+            submit_attempts,
         }
     }
 
-    fn handle_outcome(&self, outcome: Outcome) {
-        let settles = outcome.settles_job(self.mode);
-        match outcome.result {
-            Ok(Artifact::Fri { proof }) => self.submit_fri(outcome.batch_number, &proof),
-            Ok(Artifact::Snark { proof, vk }) => {
-                self.submit_snark(outcome.batch_number, &proof, &vk)
-            }
-            Err(reason) => error!(
-                batch_number = outcome.batch_number,
-                kind = %outcome.kind,
-                %reason,
-                "Job failed; will not be submitted",
-            ),
-        }
-        if settles {
-            METRICS.pending_jobs.dec_by(1);
-        }
-    }
-
-    // ----- fetch ---------------------------------------------------------
-
-    fn fetch_job(&self) -> Result<Option<WorkerJob>> {
-        match self.mode {
-            ProverMode::FriOnly | ProverMode::FriSnark => {
-                Ok(self.fetch_fri_job()?.map(WorkerJob::Fri))
-            }
-            ProverMode::SnarkOnly => Ok(self.fetch_snark_job()?.map(WorkerJob::Snark)),
-        }
-    }
-
-    fn fetch_fri_job(&self) -> Result<Option<FriJob>> {
+    pub fn fetch_fri_job(&self) -> Result<Option<FriJob>> {
         let Some(input) = self.poll_json::<AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
         else {
             return Ok(None);
@@ -135,28 +72,63 @@ impl NetworkWorker {
             anyhow::bail!("expected AirbenderVerifierInput::V1");
         };
         let batch_number = v1.vm_run_data.l1_batch_number.0;
-        let protocol_version = v1.vm_run_data.protocol_version as u16;
         let mut inputs = Inputs::new();
         inputs
             .push(&input)
             .context("failed to encode AirbenderVerifierInput")?;
         Ok(Some(FriJob {
             batch_number,
-            protocol_version,
             input_words: inputs.words().to_vec(),
         }))
     }
 
-    fn fetch_snark_job(&self) -> Result<Option<SnarkJob>> {
+    pub fn fetch_snark_job(&self) -> Result<Option<SnarkJob>> {
         let Some(body) = self.poll_json::<SnarkInputResponse>(SNARK_INPUTS_PATH, SNARK_LABEL)?
         else {
             return Ok(None);
         };
         Ok(Some(SnarkJob {
             batch_number: body.l1_batch_number,
-            protocol_version: body.protocol_version,
             fri_proof_bytes: body.fri_proof,
         }))
+    }
+
+    pub fn submit_fri(&self, batch_number: u32, proof: &[u8]) {
+        self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
+            info!(
+                batch_number,
+                proof_bytes = proof.len(),
+                attempt,
+                attempts,
+                "Submitting FRI proof"
+            );
+            let payload = SubmitFriProofRequest {
+                l1_batch_number: batch_number,
+                prover_id: self.prover_id.clone(),
+                proof,
+            };
+            self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
+        });
+    }
+
+    pub fn submit_snark(&self, batch_number: u32, proof: &[u8], vk: &[u8]) {
+        self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
+            info!(
+                batch_number,
+                snark_proof_bytes = proof.len(),
+                snark_vk_bytes = vk.len(),
+                attempt,
+                attempts,
+                "Submitting SNARK proof"
+            );
+            let payload = SubmitSnarkProofRequest {
+                l1_batch_number: batch_number,
+                prover_id: self.prover_id.clone(),
+                snark_proof: proof,
+                snark_vk: vk,
+            };
+            self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
+        });
     }
 
     /// POSTs to `path` and decodes the JSON body. Returns `None` on 204 No
@@ -181,46 +153,6 @@ impl NetworkWorker {
                 Ok(None)
             }
         }
-    }
-
-    // ----- submit --------------------------------------------------------
-
-    fn submit_fri(&self, batch_number: u32, proof: &[u8]) {
-        self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
-            info!(
-                batch_number,
-                proof_bytes = proof.len(),
-                attempt,
-                attempts,
-                "Submitting FRI proof"
-            );
-            let payload = SubmitFriProofRequest {
-                l1_batch_number: batch_number,
-                prover_id: self.prover_id.clone(),
-                proof,
-            };
-            self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
-        });
-    }
-
-    fn submit_snark(&self, batch_number: u32, proof: &[u8], vk: &[u8]) {
-        self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
-            info!(
-                batch_number,
-                snark_proof_bytes = proof.len(),
-                snark_vk_bytes = vk.len(),
-                attempt,
-                attempts,
-                "Submitting SNARK proof"
-            );
-            let payload = SubmitSnarkProofRequest {
-                l1_batch_number: batch_number,
-                prover_id: self.prover_id.clone(),
-                snark_proof: proof,
-                snark_vk: vk,
-            };
-            self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
-        });
     }
 
     /// POSTs `payload` as JSON and checks for HTTP success. Returns the status

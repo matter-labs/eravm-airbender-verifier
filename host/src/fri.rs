@@ -169,19 +169,13 @@ impl FriPipeline {
     /// Returns both the serialized bytes (for submission to the job server) and
     /// the in-memory [`Proof`] (so callers running FRI + SNARK back-to-back can
     /// hand the proof straight to the SNARK pipeline without redeserializing).
-    pub fn prove_fri(
-        &self,
-        batch_number: u32,
-        protocol_version: u16,
-        input_words: &[u32],
-    ) -> Result<(Vec<u8>, Proof)> {
+    pub fn prove_fri(&self, batch_number: u32, input_words: &[u32]) -> Result<(Vec<u8>, Proof)> {
         info!(batch_number, "Starting FRI proof...");
         let started_at = Instant::now();
         let output = match self.prove_input(batch_number as u64, input_words) {
             Ok(out) => {
                 record_proof_metrics(
                     batch_number,
-                    protocol_version,
                     ProofType::Fri,
                     ProofStatus::Success,
                     started_at.elapsed(),
@@ -191,7 +185,6 @@ impl FriPipeline {
             Err(err) => {
                 record_proof_metrics(
                     batch_number,
-                    protocol_version,
                     ProofType::Fri,
                     ProofStatus::Failure,
                     started_at.elapsed(),
@@ -261,14 +254,12 @@ impl FriPipeline {
 
 pub(crate) fn record_proof_metrics(
     batch_number: u32,
-    protocol_version: u16,
     proof_type: ProofType,
     status: ProofStatus,
     elapsed: Duration,
 ) {
     let labels = ProofLabels {
         batch_number,
-        protocol_version,
         proof_type,
         status,
     };
