@@ -27,8 +27,7 @@ pub struct L1BatchEnv {
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
-    /// Settlement layer the batch is destined for. Introduced in v31; falls
-    /// back to `SettlementLayer::default()` on the JSON wire.
-    #[serde(default)]
+    /// Settlement layer the batch is destined for. Introduced in v31.
+    /// Matches upstream: no `#[serde(default)]` — a missing field is an error.
     pub settlement_layer: SettlementLayer,
 }
