@@ -113,20 +113,19 @@ impl JobWorker {
                 batch_number,
                 proof,
             }) => {
-                self.client.submit_fri(batch_number, &proof);
-                // In `fri-snark` mode, the SNARK job depends on the FRI proof bytes, so we can set the new pending job immediately instead of waiting for the next fetch cycle.
+                self.client.submit_fri(batch_number, proof.as_ref());
+                // In `fri-snark` mode, the SNARK job needs the FRI proof, so we can set the new pending job immediately instead of waiting for the next fetch cycle. The in-memory `Proof` is fed directly to the SNARK pipeline without an extra encode/decode round trip.
                 if self.mode == ProverMode::FriSnark {
                     self.pending_job = Some(WorkerJob::Snark {
                         batch_number,
-                        fri_proof_bytes: proof,
+                        proof,
                     });
                 }
             }
             Ok(ProofOutcome::Snark {
                 batch_number,
                 proof,
-                vk,
-            }) => self.client.submit_snark(batch_number, &proof, &vk),
+            }) => self.client.submit_snark(batch_number, proof.as_ref()),
             Err(failure) => error!(
                 batch_number = failure.batch_number,
                 kind = %failure.kind,

@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use airbender_host::Inputs;
+use airbender_host::{Inputs, Proof};
 use anyhow::{Context, Result};
+use eravm_prover_host::SnarkWrapperProof;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, info, warn};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
@@ -91,17 +92,34 @@ impl JobServerClient {
         let Some(body) = self.poll_json::<SnarkInputBody>(SNARK_INPUTS_PATH, SNARK_LABEL)? else {
             return Ok(None);
         };
+        let (proof, len): (Proof, usize) =
+            bincode::serde::decode_from_slice(&body.fri_proof, bincode::config::standard())
+                .context("failed to bincode-decode incoming FRI proof envelope")?;
+        if len != body.fri_proof.len() {
+            anyhow::bail!("incoming FRI proof envelope has trailing bytes");
+        }
         Ok(Some(WorkerJob::Snark {
             batch_number: body.l1_batch_number,
-            fri_proof_bytes: body.fri_proof,
+            proof: Box::new(proof),
         }))
     }
 
-    pub fn submit_fri(&self, batch_number: u32, proof: &[u8]) {
+    pub fn submit_fri(&self, batch_number: u32, proof: &Proof) {
+        let proof_bytes = match bincode::serde::encode_to_vec(proof, bincode::config::standard()) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                error!(
+                    batch_number,
+                    ?err,
+                    "Failed to bincode-encode FRI proof; skipping submission",
+                );
+                return;
+            }
+        };
         self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
-                proof_bytes = proof.len(),
+                proof_bytes = proof_bytes.len(),
                 attempt,
                 attempts,
                 "Submitting FRI proof"
@@ -109,18 +127,28 @@ impl JobServerClient {
             let payload = SubmitFriProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                proof,
+                proof: &proof_bytes,
             };
             self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
         });
     }
 
-    pub fn submit_snark(&self, batch_number: u32, proof: &[u8], vk: &[u8]) {
+    pub fn submit_snark(&self, batch_number: u32, proof: &SnarkWrapperProof) {
+        let proof_bytes = match serde_json::to_vec(proof) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                error!(
+                    batch_number,
+                    ?err,
+                    "Failed to JSON-encode SNARK proof; skipping submission",
+                );
+                return;
+            }
+        };
         self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
             info!(
                 batch_number,
-                snark_proof_bytes = proof.len(),
-                snark_vk_bytes = vk.len(),
+                snark_proof_bytes = proof_bytes.len(),
                 attempt,
                 attempts,
                 "Submitting SNARK proof"
@@ -128,8 +156,7 @@ impl JobServerClient {
             let payload = SubmitSnarkProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                snark_proof: proof,
-                snark_vk: vk,
+                snark_proof: &proof_bytes,
             };
             self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
         });

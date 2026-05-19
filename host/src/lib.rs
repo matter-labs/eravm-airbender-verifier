@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
+pub use crate::fri::{dist_dir, FriPipeline, ProveOutput, RawFriProof};
 pub use crate::snark::{SnarkOptions, SnarkPipeline};
+pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 
 use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
 use crate::statistics::StatisticsCollector;
@@ -82,8 +83,9 @@ pub fn wrap_to_snark(
     proof_files: &[PathBuf],
     output_root: &Path,
     snark_options: &SnarkOptions,
+    snark_vk: Option<SnarkWrapperVK>,
 ) -> Result<()> {
-    let mut pipeline = SnarkPipeline::new(snark_options)?;
+    let mut pipeline = SnarkPipeline::new(snark_options, snark_vk)?;
 
     for (index, proof_file) in proof_files.iter().enumerate() {
         let raw_proof = load_raw_proof(proof_file)

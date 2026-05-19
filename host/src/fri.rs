@@ -88,16 +88,6 @@ impl FriVerifier {
             .verify(proof, &self.vk, VerificationRequest::real(&output))
             .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
     }
-
-    /// Verifies a FRI proof envelope against the cached VK without binding to
-    /// a specific guest output — only structural / cryptographic validity is
-    /// checked. Used by the SNARK-only server mode, which receives proofs from
-    /// the job server and does not have the original receipt at hand.
-    pub fn verify_envelope(&self, batch_number: u64, proof: &Proof) -> Result<()> {
-        self.verifier
-            .verify(proof, &self.vk, VerificationRequest::empty())
-            .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
-    }
 }
 
 pub struct FriPipeline {
@@ -164,12 +154,9 @@ impl FriPipeline {
     }
 
     /// Proves a preencoded input word stream, records prover metrics, and
-    /// bincode-serializes the resulting `Proof` envelope for transport.
-    ///
-    /// Returns both the serialized bytes (for submission to the job server) and
-    /// the in-memory [`Proof`] (so callers running FRI + SNARK back-to-back can
-    /// hand the proof straight to the SNARK pipeline without redeserializing).
-    pub fn prove_fri(&self, batch_number: u32, input_words: &[u32]) -> Result<(Vec<u8>, Proof)> {
+    /// returns the in-memory `Proof` envelope. Callers serialize it for
+    /// transport when needed; the SNARK pipeline accepts it as-is.
+    pub fn prove_fri(&self, batch_number: u32, input_words: &[u32]) -> Result<Proof> {
         info!(batch_number, "Starting FRI proof...");
         let started_at = Instant::now();
         let output = match self.prove_input(batch_number as u64, input_words) {
@@ -193,16 +180,13 @@ impl FriPipeline {
             }
         };
 
-        let proof_bytes = bincode::serde::encode_to_vec(&output.proof, bincode::config::standard())
-            .context("failed to bincode-serialize FRI proof")?;
-
         info!(
             batch_number,
             cycles = output.cycles,
             output = ?output.output,
             "FRI proof complete"
         );
-        Ok((proof_bytes, output.proof))
+        Ok(output.proof)
     }
 
     /// Proves an `AirbenderVerifierInput` by encoding it to the prover word

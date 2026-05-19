@@ -1,4 +1,6 @@
+use airbender_host::Proof;
 use clap::ValueEnum;
+use eravm_prover_host::SnarkWrapperProof;
 
 /// Jobs received from the job worker. Which variant is expected is implied
 /// by which pipelines the worker was built with; a mismatch is a job-worker bug.
@@ -9,9 +11,7 @@ pub enum WorkerJob {
     },
     Snark {
         batch_number: u32,
-        /// Bincode-encoded `airbender_host::Proof`, as produced by the FRI prover
-        /// and stored by the job server.
-        fri_proof_bytes: Vec<u8>,
+        proof: Box<Proof>,
     },
 }
 
@@ -69,12 +69,11 @@ impl std::fmt::Display for ProofKind {
 pub enum ProofOutcome {
     Fri {
         batch_number: u32,
-        proof: Vec<u8>,
+        proof: Box<Proof>,
     },
     Snark {
         batch_number: u32,
-        proof: Vec<u8>,
-        vk: Vec<u8>,
+        proof: Box<SnarkWrapperProof>,
     },
 }
 
@@ -122,7 +121,8 @@ pub struct SubmitFriProofRequest<'a> {
     pub proof: &'a [u8],
 }
 
-/// SNARK submission payload. Both `snark_proof` and `snark_vk` are hex-encoded.
+/// SNARK submission payload. The VK is resolved once at startup and is not
+/// included here; the receiver is expected to know it out of band.
 #[serde_with::serde_as]
 #[derive(serde::Serialize)]
 pub struct SubmitSnarkProofRequest<'a> {
@@ -130,6 +130,4 @@ pub struct SubmitSnarkProofRequest<'a> {
     pub prover_id: String,
     #[serde_as(as = "serde_with::hex::Hex")]
     pub snark_proof: &'a [u8],
-    #[serde_as(as = "serde_with::hex::Hex")]
-    pub snark_vk: &'a [u8],
 }

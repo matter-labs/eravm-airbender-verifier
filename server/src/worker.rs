@@ -76,23 +76,22 @@ impl ProverWorker {
                 .as_mut()
                 .unwrap()
                 .prove_fri(batch_number, &input_words)
-                .map(|(proof, _)| ProofOutcome::Fri {
+                .map(|proof| ProofOutcome::Fri {
                     batch_number,
-                    proof,
+                    proof: Box::new(proof),
                 })
                 .map_err(|err| FailedProof::new(batch_number, ProofKind::Fri, err)),
             WorkerJob::Snark {
                 batch_number,
-                fri_proof_bytes,
+                proof,
             } => self
                 .snark
                 .as_mut()
                 .unwrap()
-                .decode_and_wrap_snark(batch_number, &fri_proof_bytes)
-                .map(|(proof, vk)| ProofOutcome::Snark {
+                .wrap_snark(batch_number, *proof)
+                .map(|proof| ProofOutcome::Snark {
                     batch_number,
-                    proof,
-                    vk,
+                    proof: Box::new(proof),
                 })
                 .map_err(|err| FailedProof::new(batch_number, ProofKind::Snark, err)),
         };

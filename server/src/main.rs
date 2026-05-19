@@ -12,7 +12,9 @@ use std::time::Duration;
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
-use eravm_prover_host::{FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline};
+use eravm_prover_host::{
+    deserialize_from_file, FriPipeline, SnarkOptions, SnarkPipeline, SnarkWrapperVK,
+};
 use tracing::info;
 
 use client::JobServerClient;
@@ -91,6 +93,12 @@ struct Cli {
     /// Worker threads for the SNARK wrapper (defaults to wrapper's own default).
     #[arg(long, env = "SNARK_THREADS")]
     snark_threads: Option<usize>,
+
+    /// Optional path to a pre-generated SNARK VK JSON. When set, the VK is
+    /// loaded once at startup and reused for every wrap; otherwise it is
+    /// derived from the setup chain.
+    #[arg(long, env = "SNARK_VK")]
+    snark_vk: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -174,19 +182,26 @@ fn build_prover(
         FriPipeline::new(dist_dir, cli.worker_threads, security)
             .context("while building FRI pipeline")
     };
-    let build_snark =
-        || SnarkPipeline::new(&snark_options).context("while building SNARK pipeline");
+    let build_snark = || -> Result<SnarkPipeline> {
+        let snark_vk = load_snark_vk(cli.snark_vk.as_deref())?;
+        SnarkPipeline::new(&snark_options, snark_vk).context("while building SNARK pipeline")
+    };
 
     let builder = ProverWorker::builder();
     Ok(match cli.mode {
         ProverMode::FriOnly => builder.with_fri(build_fri()?),
         ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
-        ProverMode::SnarkOnly => {
-            let verifier = FriVerifier::new(dist_dir, security)
-                .context("while building FRI verifier for snark-only mode")?;
-            builder.with_snark(build_snark()?.with_fri_verifier(verifier))
-        }
+        ProverMode::SnarkOnly => builder.with_snark(build_snark()?),
     })
+}
+
+fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK>> {
+    let Some(path) = path else { return Ok(None) };
+    let path_string = path.to_string_lossy().into_owned();
+    let vk: SnarkWrapperVK = deserialize_from_file(&path_string)
+        .with_context(|| format!("while loading SNARK VK from {}", path.display()))?;
+    info!(path = %path.display(), "Loaded SNARK VK from file");
+    Ok(Some(vk))
 }
 
 fn init_tracing() -> Result<()> {

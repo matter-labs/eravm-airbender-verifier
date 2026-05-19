@@ -1,7 +1,10 @@
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use eravm_prover_host::{prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions};
+use eravm_prover_host::{
+    deserialize_from_file, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions,
+    SnarkWrapperVK,
+};
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
 
@@ -92,6 +95,12 @@ struct ProveSnarkArgs {
     #[arg(long)]
     trusted_setup: Option<PathBuf>,
 
+    /// Optional path to a pre-generated SNARK VK JSON. When set, the VK is
+    /// loaded once at startup and reused for every wrap; otherwise it is
+    /// derived from the setup chain.
+    #[arg(long)]
+    snark_vk: Option<PathBuf>,
+
     #[arg(long)]
     use_zk: bool,
 
@@ -137,9 +146,23 @@ fn main() -> Result<()> {
                 use_zk: args.use_zk,
                 save_intermediates: args.save_intermediates,
             };
-            wrap_to_snark(&args.proof_files, &args.output_dir, &snark_options)
+            let snark_vk = load_snark_vk(args.snark_vk.as_deref())?;
+            wrap_to_snark(
+                &args.proof_files,
+                &args.output_dir,
+                &snark_options,
+                snark_vk,
+            )
         }
     }
+}
+
+fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK>> {
+    let Some(path) = path else { return Ok(None) };
+    let path_string = path.to_string_lossy().into_owned();
+    let vk: SnarkWrapperVK = deserialize_from_file(&path_string)
+        .with_context(|| format!("while loading SNARK VK from {}", path.display()))?;
+    Ok(Some(vk))
 }
 
 fn init_tracing() -> Result<()> {
