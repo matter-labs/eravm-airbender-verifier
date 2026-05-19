@@ -89,31 +89,71 @@ impl Default for CommitmentInput {
 /// the host↔guest channel can evolve without rewriting the format each time
 /// the payload changes.
 ///
-/// `V0` is a placeholder with no payload. It pins V1 at discriminant `1` so
+/// `V0` is a placeholder with no payload. It pins later discriminants so
 /// removing or shuffling variants does not silently change the encoding of
 /// every existing dump.
+///
+/// - `V1` matches the pre-v31 bincode shape and exists solely for backward
+///   compatibility with the on-disk corpus in
+///   `testdata/era_mainnet_batches/`. Decoded V1 inputs are upgraded to V2
+///   via `V1AirbenderVerifierInput::into_v2` before verification.
+/// - `V2` carries the post-v31 wire format used by the prover server and
+///   by all newly produced inputs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// V1 is large because the verifier payload is large; boxing would add a heap
-// indirection without changing the bincode wire shape, so we accept the size.
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
     V0,
     V1(V1AirbenderVerifierInput),
+    V2(V2AirbenderVerifierInput),
 }
 
 impl AirbenderVerifierInput {
-    /// Extract the V1 payload, erroring on the reserved `V0` marker.
-    pub fn into_v1(self) -> anyhow::Result<V1AirbenderVerifierInput> {
+    /// Extract a V2 payload, upgrading V1 in place. Errors on the reserved
+    /// `V0` marker.
+    pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
-            AirbenderVerifierInput::V1(v1) => Ok(v1),
             AirbenderVerifierInput::V0 => {
-                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1")
+                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1 or V2")
             }
+            AirbenderVerifierInput::V1(v1) => Ok(v1.into_v2()),
+            AirbenderVerifierInput::V2(v2) => Ok(v2),
         }
     }
 }
 
-/// Verifier input payload (V1).
+/// Pre-v31 verifier input payload, kept for backward compatibility with the
+/// on-disk corpus. Field types snapshot the wire shape that existed before
+/// the v31 refactor of `L1BatchEnv` and `PubdataParams` — see
+/// [`crate::v1_compat`]. New inputs should be encoded as `V2`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V1AirbenderVerifierInput {
+    pub vm_run_data: VMRunWitnessInputData,
+    pub merkle_paths: WitnessInputMerklePaths,
+    pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
+    pub l1_batch_env: crate::v1_compat::L1BatchEnvV1,
+    pub system_env: SystemEnv,
+    pub pubdata_params: crate::v1_compat::PubdataParamsV1,
+    pub commitment_input: Option<CommitmentInput>,
+}
+
+impl V1AirbenderVerifierInput {
+    /// Upgrade to the post-v31 payload shape, filling the new `interop_fee` and
+    /// `settlement_layer` fields with the implicit values a pre-v31 chain
+    /// would have carried (see [`crate::v1_compat`]).
+    pub fn into_v2(self) -> V2AirbenderVerifierInput {
+        V2AirbenderVerifierInput {
+            vm_run_data: self.vm_run_data,
+            merkle_paths: self.merkle_paths,
+            l2_blocks_execution_data: self.l2_blocks_execution_data,
+            l1_batch_env: self.l1_batch_env.upgrade(),
+            system_env: self.system_env,
+            pubdata_params: self.pubdata_params.upgrade(),
+            commitment_input: self.commitment_input,
+        }
+    }
+}
+
+/// Post-v31 verifier input payload.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
@@ -121,7 +161,7 @@ impl AirbenderVerifierInput {
 /// (e.g., the serialization roundtrip test) can construct an input without
 /// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1AirbenderVerifierInput {
+pub struct V2AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,

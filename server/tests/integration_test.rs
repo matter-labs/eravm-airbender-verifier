@@ -274,17 +274,17 @@ fn load_batch_and_expected_public_input() -> (AirbenderVerifierInput, [u32; 8]) 
         number: 506093,
         path: batch_path,
     };
-    let v1 = load_batch(&batch_input)
+    let v2 = load_batch(&batch_input)
         .expect("failed to load batch")
-        .into_v1()
-        .expect("expected AirbenderVerifierInput::V1 from disk");
-    let expected_public_input = v1
+        .into_v2()
+        .expect("expected V1 or V2 payload from disk");
+    let expected_public_input = v2
         .clone()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
     println!("[test] Native verify produced public input: {expected_public_input:?}");
-    (AirbenderVerifierInput::V1(v1), expected_public_input)
+    (AirbenderVerifierInput::V2(v2), expected_public_input)
 }
 
 /// Verifies a bincode-encoded `Proof` payload against the cached VK.

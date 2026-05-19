@@ -9,6 +9,7 @@ pub mod commitment;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod types;
+pub mod v1_compat;
 
 use anyhow::{bail, Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
@@ -43,7 +44,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
+    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V2AirbenderVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
@@ -82,21 +83,21 @@ pub trait Verify {
 }
 
 impl Verify for AirbenderVerifierInput {
-    /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
-    /// payload, so it produces an error.
+    /// Unwrap the payload (upgrading V1 to V2) and verify it. The reserved
+    /// `V0` marker has no payload, so it produces an error.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        self.into_v1()?.verify()
+        self.into_v2()?.verify()
     }
 }
 
-impl Verify for V1AirbenderVerifierInput {
+impl Verify for V2AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some`.
     fn verify(mut self) -> anyhow::Result<VerificationResult> {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
         let commitment_input = self.commitment_input.take().context(
-            "V1AirbenderVerifierInput::verify requires `commitment_input`; \
+            "V2AirbenderVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;
         let state = execute(self)?;
@@ -140,7 +141,7 @@ impl VmExecutionState {
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: V2AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -722,7 +723,11 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::types::{
+        AirbenderVerifierInput, V1AirbenderVerifierInput, V2AirbenderVerifierInput,
+        VMRunWitnessInputData,
+    };
+    use crate::v1_compat::{L1BatchEnvV1, PubdataParamsV1};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -895,21 +900,56 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_serialization_roundtrip() {
-        let v1 = V1AirbenderVerifierInput {
-            vm_run_data: VMRunWitnessInputData {
-                l1_batch_number: Default::default(),
-                used_bytecodes: Default::default(),
-                initial_heap_content: vec![],
-                protocol_version: Default::default(),
-                bootloader_code: vec![],
-                default_account_code_hash: Default::default(),
-                evm_emulator_code_hash: Some(Default::default()),
-                storage_refunds: vec![],
-                pubdata_costs: vec![],
-                witness_block_state: Default::default(),
+    fn sample_vm_run_data() -> VMRunWitnessInputData {
+        VMRunWitnessInputData {
+            l1_batch_number: Default::default(),
+            used_bytecodes: Default::default(),
+            initial_heap_content: vec![],
+            protocol_version: Default::default(),
+            bootloader_code: vec![],
+            default_account_code_hash: Default::default(),
+            evm_emulator_code_hash: Some(Default::default()),
+            storage_refunds: vec![],
+            pubdata_costs: vec![],
+            witness_block_state: Default::default(),
+        }
+    }
+
+    fn sample_first_l2_block() -> L2BlockEnv {
+        L2BlockEnv {
+            number: 0,
+            timestamp: 0,
+            prev_block_hash: H256([1; 32]),
+            max_virtual_blocks_to_create: 0,
+            interop_roots: vec![],
+        }
+    }
+
+    fn sample_system_env() -> SystemEnv {
+        SystemEnv {
+            zk_porter_available: false,
+            version: Default::default(),
+            base_system_smart_contracts: BaseSystemContracts {
+                bootloader: SystemContractCode {
+                    code: vec![1; 32],
+                    hash: H256([1; 32]),
+                },
+                default_aa: SystemContractCode {
+                    code: vec![1; 32],
+                    hash: H256([1; 32]),
+                },
+                evm_emulator: None,
             },
+            bootloader_gas_limit: 0,
+            execution_mode: TxExecutionMode::VerifyExecute,
+            default_validation_computational_gas_limit: 0,
+            chain_id: Default::default(),
+        }
+    }
+
+    fn sample_v2() -> V2AirbenderVerifierInput {
+        V2AirbenderVerifierInput {
+            vm_run_data: sample_vm_run_data(),
             merkle_paths: WitnessInputMerklePaths::new(0),
             l2_blocks_execution_data: vec![],
             l1_batch_env: L1BatchEnv {
@@ -920,34 +960,10 @@ mod tests {
                 interop_fee: U256::zero(),
                 fee_account: Default::default(),
                 enforced_base_fee: None,
-                first_l2_block: L2BlockEnv {
-                    number: 0,
-                    timestamp: 0,
-                    prev_block_hash: H256([1; 32]),
-                    max_virtual_blocks_to_create: 0,
-                    interop_roots: vec![],
-                },
+                first_l2_block: sample_first_l2_block(),
                 settlement_layer: SettlementLayer::for_tests(),
             },
-            system_env: SystemEnv {
-                zk_porter_available: false,
-                version: Default::default(),
-                base_system_smart_contracts: BaseSystemContracts {
-                    bootloader: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    default_aa: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    evm_emulator: None,
-                },
-                bootloader_gas_limit: 0,
-                execution_mode: TxExecutionMode::VerifyExecute,
-                default_validation_computational_gas_limit: 0,
-                chain_id: Default::default(),
-            },
+            system_env: sample_system_env(),
             pubdata_params: PubdataParams::new(
                 L2PubdataValidator::CommitmentScheme(
                     L2DACommitmentScheme::BlobsAndPubdataKeccak256,
@@ -956,14 +972,95 @@ mod tests {
             )
             .unwrap(),
             commitment_input: None,
-        };
-        let avi = AirbenderVerifierInput::V1(v1);
+        }
+    }
+
+    fn sample_v1() -> V1AirbenderVerifierInput {
+        V1AirbenderVerifierInput {
+            vm_run_data: sample_vm_run_data(),
+            merkle_paths: WitnessInputMerklePaths::new(0),
+            l2_blocks_execution_data: vec![],
+            l1_batch_env: L1BatchEnvV1 {
+                previous_batch_hash: Some(H256([1; 32])),
+                number: Default::default(),
+                timestamp: 0,
+                fee_input: Default::default(),
+                fee_account: Default::default(),
+                enforced_base_fee: None,
+                first_l2_block: sample_first_l2_block(),
+            },
+            system_env: sample_system_env(),
+            pubdata_params: PubdataParamsV1 {
+                l2_da_validator_address: Default::default(),
+                pubdata_type: Default::default(),
+            },
+            commitment_input: None,
+        }
+    }
+
+    /// Locks the V2 (post-v31) bincode wire format. If this breaks, every
+    /// V2-encoded payload — including those produced by zksync-era after v31 —
+    /// will fail to load.
+    #[test]
+    fn test_serialization_roundtrip_v2() {
+        let avi = AirbenderVerifierInput::V2(sample_v2());
         let serialized =
             bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
         let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
         assert_eq!(avi, deserialized);
+    }
+
+    /// Locks the V1 (pre-v31) bincode wire format. Every batch in
+    /// `testdata/era_mainnet_batches/` is encoded as `V1(...)` with the
+    /// pre-v31 `L1BatchEnv` / `PubdataParams` shapes — if this test ever
+    /// fails, the on-disk corpus stops loading.
+    #[test]
+    fn test_serialization_roundtrip_v1() {
+        let avi = AirbenderVerifierInput::V1(sample_v1());
+        let serialized = bincode_v1::serialize(&avi).expect("Failed to serialize V1 input.");
+        let deserialized: AirbenderVerifierInput =
+            bincode_v1::deserialize(&serialized).expect("Failed to deserialize V1 input.");
+
+        assert_eq!(avi, deserialized);
+    }
+
+    /// V1 inputs round-trip through `into_v2` to a V2 with the documented
+    /// default `interop_fee` and `settlement_layer` filled in.
+    #[test]
+    fn test_v1_upgrade_to_v2() {
+        let v1 = sample_v1();
+        let v2 = v1.clone().into_v2();
+        assert_eq!(v2.l1_batch_env.interop_fee, U256::zero());
+        assert_eq!(
+            v2.l1_batch_env.settlement_layer,
+            SettlementLayer::for_tests()
+        );
+        // Other fields preserved.
+        assert_eq!(v2.l1_batch_env.number, v1.l1_batch_env.number);
+        assert_eq!(v2.l1_batch_env.timestamp, v1.l1_batch_env.timestamp);
+        assert_eq!(
+            v2.pubdata_params.pubdata_type(),
+            v1.pubdata_params.pubdata_type
+        );
+    }
+
+    /// `AirbenderVerifierInput::into_v2` accepts both V1 and V2, and the V1
+    /// path produces the same upgraded shape as calling
+    /// `V1AirbenderVerifierInput::into_v2` directly.
+    #[test]
+    fn test_into_v2_dispatch() {
+        let v1 = sample_v1();
+        let from_v1 = AirbenderVerifierInput::V1(v1.clone()).into_v2().unwrap();
+        let direct = v1.into_v2();
+        assert_eq!(from_v1, direct);
+
+        let v2 = sample_v2();
+        let unwrapped = AirbenderVerifierInput::V2(v2.clone()).into_v2().unwrap();
+        assert_eq!(unwrapped, v2);
+
+        assert!(AirbenderVerifierInput::V0.into_v2().is_err());
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
