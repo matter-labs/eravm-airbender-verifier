@@ -62,6 +62,32 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    pub fn fri_success(batch_number: u32, proof: Vec<u8>) -> Self {
+        Self {
+            batch_number,
+            kind: ProofKind::Fri,
+            result: Ok(Artifact::Fri { proof }),
+        }
+    }
+
+    pub fn snark_success(batch_number: u32, proof: Vec<u8>, vk: Vec<u8>) -> Self {
+        Self {
+            batch_number,
+            kind: ProofKind::Snark,
+            result: Ok(Artifact::Snark { proof, vk }),
+        }
+    }
+
+    /// Captures the full anyhow error chain (`{err:#}`) in `result` so the
+    /// network worker can log it once on receipt.
+    pub fn failed(batch_number: u32, kind: ProofKind, err: anyhow::Error) -> Self {
+        Self {
+            batch_number,
+            kind,
+            result: Err(format!("{err:#}")),
+        }
+    }
+
     pub fn settles_job(&self, mode: ProverMode) -> bool {
         matches!(
             (mode, self.kind),

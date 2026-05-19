@@ -16,7 +16,7 @@ use tracing::info;
 
 use network::NetworkWorker;
 use types::ProverMode;
-use worker::{PipelineMode, ProverWorker};
+use worker::{ProverWorker, ProverWorkerBuilder};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -104,7 +104,7 @@ fn main() -> Result<()> {
     let dist_dir = cli.guest_dist_dir.clone().unwrap_or_else(default_dist_dir);
     let security = SecurityLevel::default();
 
-    let pipeline_mode = build_pipeline_mode(&cli, &dist_dir, security)?;
+    let prover_builder = build_prover(&cli, &dist_dir, security)?;
 
     let connect_timeout = Duration::from_millis(cli.http_connect_timeout_ms);
     let poll_client = reqwest::blocking::Client::builder()
@@ -140,9 +140,10 @@ fn main() -> Result<()> {
         "Starting prover server"
     );
 
-    let prover_handle = std::thread::spawn(move || {
-        ProverWorker::new(pipeline_mode, job_rx, result_tx).run();
-    });
+    let prover = prover_builder
+        .build(job_rx, result_tx)
+        .context("while building prover worker")?;
+    let prover_handle = std::thread::spawn(move || prover.run());
 
     NetworkWorker {
         mode: cli.mode,
@@ -163,11 +164,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn build_pipeline_mode(
+fn build_prover(
     cli: &Cli,
     dist_dir: &std::path::Path,
     security: SecurityLevel,
-) -> Result<PipelineMode> {
+) -> Result<ProverWorkerBuilder> {
     let snark_options = SnarkOptions {
         worker_threads: cli.snark_threads,
         trusted_setup: cli.snark_trusted_setup.clone(),
@@ -183,13 +184,16 @@ fn build_pipeline_mode(
     let build_snark =
         || SnarkPipeline::new(&snark_options).context("while building SNARK pipeline");
 
+    let builder = ProverWorker::builder();
     Ok(match cli.mode {
-        ProverMode::FriOnly => PipelineMode::FriOnly(build_fri()?),
-        ProverMode::FriSnark => PipelineMode::FriSnark(build_fri()?, build_snark()?),
+        ProverMode::FriOnly => builder.with_fri(build_fri()?),
+        ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
         ProverMode::SnarkOnly => {
             let verifier = FriVerifier::new(dist_dir, security)
                 .context("while building FRI verifier for snark-only mode")?;
-            PipelineMode::SnarkOnly(verifier, build_snark()?)
+            builder
+                .with_fri_verifier(verifier)
+                .with_snark(build_snark()?)
         }
     })
 }
