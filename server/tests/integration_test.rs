@@ -6,8 +6,10 @@
 //!
 //! * `prover_server_proves_one_batch` — default `fri-only` mode; verifies the FRI proof.
 //! * `prover_server_proves_fri_snark` — `fri-snark` mode; checks that both the FRI and SNARK
-//!   submissions land and the FRI proof verifies. The CPU CRS is fetched into the cargo target
-//!   tmpdir on first run; override the path via `IT_SNARK_TRUSTED_SETUP` to reuse a local copy.
+//!   submissions land and the FRI proof verifies. The trusted setup is fetched into the system
+//!   temp dir on first run (matches the build's `snark_gpu` feature — GPU `setup_compact.key`
+//!   when enabled, CPU `setup_2^24.key` otherwise); override the path via
+//!   `IT_SNARK_TRUSTED_SETUP` to reuse a local copy.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -27,7 +29,8 @@ use airbender_host::{
     Program, Proof, ProverLevel, SecurityLevel, VerificationKey, VerificationRequest, Verifier,
 };
 use eravm_prover_host::{
-    default_trusted_setup_download_url, download_trusted_setup_if_not_present, SnarkWrapperProof,
+    default_trusted_setup_download_url, default_trusted_setup_path,
+    download_trusted_setup_if_not_present, SnarkWrapperProof,
 };
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
@@ -180,16 +183,22 @@ fn prover_server_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_eravm-prover-server")))
 }
 
-/// CRS used by the SNARK wrapper. The server crate builds without
-/// `snark_gpu`, so this must be the CPU CRS (`setup.key`, not `setup_gpu.key`).
+/// CRS used by the SNARK wrapper. The build's `snark_gpu` feature picks the
+/// right URL (GPU `setup_compact.key` vs CPU `setup_2^24.key`).
 ///
 /// If `IT_SNARK_TRUSTED_SETUP` is set, that path is used verbatim. Otherwise
-/// the file is fetched into the cargo target tmpdir on first run — keeps the
-/// test self-contained for fresh checkouts without re-downloading every run.
+/// the file is fetched into the system temp directory on first run — keeps
+/// the test self-contained without depending on `target/` being writable
+/// (some CI setups build and test as different users). The cache filename
+/// includes the feature suffix so CPU and GPU runs don't clobber each other.
 fn snark_trusted_setup_path() -> PathBuf {
     let path = std::env::var_os("IT_SNARK_TRUSTED_SETUP")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("snark_setup.key"));
+        .unwrap_or_else(|| {
+            let mut name = std::ffi::OsString::from("eravm-airbender-");
+            name.push(default_trusted_setup_path().as_os_str());
+            std::env::temp_dir().join(name)
+        });
 
     download_trusted_setup_if_not_present(&path, default_trusted_setup_download_url())
         .expect("failed to provision SNARK trusted setup for integration test");

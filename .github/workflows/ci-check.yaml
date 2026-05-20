@@ -234,21 +234,23 @@ jobs:
         working-directory: ./guest
         run: cargo airbender build
 
-      - name: Build eravm-prover-server
+      - name: Build eravm-prover-server (snark_gpu)
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo build --release -p eravm-prover-server --locked
+          cargo build --release -p eravm-prover-server --locked --features snark_gpu
           ls -lh target/release/eravm-prover-server
 
       # Compile the integration test binary without running it. cargo emits
       # JSON metadata that tells us the exact path of the test executable
-      # (it has a hash-suffixed name in target/release/deps/).
+      # (it has a hash-suffixed name in target/release/deps/). Match the
+      # server build's `snark_gpu` feature so the test downloads the GPU CRS
+      # and the spawned binary's wrapper matches.
       - name: Build integration test binary
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo test --release --locked \
+          cargo test --release --locked --features snark_gpu \
             --package eravm-prover-server --test integration_test \
             --no-run --message-format=json > test-build.json
           test_bin=$(jq -r 'select(.executable != null and (.target.name == "integration_test")) | .executable' test-build.json | tail -n1)

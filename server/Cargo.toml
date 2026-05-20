@@ -28,3 +28,8 @@ axum.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 zksync_cli_utils.workspace = true
+
+[features]
+# Compile the SNARK wrapper in GPU mode. Requires `bellman-cuda` (see README).
+# Forwards to the host crate's identically-named feature.
+snark_gpu = ["eravm-prover-host/snark_gpu"]
