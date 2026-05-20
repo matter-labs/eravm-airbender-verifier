@@ -87,6 +87,16 @@ impl FriVerifier {
             .verify(proof, &self.vk, VerificationRequest::real(&output))
             .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
     }
+
+    /// Verifies a FRI proof envelope against the cached VK without binding to
+    /// a specific guest output — only structural / cryptographic validity is
+    /// checked. Used by the SNARK-only server mode, which receives proofs from
+    /// the job server and does not have the original receipt at hand.
+    pub fn verify_envelope(&self, batch_number: u64, proof: &Proof) -> Result<()> {
+        self.verifier
+            .verify(proof, &self.vk, VerificationRequest::empty())
+            .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
+    }
 }
 
 pub struct FriPipeline {

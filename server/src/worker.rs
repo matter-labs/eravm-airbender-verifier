@@ -2,14 +2,16 @@ use std::sync::mpsc::{Receiver, SendError, SyncSender};
 use std::time::{Duration, Instant};
 
 use airbender_host::Proof;
-use anyhow::Result;
-use eravm_prover_host::{FriPipeline, SnarkPipeline};
+use anyhow::{Context, Result};
+use eravm_prover_host::{FriPipeline, FriVerifier, RawFriProof, SnarkPipeline};
+use tracing::info;
 use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
 use crate::types::{FailedProof, ProofKind, ProofOutcome, ProverResult, WorkerJob};
 
 pub struct ProverWorker {
     fri: Option<FriPipeline>,
+    fri_verifier: Option<FriVerifier>,
     snark: Option<SnarkPipeline>,
     job_rx: Receiver<WorkerJob>,
     result_tx: SyncSender<ProverResult>,
@@ -20,12 +22,18 @@ pub struct ProverWorker {
 #[derive(Default)]
 pub struct ProverWorkerBuilder {
     fri: Option<FriPipeline>,
+    fri_verifier: Option<FriVerifier>,
     snark: Option<SnarkPipeline>,
 }
 
 impl ProverWorkerBuilder {
     pub fn with_fri(mut self, fri: FriPipeline) -> Self {
         self.fri = Some(fri);
+        self
+    }
+
+    pub fn with_fri_verifier(mut self, verifier: FriVerifier) -> Self {
+        self.fri_verifier = Some(verifier);
         self
     }
 
@@ -46,8 +54,18 @@ impl ProverWorkerBuilder {
         if self.fri.is_none() && self.snark.is_none() {
             anyhow::bail!("ProverWorker builder: must set at least one of `fri` or `snark`");
         }
+        if self.fri.is_some() && self.fri_verifier.is_some() {
+            anyhow::bail!(
+                "ProverWorker builder: `fri_verifier` is redundant when `fri` is set — \
+                 the FRI pipeline verifies the proofs it produces"
+            );
+        }
+        if self.fri_verifier.is_some() && self.snark.is_none() {
+            anyhow::bail!("ProverWorker builder: `fri_verifier` requires `snark`");
+        }
         Ok(ProverWorker {
             fri: self.fri,
+            fri_verifier: self.fri_verifier,
             snark: self.snark,
             job_rx,
             result_tx,
@@ -98,7 +116,7 @@ impl ProverWorker {
             WorkerJob::Snark {
                 batch_number,
                 proof,
-            } => match into_raw_fri_proof(*proof) {
+            } => match self.prepare_snark_input(batch_number, *proof) {
                 Ok(raw_proof) => {
                     let started = Instant::now();
                     let result = self.snark.as_mut().unwrap().prove(raw_proof);
@@ -120,13 +138,26 @@ impl ProverWorker {
         };
         self.result_tx.send(result)
     }
-}
 
-fn into_raw_fri_proof(proof: Proof) -> Result<eravm_prover_host::RawFriProof> {
-    match proof {
-        Proof::Real(real) => Ok(real.into_inner()),
-        Proof::Dev(_) => {
-            anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
+    /// Strips the proof envelope down to a raw FRI proof for the SNARK
+    /// wrapper. When the worker carries a standalone FRI verifier (the
+    /// `snark-only` mode), the envelope is also verified against the cached
+    /// VK before unwrapping — `fri-snark` mode skips this because the proof
+    /// has already been verified by [`FriPipeline::prove_input`].
+    fn prepare_snark_input(&self, batch_number: u32, proof: Proof) -> Result<RawFriProof> {
+        if let Some(verifier) = self.fri_verifier.as_ref() {
+            verifier
+                .verify_envelope(batch_number as u64, &proof)
+                .with_context(|| {
+                    format!("rejecting unverified FRI proof for batch {batch_number}")
+                })?;
+            info!(batch_number, "Verified incoming FRI proof");
+        }
+        match proof {
+            Proof::Real(real) => Ok(real.into_inner()),
+            Proof::Dev(_) => {
+                anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
+            }
         }
     }
 }

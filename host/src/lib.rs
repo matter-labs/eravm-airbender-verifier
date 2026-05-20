@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{dist_dir, FriPipeline, ProveOutput, RawFriProof};
+pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
 pub use crate::snark::{SnarkOptions, SnarkPipeline};
 pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 

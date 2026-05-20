@@ -13,7 +13,7 @@ use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
-    deserialize_from_file, FriPipeline, SnarkOptions, SnarkPipeline, SnarkWrapperVK,
+    deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline, SnarkWrapperVK,
 };
 use tracing::info;
 
@@ -191,7 +191,16 @@ fn build_prover(
     Ok(match cli.mode {
         ProverMode::FriOnly => builder.with_fri(build_fri()?),
         ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
-        ProverMode::SnarkOnly => builder.with_snark(build_snark()?),
+        ProverMode::SnarkOnly => {
+            // The worker doesn't run the GPU FRI prover here, but the FRI
+            // proofs we receive from the job server still have to be verified
+            // before we burn cycles wrapping them into a SNARK.
+            let verifier = FriVerifier::new(dist_dir, security)
+                .context("while building FRI verifier for snark-only mode")?;
+            builder
+                .with_fri_verifier(verifier)
+                .with_snark(build_snark()?)
+        }
     })
 }
 
