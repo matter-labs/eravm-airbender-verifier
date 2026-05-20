@@ -42,24 +42,24 @@ impl JobServerClient {
         connection_timeout: Duration,
         poll_timeout: Duration,
         submit_timeout: Duration,
-    ) -> Self {
+    ) -> Result<Self> {
         let poll_client = reqwest::blocking::Client::builder()
             .connect_timeout(connection_timeout)
             .timeout(poll_timeout)
             .build()
-            .expect("while building poll HTTP client");
+            .context("while building poll HTTP client")?;
         let submit_client = reqwest::blocking::Client::builder()
             .connect_timeout(connection_timeout)
             .timeout(submit_timeout)
             .build()
-            .expect("while building submit HTTP client");
-        Self {
+            .context("while building submit HTTP client")?;
+        Ok(Self {
             poll_client,
             submit_client,
             server_url,
             prover_id,
             submit_attempts,
-        }
+        })
     }
 
     pub fn fetch_fri_job(&self) -> Result<Option<WorkerJob>> {

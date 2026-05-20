@@ -151,7 +151,8 @@ fn main() -> Result<()> {
         Duration::from_millis(cli.http_connect_timeout_ms),
         Duration::from_millis(cli.poll_timeout_ms),
         Duration::from_millis(cli.submit_timeout_ms),
-    );
+    )
+    .context("while building job server client")?;
 
     let job_worker_handle: std::thread::JoinHandle<()> = std::thread::spawn(move || {
         JobWorker::new(client, job_tx, result_rx, shutdown, cli.mode, poll_interval).run()

@@ -1,6 +1,7 @@
 use airbender_host::Proof;
 use clap::ValueEnum;
 use eravm_prover_host::SnarkWrapperProof;
+use zksync_prover_metrics::ProofType;
 
 /// Jobs received from the job worker. Which variant is expected is implied
 /// by which pipelines the worker was built with; a mismatch is a job-worker bug.
@@ -60,12 +61,21 @@ impl std::fmt::Display for ProofKind {
     }
 }
 
+impl From<ProofKind> for ProofType {
+    fn from(kind: ProofKind) -> Self {
+        match kind {
+            ProofKind::Fri => ProofType::Fri,
+            ProofKind::Snark => ProofType::Snark,
+        }
+    }
+}
+
 /// Successful proving outcome emitted by the prover worker. Failures travel
 /// as the `Err` arm of [`ProverResult`] over the same channel. Every fetched
 /// job produces at least one [`ProverResult`] — failures included — so the
 /// job worker can account for it exactly once. In `fri-snark` mode a single
-/// fetched job emits two results (FRI then SNARK); the FRI result settles
-/// accounting and the SNARK result is a post-settlement step.
+/// fetched job emits two results (FRI then SNARK); each settles its own
+/// `pending_jobs` bucket (FRI then SNARK) as it lands.
 pub enum ProofOutcome {
     Fri {
         batch_number: u32,

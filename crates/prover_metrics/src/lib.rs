@@ -12,8 +12,8 @@ pub enum ProofStatus {
     Failure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelValue)]
-#[metrics(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EncodeLabelValue, EncodeLabelSet)]
+#[metrics(rename_all = "snake_case", label = "kind")]
 pub enum ProofType {
     Fri,
     Snark,
@@ -37,8 +37,12 @@ pub struct ProverMetrics {
     /// Total number of proof generation attempts.
     pub proof_count: Family<ProofLabels, Counter>,
 
-    /// Number of jobs that have been fetched from the server but not yet submitted.
-    pub pending_jobs: Gauge,
+    /// Number of jobs currently in flight, labeled by phase. A FRI job is
+    /// counted under `fri` from fetch until its FRI proof is submitted, and a
+    /// SNARK job is counted under `snark` from when it enters the SNARK
+    /// pipeline (either a server-fetched SNARK job, or the local follow-up in
+    /// `fri-snark` mode) until its SNARK proof is submitted.
+    pub pending_jobs: Family<ProofType, Gauge>,
 }
 
 #[vise::register]
