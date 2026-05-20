@@ -6,8 +6,8 @@
 //!
 //! * `prover_server_proves_one_batch` — default `fri-only` mode; verifies the FRI proof.
 //! * `prover_server_proves_fri_snark` — `fri-snark` mode; checks that both the FRI and SNARK
-//!   submissions land and the FRI proof verifies. Additionally requires `IT_SNARK_TRUSTED_SETUP`
-//!   to point at a CPU CRS file (the server crate builds the SNARK wrapper without `snark_gpu`).
+//!   submissions land and the FRI proof verifies. The CPU CRS is fetched into the cargo target
+//!   tmpdir on first run; override the path via `IT_SNARK_TRUSTED_SETUP` to reuse a local copy.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -26,7 +26,9 @@ use tokio::sync::oneshot;
 use airbender_host::{
     Program, Proof, ProverLevel, SecurityLevel, VerificationKey, VerificationRequest, Verifier,
 };
-use eravm_prover_host::SnarkWrapperProof;
+use eravm_prover_host::{
+    default_trusted_setup_download_url, download_trusted_setup_if_not_present, SnarkWrapperProof,
+};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
@@ -180,11 +182,19 @@ fn prover_server_bin() -> PathBuf {
 
 /// CRS used by the SNARK wrapper. The server crate builds without
 /// `snark_gpu`, so this must be the CPU CRS (`setup.key`, not `setup_gpu.key`).
+///
+/// If `IT_SNARK_TRUSTED_SETUP` is set, that path is used verbatim. Otherwise
+/// the file is fetched into the cargo target tmpdir on first run — keeps the
+/// test self-contained for fresh checkouts without re-downloading every run.
 fn snark_trusted_setup_path() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("IT_SNARK_TRUSTED_SETUP")
-            .expect("IT_SNARK_TRUSTED_SETUP must point to the CPU CRS file (e.g. setup.key)"),
-    )
+    let path = std::env::var_os("IT_SNARK_TRUSTED_SETUP")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("snark_setup.key"));
+
+    download_trusted_setup_if_not_present(&path, default_trusted_setup_download_url())
+        .expect("failed to provision SNARK trusted setup for integration test");
+
+    path
 }
 
 /// RAII guard that kills the child process on drop.
@@ -388,21 +398,18 @@ async fn prover_server_proves_one_batch() {
 /// verifier.
 ///
 /// Additional setup vs the fri-only test:
-/// * `IT_SNARK_TRUSTED_SETUP` must point at the CPU CRS file (`setup.key`).
+/// * CPU CRS is provisioned by `snark_trusted_setup_path()` (downloaded on
+///   first run; reusable via `IT_SNARK_TRUSTED_SETUP`).
 /// * Timeout is bumped to `FRI_SNARK_TEST_TIMEOUT` since CPU SNARK wrapping
 ///   dominates wall-clock time.
-#[ignore = "requires GPU, built guest binary, LFS batch 506093.bin.gz, and IT_SNARK_TRUSTED_SETUP"]
+#[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_proves_fri_snark() {
     let dist_dir = guest_dist_dir();
     println!("[test] Guest dist dir: {}", dist_dir.display());
 
     let trusted_setup = snark_trusted_setup_path();
-    assert!(
-        trusted_setup.exists(),
-        "IT_SNARK_TRUSTED_SETUP points at non-existent file: {}",
-        trusted_setup.display()
-    );
+    println!("[test] SNARK trusted setup: {}", trusted_setup.display());
 
     let (verifier_input, expected_public_input) = load_batch_and_expected_public_input();
 
@@ -456,7 +463,7 @@ async fn prover_server_proves_fri_snark() {
         )
         .env("PROVER_MODE", "fri-snark")
         .env(
-            "SNARK_TRUSTED_SETUP",
+            "SNARK_TRUSTED_SETUP_FILE",
             trusted_setup
                 .to_str()
                 .expect("non-UTF8 SNARK trusted setup path"),

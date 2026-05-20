@@ -1,4 +1,5 @@
 mod fri;
+mod setup_download;
 mod snark;
 mod statistics;
 
@@ -9,6 +10,10 @@ use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
 pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
+pub use crate::setup_download::{
+    default_trusted_setup_download_url, default_trusted_setup_path,
+    download_trusted_setup_if_not_present,
+};
 pub use crate::snark::{SnarkOptions, SnarkPipeline};
 pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 

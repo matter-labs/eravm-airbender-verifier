@@ -11,7 +11,8 @@ license.workspace = true
 airbender-host = { workspace = true, features = ["gpu-prover"] }
 anyhow.workspace = true
 bincode.workspace = true
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

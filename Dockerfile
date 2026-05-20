@@ -66,6 +66,15 @@ ENV CUDAARCHS="80;89;90"
 # Step 2: build the server binary.
 RUN cargo build --release --locked --package eravm-prover-server
 
+# Step 3: pre-fetch the bellman SNARK trusted setup so the runtime image ships
+# with it already in place. Matches the default URL used by the host CLI's
+# `download-trusted-setup` subcommand (CPU; server builds without `snark_gpu`).
+# Override via `--build-arg SNARK_TRUSTED_SETUP_URL=...`.
+ARG SNARK_TRUSTED_SETUP_URL="https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2^24.key"
+RUN mkdir -p /setup \
+    && curl --fail --location --retry 5 --retry-delay 5 \
+        "${SNARK_TRUSTED_SETUP_URL}" -o /setup/setup.key
+
 # ─── Runtime stage ────────────────────────────────────────────────────────────
 FROM nvidia/cuda:12.9.1-runtime-ubuntu22.04
 
@@ -77,8 +86,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /workspace/target/release/eravm-prover-server /usr/local/bin/eravm-prover-server
 COPY --from=builder /workspace/guest/dist/app /guest-program
+COPY --from=builder /setup/setup.key /setup/setup.key
 
 ENV PROVER_GUEST_DIST_DIR=/guest-program
+
+# Bellman SNARK trusted setup ships with the image. The server fails fast at
+# startup if the file is missing; override `SNARK_TRUSTED_SETUP_FILE` only if
+# you are mounting it from a different path.
+ENV SNARK_TRUSTED_SETUP_FILE=/setup/setup.key
 
 # Optional Prometheus metrics port
 EXPOSE 3000

@@ -77,11 +77,11 @@ struct Cli {
     #[arg(long, env = "PROVER_GUEST_DIST_DIR")]
     guest_dist_dir: Option<PathBuf>,
 
-    /// Path to the bellman trusted setup (CRS) for the SNARK wrapper.
+    /// Path to the trusted setup (CRS) for the SNARK wrapper.
     /// Required when `--mode` is `fri-snark` or `snark-only`.
     #[arg(
         long,
-        env = "SNARK_TRUSTED_SETUP",
+        env = "SNARK_TRUSTED_SETUP_FILE",
         required_if_eq_any = [("mode", "fri-snark"), ("mode", "snark-only")],
     )]
     snark_trusted_setup: Option<PathBuf>,
