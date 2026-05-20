@@ -204,15 +204,36 @@ impl<'de> Deserialize<'de> for PubdataParams {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Repr {
-            pubdata_validator: L2PubdataValidator,
-            pubdata_type: PubdataType,
-        }
-        let Repr {
-            pubdata_validator,
-            pubdata_type,
-        } = Repr::deserialize(deserializer)?;
+        // On human-readable wires (JSON), accept both the current
+        // `pubdata_validator` field and the pre-v31 `l2_da_validator_address`
+        // field so a mixed-version sender (an EN that hasn't picked up the
+        // new field yet) can still be decoded; `pubdata_validator` wins when
+        // both are present. The derived `Serialize` only emits the two
+        // canonical fields, and bincode is positional, so the binary wire
+        // never carries the legacy slot and uses the simpler shape.
+        let (pubdata_validator, pubdata_type) = if deserializer.is_human_readable() {
+            #[derive(Deserialize)]
+            struct JsonRepr {
+                pubdata_validator: Option<L2PubdataValidator>,
+                l2_da_validator_address: Option<Address>,
+                pubdata_type: PubdataType,
+            }
+            let r = JsonRepr::deserialize(deserializer)?;
+            let validator = match (r.pubdata_validator, r.l2_da_validator_address) {
+                (Some(v), _) => v,
+                (None, Some(addr)) => L2PubdataValidator::Address(addr),
+                (None, None) => return Err(serde::de::Error::missing_field("pubdata_validator")),
+            };
+            (validator, r.pubdata_type)
+        } else {
+            #[derive(Deserialize)]
+            struct BinaryRepr {
+                pubdata_validator: L2PubdataValidator,
+                pubdata_type: PubdataType,
+            }
+            let r = BinaryRepr::deserialize(deserializer)?;
+            (r.pubdata_validator, r.pubdata_type)
+        };
         Self::new(pubdata_validator, pubdata_type).map_err(serde::de::Error::custom)
     }
 }
@@ -292,5 +313,53 @@ mod tests {
         let (back, _): (PubdataParams, usize) =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(back, params);
+    }
+
+    /// Pre-v31 ENs (before upstream PR #4730) only emit the legacy
+    /// `l2_da_validator_address` field. Mirror upstream's `Deserialize` and
+    /// wrap such payloads into the `Address` variant.
+    #[test]
+    fn pubdata_params_deserialize_accepts_legacy_only_field() {
+        let addr = Address::repeat_byte(0xab);
+        let legacy = serde_json::json!({
+            "l2_da_validator_address": addr,
+            "pubdata_type": "Rollup",
+        });
+        let parsed: PubdataParams = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            parsed.pubdata_validator(),
+            L2PubdataValidator::Address(addr)
+        );
+    }
+
+    /// Upstream emits both fields during the migration window. The new
+    /// `pubdata_validator` field wins; the legacy address is ignored.
+    #[test]
+    fn pubdata_params_deserialize_prefers_new_field_when_both_present() {
+        let legacy_addr = Address::repeat_byte(0xab);
+        let new_addr = Address::repeat_byte(0xcd);
+        let mixed = serde_json::json!({
+            "pubdata_validator": { "Address": new_addr },
+            "l2_da_validator_address": legacy_addr,
+            "pubdata_type": "Rollup",
+        });
+        let parsed: PubdataParams = serde_json::from_value(mixed).unwrap();
+        assert_eq!(
+            parsed.pubdata_validator(),
+            L2PubdataValidator::Address(new_addr)
+        );
+    }
+
+    /// A payload with neither field is rejected with a missing-field error.
+    #[test]
+    fn pubdata_params_deserialize_rejects_missing_both_fields() {
+        let invalid = serde_json::json!({
+            "pubdata_type": "Rollup",
+        });
+        let err = serde_json::from_value::<PubdataParams>(invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("pubdata_validator"),
+            "expected missing-field error, got: {err}"
+        );
     }
 }
