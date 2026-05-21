@@ -5,11 +5,13 @@
 //! binary, and the LFS batch corpus:
 //!
 //! * `prover_server_proves_one_batch` — default `fri-only` mode; verifies the FRI proof.
-//! * `prover_server_proves_fri_snark` — `fri-snark` mode; checks that both the FRI and SNARK
-//!   submissions land and the FRI proof verifies. The trusted setup is fetched into the system
-//!   temp dir on first run (matches the build's `snark_gpu` feature — GPU `setup_compact.key`
-//!   when enabled, CPU `setup_2^24.key` otherwise); override the path via
-//!   `IT_SNARK_TRUSTED_SETUP` to reuse a local copy.
+//! * `prover_server_proves_fri_then_snark` — runs `fri-only` to produce the FRI proof,
+//!   kills that prover, then starts a fresh `snark-only` prover that picks the FRI proof up via
+//!   `/airbender/snark_inputs` and submits the SNARK proof. Exercises both new modes plus the
+//!   `snark_inputs` endpoint in one go. The trusted setup is fetched into the system temp dir on
+//!   first run (matches the build's `snark_gpu` feature — GPU `setup_compact.key` when enabled,
+//!   CPU `setup_2^24.key` otherwise); override the path via `IT_SNARK_TRUSTED_SETUP` to reuse a
+//!   local copy.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -45,24 +47,60 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 // Test HTTP server state and handlers
 // ---------------------------------------------------------------------------
 
+/// `(batch_number, bincode-encoded `Proof` bytes)` captured from a FRI submission.
+type CapturedFriProof = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
+
 #[derive(Clone)]
 struct TestServerState {
     verifier_input: Arc<AirbenderVerifierInput>,
-    job_served: Arc<std::sync::atomic::AtomicBool>,
+    /// One-shot latch for `/airbender/proof_inputs`: serve the job once, then 204.
+    fri_input_served: Arc<std::sync::atomic::AtomicBool>,
+    /// Latest FRI submission captured by `/airbender/submit_proofs`. Read by
+    /// `/airbender/snark_inputs` so the snark-only prover can pick it up.
+    fri_proof_capture: CapturedFriProof,
     fri_proof_sender: Arc<Mutex<Option<oneshot::Sender<Vec<u8>>>>>,
+    /// One-shot latch for `/airbender/snark_inputs`: serve the captured FRI
+    /// proof once, then 204. Only flips after `fri_proof_capture` is `Some`.
+    snark_input_served: Arc<std::sync::atomic::AtomicBool>,
     snark_proof_sender: Arc<Mutex<Option<oneshot::Sender<Vec<u8>>>>>,
 }
 
 /// `POST /airbender/proof_inputs` — serves the job once, then returns 204.
 async fn handle_proof_inputs(State(state): State<TestServerState>) -> impl IntoResponse {
     if state
-        .job_served
+        .fri_input_served
         .swap(true, std::sync::atomic::Ordering::SeqCst)
     {
         return StatusCode::NO_CONTENT.into_response();
     }
     println!("[test-server] Serving job to prover");
     Json((*state.verifier_input).clone()).into_response()
+}
+
+/// `POST /airbender/snark_inputs` — once the FRI submission has been captured,
+/// serves it (bincode-encoded `Proof`) to a snark-only prover exactly once;
+/// before capture or after replay, returns 204.
+async fn handle_snark_inputs(State(state): State<TestServerState>) -> impl IntoResponse {
+    let Some((batch_number, proof_bytes)) =
+        state.fri_proof_capture.lock().expect("poisoned").clone()
+    else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    if state
+        .snark_input_served
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    println!(
+        "[test-server] Serving SNARK input for batch {batch_number} ({} bytes)",
+        proof_bytes.len()
+    );
+    Json(serde_json::json!({
+        "l1_batch_number": batch_number,
+        "fri_proof": hex::encode(&proof_bytes),
+    }))
+    .into_response()
 }
 
 /// `POST /airbender/submit_proofs` — stores the FRI proof bytes and signals the test.
@@ -88,6 +126,11 @@ async fn handle_submit_proofs(
         body.l1_batch_number,
         proof_bytes.len()
     );
+    // Capture for replay via `/airbender/snark_inputs`. Stored before signaling
+    // the receiver so a snark-only prover that polls right after the test
+    // unblocks always sees a populated capture.
+    *state.fri_proof_capture.lock().expect("poisoned") =
+        Some((body.l1_batch_number, proof_bytes.clone()));
     if let Some(tx) = state.fri_proof_sender.lock().expect("poisoned").take() {
         let _ = tx.send(proof_bytes);
     }
@@ -337,8 +380,10 @@ async fn prover_server_proves_one_batch() {
     let (snark_tx, _snark_rx) = oneshot::channel::<Vec<u8>>();
     let state = TestServerState {
         verifier_input: Arc::new(verifier_input),
-        job_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        fri_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        fri_proof_capture: Arc::new(Mutex::new(None)),
         fri_proof_sender: Arc::new(Mutex::new(Some(fri_tx))),
+        snark_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         snark_proof_sender: Arc::new(Mutex::new(Some(snark_tx))),
     };
 
@@ -398,22 +443,20 @@ async fn prover_server_proves_one_batch() {
     verify_fri_proof(&proof_bytes, &expected_public_input, &dist_dir);
 }
 
-/// Runs the prover server end-to-end in `fri-snark` mode. The prover proves
-/// FRI, submits it to `/airbender/submit_proofs`, then wraps the same proof
-/// into a SNARK and submits it to `/airbender/submit_snark_proofs`. The test
-/// verifies that both submissions land and that the FRI proof verifies; the
-/// SNARK proof is checked for payload shape (JSON-deserializes as
-/// `SnarkWrapperProof`) because the server crate does not link a SNARK
-/// verifier.
+/// Exercises `fri-only` followed by `snark-only` end-to-end against a single
+/// test HTTP server:
+/// 1. Start a prover in `fri-only` mode, wait for the FRI submission to land
+///    on `/airbender/submit_proofs`, then kill it.
+/// 2. Start a fresh prover in `snark-only` mode. The server hands the just-
+///    captured FRI proof back via `/airbender/snark_inputs`, the prover wraps
+///    it, and submits the SNARK proof to `/airbender/submit_snark_proofs`.
 ///
-/// Additional setup vs the fri-only test:
-/// * CPU CRS is provisioned by `snark_trusted_setup_path()` (downloaded on
-///   first run; reusable via `IT_SNARK_TRUSTED_SETUP`).
-/// * Timeout is bumped to `FRI_SNARK_TEST_TIMEOUT` since CPU SNARK wrapping
-///   dominates wall-clock time.
+/// The FRI proof is verified cryptographically. The SNARK proof is checked
+/// for payload shape only (round-trips through `serde_json` as
+/// `SnarkWrapperProof`) since the server crate does not link a SNARK verifier.
 #[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
-async fn prover_server_proves_fri_snark() {
+async fn prover_server_proves_fri_then_snark() {
     let dist_dir = guest_dist_dir();
     println!("[test] Guest dist dir: {}", dist_dir.display());
 
@@ -422,13 +465,16 @@ async fn prover_server_proves_fri_snark() {
 
     let (verifier_input, expected_public_input) = load_batch_and_expected_public_input();
 
-    // --- 2. Set up test HTTP server with both FRI and SNARK submit endpoints ---
+    // --- 2. Set up test HTTP server with all four prover endpoints. The same
+    //        server instance is shared by both prover invocations. ---
     let (fri_tx, fri_rx) = oneshot::channel::<Vec<u8>>();
     let (snark_tx, snark_rx) = oneshot::channel::<Vec<u8>>();
     let state = TestServerState {
         verifier_input: Arc::new(verifier_input),
-        job_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        fri_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        fri_proof_capture: Arc::new(Mutex::new(None)),
         fri_proof_sender: Arc::new(Mutex::new(Some(fri_tx))),
+        snark_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         snark_proof_sender: Arc::new(Mutex::new(Some(snark_tx))),
     };
 
@@ -437,6 +483,10 @@ async fn prover_server_proves_fri_snark() {
         .route(
             "/airbender/submit_proofs",
             post(handle_submit_proofs).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/airbender/snark_inputs",
+            post(handle_snark_inputs).layer(DefaultBodyLimit::disable()),
         )
         .route(
             "/airbender/submit_snark_proofs",
@@ -458,57 +508,85 @@ async fn prover_server_proves_fri_snark() {
             .expect("test HTTP server exited with error");
     });
 
-    // --- 3. Start the prover server binary in fri-snark mode ---
     let prover_bin = prover_server_bin();
+    let server_url = format!("http://{server_addr}");
+    let dist_dir_str = dist_dir
+        .to_str()
+        .expect("non-UTF8 guest dist dir")
+        .to_owned();
+    let trusted_setup_str = trusted_setup
+        .to_str()
+        .expect("non-UTF8 SNARK trusted setup path")
+        .to_owned();
+
+    // --- 3a. Phase 1: spawn fri-only prover, wait for FRI proof, then kill it. ---
     println!(
-        "[test] Spawning prover server in fri-snark mode: {}",
+        "[test] Phase 1: spawning fri-only prover: {}",
         prover_bin.display()
     );
-    let child = Command::new(&prover_bin)
-        .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
-        .env(
-            "PROVER_GUEST_DIST_DIR",
-            dist_dir.to_str().expect("non-UTF8 guest dist dir"),
-        )
-        .env("PROVER_MODE", "fri-snark")
-        .env(
-            "SNARK_TRUSTED_SETUP_FILE",
-            trusted_setup
-                .to_str()
-                .expect("non-UTF8 SNARK trusted setup path"),
-        )
+    let fri_child = Command::new(&prover_bin)
+        .env("PROVER_SERVER_URL", &server_url)
+        .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
+        .env("PROVER_MODE", "fri-only")
         .env("PROVER_POLL_INTERVAL_MS", "1000")
-        .env("PROVER_ID", "integration-test-fri-snark")
+        .env("PROVER_ID", "integration-test-fri")
         .spawn()
-        .expect("failed to spawn eravm-prover-server");
-    println!("[test] Prover server spawned (pid {})", child.id());
-    let _child_guard = ChildGuard(child);
+        .expect("failed to spawn fri-only eravm-prover-server");
+    println!("[test] fri-only prover spawned (pid {})", fri_child.id());
+    let fri_guard = ChildGuard(fri_child);
 
-    // --- 4. Wait for both proofs. FRI lands first; SNARK follows once
-    //        wrapping completes. We use the longer fri-snark timeout for both
-    //        because the SNARK wrapper holds the GPU/CPU after FRI returns,
-    //        which can delay other progress on a busy host. ---
     eprintln!(
-        "[test] Waiting for FRI then SNARK proofs (timeout: {}s)...",
-        FRI_SNARK_TEST_TIMEOUT.as_secs()
+        "[test] Waiting for FRI proof (timeout: {}s)...",
+        TEST_TIMEOUT.as_secs()
     );
     let started_at = Instant::now();
-
-    let fri_bytes = await_with_heartbeat("FRI", fri_rx, FRI_SNARK_TEST_TIMEOUT).await;
+    let fri_bytes = await_with_heartbeat("FRI", fri_rx, TEST_TIMEOUT).await;
     println!(
         "[test] FRI proof received after {:.1}s ({} bytes)",
         started_at.elapsed().as_secs_f64(),
         fri_bytes.len()
     );
 
+    // Kill the fri-only prover before starting the snark-only one so they
+    // don't fight over the GPU.
+    println!("[test] Phase 1 complete; stopping fri-only prover");
+    drop(fri_guard);
+
+    // --- 3b. Phase 2: spawn snark-only prover. It will poll
+    //        `/airbender/snark_inputs`, receive the captured FRI proof, wrap
+    //        it, and submit the SNARK proof. ---
+    println!(
+        "[test] Phase 2: spawning snark-only prover: {}",
+        prover_bin.display()
+    );
+    let snark_child = Command::new(&prover_bin)
+        .env("PROVER_SERVER_URL", &server_url)
+        .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
+        .env("PROVER_MODE", "snark-only")
+        .env("SNARK_TRUSTED_SETUP_FILE", &trusted_setup_str)
+        .env("PROVER_POLL_INTERVAL_MS", "1000")
+        .env("PROVER_ID", "integration-test-snark")
+        .spawn()
+        .expect("failed to spawn snark-only eravm-prover-server");
+    println!(
+        "[test] snark-only prover spawned (pid {})",
+        snark_child.id()
+    );
+    let _snark_guard = ChildGuard(snark_child);
+
+    eprintln!(
+        "[test] Waiting for SNARK proof (timeout: {}s)...",
+        FRI_SNARK_TEST_TIMEOUT.as_secs()
+    );
+    let snark_started_at = Instant::now();
     let snark_bytes = await_with_heartbeat("SNARK", snark_rx, FRI_SNARK_TEST_TIMEOUT).await;
     println!(
-        "[test] SNARK proof received after {:.1}s total ({} bytes)",
-        started_at.elapsed().as_secs_f64(),
+        "[test] SNARK proof received after {:.1}s ({} bytes)",
+        snark_started_at.elapsed().as_secs_f64(),
         snark_bytes.len()
     );
 
-    // --- 5. Verify the FRI proof (cryptographic) and validate SNARK payload shape ---
+    // --- 4. Verify the FRI proof cryptographically and round-trip the SNARK payload. ---
     verify_fri_proof(&fri_bytes, &expected_public_input, &dist_dir);
 
     // The server JSON-encodes `SnarkWrapperProof` before hex-encoding into the
