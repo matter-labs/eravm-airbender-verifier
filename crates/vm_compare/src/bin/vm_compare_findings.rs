@@ -7,7 +7,9 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::Deserialize;
+use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
+use zksync_types::H256;
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
 #[derive(Debug, Parser)]
@@ -24,6 +26,13 @@ struct Cli {
 
     #[arg(long, default_value = "testdata/vm_compare_findings/binary")]
     batches_dir: PathBuf,
+
+    /// Trusted batch whose base system contract bytecodes every reproducer must match.
+    ///
+    /// This is required if the manifest contains any `batch_reproducer` entries.
+    /// It prevents accepting repro batches that patch base system contract code.
+    #[arg(long)]
+    system_contracts_baseline: Option<PathBuf>,
 
     #[arg(long, default_value_t = CompareOptions::default().max_capture_bytes)]
     max_capture_bytes: usize,
@@ -59,7 +68,7 @@ struct VmCompareFinding {
     reason: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum VmCompareStatus {
     BatchReproducer,
@@ -76,6 +85,19 @@ struct Row {
     failed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContractFingerprint {
+    hash: H256,
+    code: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SystemContractsFingerprint {
+    bootloader: ContractFingerprint,
+    default_aa: ContractFingerprint,
+    evm_emulator: Option<ContractFingerprint>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let manifest = load_manifest(&cli.manifest)?;
@@ -89,10 +111,22 @@ fn main() -> Result<()> {
         max_capture_bytes: cli.max_capture_bytes,
         fail_fast: !cli.no_fail_fast,
     };
+    let system_contracts_baseline = load_required_system_contracts_baseline(
+        &manifest,
+        &cli.batches_dir,
+        &cli.system_contracts_baseline,
+    )?;
     let rows = manifest
         .findings
         .iter()
-        .map(|finding| evaluate_finding(finding, &cli.batches_dir, options))
+        .map(|finding| {
+            evaluate_finding(
+                finding,
+                &cli.batches_dir,
+                options,
+                system_contracts_baseline.as_ref(),
+            )
+        })
         .collect::<Vec<_>>();
 
     if cli.markdown {
@@ -105,6 +139,36 @@ fn main() -> Result<()> {
         bail!("one or more batch-backed vm_compare validations failed");
     }
     Ok(())
+}
+
+fn load_required_system_contracts_baseline(
+    manifest: &Manifest,
+    batches_dir: &Path,
+    baseline_path: &Option<PathBuf>,
+) -> Result<Option<SystemContractsFingerprint>> {
+    let has_batch_reproducer = manifest
+        .findings
+        .iter()
+        .any(|finding| matches!(finding.vm_compare.status, VmCompareStatus::BatchReproducer));
+    if !has_batch_reproducer {
+        return Ok(None);
+    }
+
+    let baseline_path = baseline_path.as_ref().context(
+        "manifest contains batch_reproducer entries; pass --system-contracts-baseline \
+         <trusted-batch.bin[.gz]> so repro batches cannot patch base system contracts",
+    )?;
+    let baseline_inputs = resolve_batch_inputs(
+        batches_dir,
+        Some(std::slice::from_ref(baseline_path)),
+        false,
+    )
+    .context("while resolving system contracts baseline batch")?;
+    let baseline_input = baseline_inputs
+        .first()
+        .context("system contracts baseline resolution returned no batch")?;
+    let input = load_v1_batch(baseline_input)?;
+    Ok(Some(system_contracts_fingerprint(&input)))
 }
 
 fn load_manifest(path: &Path) -> Result<Manifest> {
@@ -160,7 +224,12 @@ fn check_ledger_coverage(ledger: &Path, manifest: &Manifest) -> Result<()> {
     bail!("manifest does not cover ledger findings");
 }
 
-fn evaluate_finding(finding: &Finding, batches_dir: &Path, options: CompareOptions) -> Row {
+fn evaluate_finding(
+    finding: &Finding,
+    batches_dir: &Path,
+    options: CompareOptions,
+    system_contracts_baseline: Option<&SystemContractsFingerprint>,
+) -> Row {
     match finding.vm_compare.status {
         VmCompareStatus::NeedsBatchReproducer => Row {
             id: finding.id.clone(),
@@ -177,7 +246,7 @@ fn evaluate_finding(finding: &Finding, batches_dir: &Path, options: CompareOptio
             failed: false,
         },
         VmCompareStatus::BatchReproducer => {
-            match run_batch_reproducer(finding, batches_dir, options) {
+            match run_batch_reproducer(finding, batches_dir, options, system_contracts_baseline) {
                 Ok(detail) => Row {
                     id: finding.id.clone(),
                     status: "Yes - vm_compare reproduced".to_owned(),
@@ -201,6 +270,7 @@ fn run_batch_reproducer(
     finding: &Finding,
     batches_dir: &Path,
     options: CompareOptions,
+    system_contracts_baseline: Option<&SystemContractsFingerprint>,
 ) -> Result<String> {
     if finding.vm_compare.batch_files.is_empty() {
         bail!("status is batch_reproducer but no batch_files were provided");
@@ -216,7 +286,7 @@ fn run_batch_reproducer(
     let mut reproduced = Vec::new();
     let mut matched = Vec::new();
     for batch_input in batch_inputs {
-        match compare_batch(&batch_input, options) {
+        match compare_batch(&batch_input, options, system_contracts_baseline) {
             Ok(Some(report_text)) => {
                 ensure_expected_substrings(finding, &report_text)?;
                 reproduced.push(format!("{} ({report_text})", batch_input.path.display()));
@@ -240,17 +310,15 @@ fn run_batch_reproducer(
     Ok(format!("vm_compare diverged on {}", reproduced.join("; ")))
 }
 
-fn compare_batch(batch_input: &BatchInputFile, options: CompareOptions) -> Result<Option<String>> {
-    let input = load_batch(batch_input)
-        .with_context(|| {
-            format!(
-                "while attempting to load batch {} from {}",
-                batch_input.number,
-                batch_input.path.display()
-            )
-        })?
-        .into_v1()
-        .with_context(|| format!("batch {} has no V1 payload", batch_input.number))?;
+fn compare_batch(
+    batch_input: &BatchInputFile,
+    options: CompareOptions,
+    system_contracts_baseline: Option<&SystemContractsFingerprint>,
+) -> Result<Option<String>> {
+    let input = load_v1_batch(batch_input)?;
+    if let Some(baseline) = system_contracts_baseline {
+        ensure_system_contracts_match(batch_input, &input, baseline)?;
+    }
 
     let report = zksync_vm_compare::compare(input, options).with_context(|| {
         format!(
@@ -270,6 +338,104 @@ fn compare_batch(batch_input: &BatchInputFile, options: CompareOptions) -> Resul
             Ok(Some(format!("{report}; reasons: {reasons}")))
         }
     }
+}
+
+fn load_v1_batch(batch_input: &BatchInputFile) -> Result<V1AirbenderVerifierInput> {
+    load_batch(batch_input)
+        .with_context(|| {
+            format!(
+                "while attempting to load batch {} from {}",
+                batch_input.number,
+                batch_input.path.display()
+            )
+        })?
+        .into_v1()
+        .with_context(|| format!("batch {} has no V1 payload", batch_input.number))
+}
+
+fn system_contracts_fingerprint(input: &V1AirbenderVerifierInput) -> SystemContractsFingerprint {
+    let base = &input.system_env.base_system_smart_contracts;
+    SystemContractsFingerprint {
+        bootloader: ContractFingerprint {
+            hash: base.bootloader.hash,
+            code: base.bootloader.code.clone(),
+        },
+        default_aa: ContractFingerprint {
+            hash: base.default_aa.hash,
+            code: base.default_aa.code.clone(),
+        },
+        evm_emulator: base
+            .evm_emulator
+            .as_ref()
+            .map(|contract| ContractFingerprint {
+                hash: contract.hash,
+                code: contract.code.clone(),
+            }),
+    }
+}
+
+fn ensure_system_contracts_match(
+    batch_input: &BatchInputFile,
+    input: &V1AirbenderVerifierInput,
+    baseline: &SystemContractsFingerprint,
+) -> Result<()> {
+    let actual = system_contracts_fingerprint(input);
+    ensure_contract_matches(
+        batch_input,
+        "bootloader",
+        &actual.bootloader,
+        &baseline.bootloader,
+    )?;
+    ensure_contract_matches(
+        batch_input,
+        "default_aa",
+        &actual.default_aa,
+        &baseline.default_aa,
+    )?;
+    match (&actual.evm_emulator, &baseline.evm_emulator) {
+        (Some(actual), Some(expected)) => {
+            ensure_contract_matches(batch_input, "evm_emulator", actual, expected)?;
+        }
+        (None, None) => {}
+        (Some(_), None) => {
+            bail!(
+                "{} has an EVM emulator base system contract but baseline does not",
+                batch_input.path.display()
+            );
+        }
+        (None, Some(_)) => {
+            bail!(
+                "{} is missing the EVM emulator base system contract required by baseline",
+                batch_input.path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn ensure_contract_matches(
+    batch_input: &BatchInputFile,
+    name: &str,
+    actual: &ContractFingerprint,
+    expected: &ContractFingerprint,
+) -> Result<()> {
+    if actual.hash != expected.hash {
+        bail!(
+            "{} {name} hash mismatch: actual {:?}, expected {:?}",
+            batch_input.path.display(),
+            actual.hash,
+            expected.hash
+        );
+    }
+    if actual.code != expected.code {
+        bail!(
+            "{} {name} bytecode mismatch: actual {} bytes, expected {} bytes",
+            batch_input.path.display(),
+            actual.code.len(),
+            expected.code.len()
+        );
+    }
+    Ok(())
 }
 
 fn ensure_expected_substrings(finding: &Finding, report_text: &str) -> Result<()> {

@@ -70,6 +70,7 @@ repeatable status check for which ones have full-batch reproducers:
 cargo run --release -p zksync_vm_compare --bin vm_compare_findings -- \
   --manifest /path/to/vm-compare-findings.json \
   --batches-dir /path/to/repro-batches \
+  --system-contracts-baseline /path/to/trusted-baseline.bin.gz \
   --ledger /path/to/found-divergences.md \
   --markdown
 ```
@@ -112,13 +113,21 @@ Supported statuses:
 - `not_representable`: tracked as intentionally not reproducible in
   `vm_compare`; include the reachability or tooling blocker in `reason`.
 
+If the manifest contains any `batch_reproducer`, `--system-contracts-baseline`
+is required. It should point to a trusted, unmodified batch for the same
+protocol/system-contract set. Each reproducer batch must have the same
+bootloader, default AA, and EVM emulator hashes and bytecode as that baseline;
+otherwise the validation fails before running `vm_compare`. For reproducers
+from different protocol versions, run separate manifests with the matching
+baseline for each version.
+
 If `--ledger` is provided, `vm_compare_findings` also checks that every
 `## D-...` entry in the ledger has a manifest entry and vice versa. The command
 exits non-zero if a `batch_reproducer` does not diverge, if an expected
 substring is missing, or if ledger coverage does not match.
 
 For audit validation, prefer full-batch reproducers that keep the real
-bootloader, default AA, EVM emulator, and other base system contracts intact.
+bootloader, default AA, and EVM emulator base system contracts intact.
 Reproducer batches and audit-local manifests can live outside the repository
 unless the team intentionally wants to track those artifacts.
 
