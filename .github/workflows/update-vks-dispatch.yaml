@@ -44,15 +44,16 @@ jobs:
       - name: Resolve PR head and dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
         run: |
-          pr=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+          pr=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}")
           head_repo=$(echo "$pr" | jq -r .head.repo.full_name)
           head_ref=$(echo "$pr"  | jq -r .head.ref)
           head_sha=$(echo "$pr"  | jq -r .head.sha)
 
-          if [ "$head_repo" != "${{ github.repository }}" ]; then
+          if [ "$head_repo" != "${GH_REPO}" ]; then
             gh pr comment "$PR_NUMBER" --body ":x: \`/update-vks\`: fork PRs are not supported."
             exit 1
           fi
