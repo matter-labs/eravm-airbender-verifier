@@ -181,6 +181,18 @@ RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --featur
 
 Note: `--features snark_gpu` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
 
+### Verification keys
+
+The prover server only loads verification keys from disk; it never derives them on the fly. The canonical FRI and SNARK VKs live in [`vks/`](vks/) and CI re-derives them on every PR (see the `vk-check` job in [.github/workflows/ci-check.yaml](.github/workflows/ci-check.yaml)). If a guest change invalidates them, regenerate locally and commit the result:
+
+```bash
+cargo run --release -p eravm-prover-host --features snark_gpu -- gen-vks \
+    --output-dir vks \
+    --trusted-setup setup_gpu.key
+```
+
+The server accepts the VK paths via `--fri-vk` / `FRI_VK` and `--snark-vk` / `SNARK_VK`; the Dockerfile ships `vks/` into the image and sets both env vars by default.
+
 ## Policies
 
 - [Security policy](SECURITY.md)

@@ -101,6 +101,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /workspace/target/release/eravm-prover-server /usr/local/bin/eravm-prover-server
 COPY --from=builder /workspace/guest/dist/app /guest-program
+COPY --from=builder /workspace/vks /vks
 COPY --from=builder /setup/setup.key /setup/setup.key
 COPY --from=builder /bellman-cuda-libs /usr/local/lib/bellman-cuda
 
@@ -110,6 +111,12 @@ RUN echo "/usr/local/lib/bellman-cuda" > /etc/ld.so.conf.d/bellman-cuda.conf \
     && ldconfig
 
 ENV PROVER_GUEST_DIST_DIR=/guest-program
+
+# The committed FRI and SNARK verification keys ship with the image. The
+# server hard-fails at startup if either file is missing or doesn't match
+# the bundled guest binary — it never derives a VK on the fly.
+ENV FRI_VK=/vks/fri_vk.bin
+ENV SNARK_VK=/vks/snark_vk.json
 
 # Bellman SNARK trusted setup ships with the image. The server fails fast at
 # startup if the file is missing; override `SNARK_TRUSTED_SETUP_FILE` only if

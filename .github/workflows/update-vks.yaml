@@ -1,0 +1,313 @@
+name: update-vks
+
+# Comment-listener that regenerates the FRI and SNARK verification keys and
+# commits them back to the PR branch. Triggered by `/update-vks` in any PR
+# comment from a repo collaborator. Fork PRs are rejected because the
+# default `GITHUB_TOKEN` cannot push to a fork's branch.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-vks-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate the rest of the workflow on: PR-only, slash-command match, author has
+  # write access, head branch lives in this repo. Also resolves the head ref
+  # so the build/regen jobs can check out the same code the PR author sees.
+  # ---------------------------------------------------------------------------
+  trigger:
+    name: trigger
+    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/update-vks') }}
+    runs-on: ubuntu-latest
+    outputs:
+      head_repo: ${{ steps.resolve.outputs.head_repo }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      pr_number: ${{ github.event.issue.number }}
+    steps:
+      - name: Verify author has write access
+        env:
+          ASSOC: ${{ github.event.comment.author_association }}
+        run: |
+          case "$ASSOC" in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *) echo "::error::/update-vks must be triggered by a repo collaborator (author_association: $ASSOC)"; exit 1 ;;
+          esac
+
+      - name: "React :eyes: to trigger comment"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='eyes' >/dev/null
+
+      - name: Resolve PR head
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")
+          head_repo=$(echo "$pr" | jq -r .head.repo.full_name)
+          head_ref=$(echo "$pr" | jq -r .head.ref)
+          head_sha=$(echo "$pr" | jq -r .head.sha)
+          echo "head_repo=$head_repo" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref"   >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha"   >> "$GITHUB_OUTPUT"
+          echo "Resolved PR head: $head_repo @ $head_ref ($head_sha)"
+
+      - name: Reject fork PRs
+        env:
+          HEAD_REPO: ${{ steps.resolve.outputs.head_repo }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            echo "::error::PR head is in a fork ($HEAD_REPO); GITHUB_TOKEN cannot push there. Run \`gen-vks\` locally and push the result instead."
+            gh pr comment "${{ github.event.issue.number }}" --body \
+              ":x: \`/update-vks\` cannot push to fork branches. Run \`cargo run -p eravm-prover-host --features snark_gpu -- gen-vks --output-dir vks --trusted-setup <CRS>\` locally and push the result."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build the host CLI + guest dist + bellman-cuda libs from the PR head.
+  # Mirrors `server-integration-build` in ci-check.yaml but only what the
+  # regen job actually consumes (no server binary, no integration test).
+  # ---------------------------------------------------------------------------
+  build:
+    name: build
+    needs: trigger
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    container:
+      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+    env:
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
+    steps:
+      - name: Install git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y git
+
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ needs.trigger.outputs.head_repo }}
+          ref: ${{ needs.trigger.outputs.head_sha }}
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          path: airbender-platform
+
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      - name: Install extra apt packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: apt-get install -y clang build-essential curl libclang-dev
+
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Build eravm-prover-host (snark_gpu)
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo build --release -p eravm-prover-host --locked --features snark_gpu
+          ls -lh target/release/eravm-prover-host
+
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+          ls -lh bellman-cuda-stage/
+
+      - name: Upload prover-host binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-prover-host-bin
+          path: target/release/eravm-prover-host
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-bellman-cuda
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # ---------------------------------------------------------------------------
+  # Regenerate the VKs on the GPU runner and push the diff back to the PR
+  # branch. No-op (with a comment) if `vks/` is already up to date.
+  # ---------------------------------------------------------------------------
+  regen:
+    name: regen
+    needs: [trigger, build]
+    runs-on: matterlabs-ci-hetzner-rtx6000-gpu
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ needs.trigger.outputs.head_repo }}
+          ref: ${{ needs.trigger.outputs.head_ref }}
+          # Persist the token so the later `git push` step can authenticate.
+          # GITHUB_TOKEN already has `contents: write` for this repo.
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify head is unchanged
+        env:
+          EXPECTED_SHA: ${{ needs.trigger.outputs.head_sha }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::PR head moved between trigger ($EXPECTED_SHA) and checkout ($actual). Re-run /update-vks."
+            exit 1
+          fi
+
+      - name: Download prover-host binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-prover-host-bin
+          path: stage/bin
+
+      - name: Download guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-guest-dist
+          path: stage/guest
+
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-bellman-cuda
+          path: stage/cuda-libs
+
+      - name: Make host binary executable
+        run: chmod +x stage/bin/eravm-prover-host
+
+      - name: Download SNARK trusted setup
+        run: |
+          mkdir -p stage/setup
+          ./stage/bin/eravm-prover-host download-trusted-setup \
+              --output stage/setup/setup.key
+
+      - name: Regenerate VKs
+        env:
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/stage/guest
+          LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
+          RUST_BACKTRACE: 1
+          RUST_MIN_STACK: "134217728"
+        run: |
+          ulimit -s unlimited
+          ./stage/bin/eravm-prover-host gen-vks \
+              --output-dir vks \
+              --trusted-setup stage/setup/setup.key
+
+      - name: Commit and push if changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ needs.trigger.outputs.pr_number }}
+          HEAD_REF: ${{ needs.trigger.outputs.head_ref }}
+        run: |
+          if git diff --quiet -- vks/; then
+            echo "::notice::vks/ already matches the regenerated keys; nothing to commit."
+            gh pr comment "$PR_NUMBER" --body \
+              ":white_check_mark: \`/update-vks\`: \`vks/\` already matches the regenerated keys."
+            exit 0
+          fi
+
+          git diff --stat -- vks/
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- vks/
+          git commit \
+            -m "chore(vks): refresh committed verification keys" \
+            -m "Regenerated by \`/update-vks\` on ${{ needs.trigger.outputs.head_sha }}."
+
+          git push origin "HEAD:${HEAD_REF}"
+
+          new_sha=$(git rev-parse HEAD)
+          gh pr comment "$PR_NUMBER" --body \
+            ":white_check_mark: \`/update-vks\`: pushed refreshed \`vks/\` as \`$new_sha\`."
+
+      - name: "React :tada: on success"
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='hooray' >/dev/null
+
+  # ---------------------------------------------------------------------------
+  # If any earlier job failed, leave a clear note on the PR and react with a
+  # thumbs-down so the trigger comment isn't left only with the :eyes:.
+  # ---------------------------------------------------------------------------
+  notify-failure:
+    name: notify-failure
+    needs: [trigger, build, regen]
+    if: ${{ failure() && needs.trigger.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: "React :-1: and comment"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='-1' >/dev/null
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh pr comment "${{ needs.trigger.outputs.pr_number }}" --body \
+            ":x: \`/update-vks\` failed. See [the workflow run]($run_url) for details."

@@ -2,9 +2,9 @@ use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use eravm_prover_host::{
-    default_trusted_setup_download_url, default_trusted_setup_path, deserialize_from_file,
-    download_trusted_setup_if_not_present, prove_batches_fri, run_batches, wrap_to_snark,
-    SnarkOptions, SnarkWrapperVK,
+    default_fri_vk_path, default_trusted_setup_download_url, default_trusted_setup_path,
+    deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
+    generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
@@ -47,6 +47,11 @@ enum Command {
     /// Download the bellman SNARK trusted setup (CRS) so it is on disk before
     /// running `prove-snark`. Skips the download if the file already exists.
     DownloadTrustedSetup(DownloadTrustedSetupArgs),
+    /// Generate the FRI and SNARK verification keys into a directory. The
+    /// server only loads VKs from disk, so this is how committed VK files in
+    /// `vks/` get refreshed when the guest binary or wrapper recursion
+    /// changes. CI re-runs this and `git diff --exit-code`s the output.
+    GenVks(GenVksArgs),
 }
 
 #[derive(Debug, Args)]
@@ -83,6 +88,29 @@ struct ProveFriArgs {
 
     #[arg(long, default_value_t = SecurityLevelArg::Bits80)]
     security: SecurityLevelArg,
+
+    /// Path to the committed FRI verification key. Reused if present;
+    /// otherwise generated on the fly and written here.
+    #[arg(long, default_value_os_t = default_fri_vk_path())]
+    fri_vk: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct GenVksArgs {
+    /// Where to write the verification key files. Both `fri_vk.bin` and
+    /// `snark_vk.json` are written under this directory.
+    #[arg(long, default_value = "vks")]
+    output_dir: PathBuf,
+
+    #[arg(long, default_value_t = SecurityLevelArg::Bits80)]
+    security: SecurityLevelArg,
+
+    /// SNARK trusted setup (CRS). Required to derive the SNARK wrapper VK.
+    #[arg(long, env = "SNARK_TRUSTED_SETUP_FILE")]
+    trusted_setup: PathBuf,
+
+    #[arg(long)]
+    worker_threads: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -156,6 +184,7 @@ fn main() -> Result<()> {
                 &batch_inputs,
                 args.worker_threads,
                 &args.output_dir,
+                &args.fri_vk,
                 args.security.into(),
             )
         }
@@ -177,6 +206,29 @@ fn main() -> Result<()> {
                 &snark_options,
                 snark_vk,
             )
+        }
+        Command::GenVks(args) => {
+            std::fs::create_dir_all(&args.output_dir).with_context(|| {
+                format!(
+                    "while attempting to create VK output directory {}",
+                    args.output_dir.display()
+                )
+            })?;
+
+            let fri_vk_path = args.output_dir.join("fri_vk.bin");
+            generate_fri_vk(&fri_vk_path, args.security.into())
+                .context("while generating the FRI verification key")?;
+
+            let snark_vk_path = args.output_dir.join("snark_vk.json");
+            let snark_options = SnarkOptions {
+                worker_threads: args.worker_threads,
+                trusted_setup: Some(args.trusted_setup),
+                use_zk: false,
+                save_intermediates: false,
+            };
+            generate_snark_vk(&snark_vk_path, &snark_options)
+                .context("while generating the SNARK verification key")?;
+            Ok(())
         }
     }
 }

@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
+pub use crate::fri::{
+    default_fri_vk_path, dist_dir, load_vk_from_disk, FriPipeline, FriVerifier, ProveOutput,
+    RawFriProof,
+};
 pub use crate::setup_download::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present,
@@ -49,9 +52,10 @@ pub fn prove_batches_fri(
     batch_inputs: &[BatchInputFile],
     worker_threads: Option<usize>,
     output_root: &Path,
+    vk_path: &Path,
     security: SecurityLevel,
 ) -> Result<()> {
-    let pipeline = FriPipeline::new(&dist_dir(), worker_threads, security)?;
+    let pipeline = FriPipeline::new(&dist_dir(), vk_path, worker_threads, security)?;
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {
@@ -81,6 +85,43 @@ pub fn prove_batches_fri(
         statistics.print_stats();
     }
 
+    Ok(())
+}
+
+/// Generates the FRI verification key for the current guest binary and
+/// writes it to `output_path`, overwriting any previous file. Used by the
+/// `gen-vks` host subcommand and the CI VK-check job.
+pub fn generate_fri_vk(output_path: &Path, security: SecurityLevel) -> Result<()> {
+    if output_path.exists() {
+        std::fs::remove_file(output_path).with_context(|| {
+            format!(
+                "while attempting to remove stale VK at {}",
+                output_path.display()
+            )
+        })?;
+    }
+    // `FriVerifier::load_or_generate` writes the VK to disk as a side effect
+    // when the file is missing; that is exactly the behavior we want here.
+    let _ = FriVerifier::load_or_generate(&dist_dir(), output_path, security)?;
+    info!(path = %output_path.display(), "Wrote FRI verification key");
+    Ok(())
+}
+
+/// Derives the SNARK wrapper VK from the trusted setup chain and writes it
+/// to `output_path` as JSON. Used by the `gen-vks` host subcommand.
+pub fn generate_snark_vk(output_path: &Path, snark_options: &SnarkOptions) -> Result<()> {
+    use crate::snark::derive_snark_vk;
+    let vk = derive_snark_vk(snark_options).context("while deriving SNARK VK")?;
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("while attempting to create {}", parent.display()))?;
+        }
+    }
+    let path_string = output_path.to_string_lossy().into_owned();
+    zkos_wrapper::serialize_to_file(&vk, &path_string)
+        .with_context(|| format!("while attempting to write {}", output_path.display()))?;
+    info!(path = %output_path.display(), "Wrote SNARK verification key");
     Ok(())
 }
 

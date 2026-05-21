@@ -4,7 +4,7 @@ use airbender_host::{
 };
 use anyhow::{Context, Result};
 use std::io::{BufReader, BufWriter};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::info;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
@@ -55,23 +55,49 @@ pub struct FriVerifier {
 }
 
 impl FriVerifier {
-    pub fn new(dist_dir: &Path, security: SecurityLevel) -> Result<Self> {
+    /// Builds a verifier with a pre-generated VK loaded from `vk_path`. Hard-
+    /// fails if the file is missing or its contents don't match `security` —
+    /// the server path uses this so a stale or absent VK never silently
+    /// triggers an on-the-fly regeneration.
+    pub fn load(dist_dir: &Path, vk_path: &Path, security: SecurityLevel) -> Result<Self> {
         let program = Program::load(dist_dir).context("while attempting to load guest program")?;
         let verifier = program
             .real_verifier(ProverLevel::RecursionUnified)
             .build()
             .context("while attempting to build real verifier")?;
 
-        let cache_path = vk_cache_path(&program, security)
-            .context("while attempting to resolve verification key cache path")?;
-        let vk = load_or_generate_vk(&verifier, &cache_path, security).with_context(|| {
+        let vk = load_vk_from_disk(vk_path, security)?;
+
+        Ok(Self { verifier, vk })
+    }
+
+    /// Builds a verifier, generating the VK on the fly if `vk_path` does not
+    /// exist yet and caching the result to disk. Used by host-side tooling
+    /// (the `gen-vks` subcommand, dev workflows) that needs to produce a VK
+    /// in the first place — the server never calls this.
+    pub fn load_or_generate(
+        dist_dir: &Path,
+        vk_path: &Path,
+        security: SecurityLevel,
+    ) -> Result<Self> {
+        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
+        let verifier = program
+            .real_verifier(ProverLevel::RecursionUnified)
+            .build()
+            .context("while attempting to build real verifier")?;
+
+        let vk = load_or_generate_vk(&verifier, vk_path, security).with_context(|| {
             format!(
                 "while attempting to prepare verification key cache {}",
-                cache_path.display()
+                vk_path.display()
             )
         })?;
 
         Ok(Self { verifier, vk })
+    }
+
+    pub fn vk(&self) -> &VerificationKey {
+        &self.vk
     }
 
     /// Verifies a FRI proof envelope against the cached VK, binding it to a
@@ -107,10 +133,11 @@ pub struct FriPipeline {
 impl FriPipeline {
     pub fn new(
         dist_dir: &Path,
+        vk_path: &Path,
         worker_threads: Option<usize>,
         security: SecurityLevel,
     ) -> Result<Self> {
-        let verifier = FriVerifier::new(dist_dir, security)?;
+        let verifier = FriVerifier::load(dist_dir, vk_path, security)?;
         // Reload the program for the prover builder. Cheap relative to GPU init.
         let program = Program::load(dist_dir).context("while attempting to load guest program")?;
 
@@ -325,32 +352,49 @@ pub(crate) fn load_raw_proof(path: &Path) -> Result<RawFriProof> {
         .with_context(|| format!("while attempting to deserialize {}", path.display()))
 }
 
+/// Loads a bincode-encoded `VerificationKey` from `path`, refusing to fall
+/// back to generation if the file is missing or its security level doesn't
+/// match `expected_security`. The server uses this so an absent VK never
+/// silently regenerates at startup.
+pub fn load_vk_from_disk(path: &Path, expected_security: SecurityLevel) -> Result<VerificationKey> {
+    if !path.exists() {
+        anyhow::bail!(
+            "FRI verification key file does not exist: {}. \
+             Generate it with `cargo run -p eravm-prover-host -- gen-vks` and commit the result.",
+            path.display()
+        );
+    }
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("while attempting to read {}", path.display()))?;
+    let (vk, decoded_len): (VerificationKey, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .with_context(|| format!("while attempting to decode {}", path.display()))?;
+    if decoded_len != bytes.len() {
+        anyhow::bail!(
+            "verification key file {} has trailing bytes",
+            path.display()
+        );
+    }
+    if vk.security() != expected_security {
+        anyhow::bail!(
+            "verification key file {} was built for {} but the server is configured for {}",
+            path.display(),
+            vk.security(),
+            expected_security
+        );
+    }
+
+    info!(path = %path.display(), "Loaded verification key from disk");
+    Ok(vk)
+}
+
 fn load_or_generate_vk(
     verifier: &RealVerifier,
     cache_path: &Path,
     security: SecurityLevel,
 ) -> Result<VerificationKey> {
     if cache_path.exists() {
-        let bytes = std::fs::read(cache_path)
-            .with_context(|| format!("while attempting to read {}", cache_path.display()))?;
-        let (vk, decoded_len): (VerificationKey, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).with_context(
-                || {
-                    format!(
-                        "while attempting to decode verification key cache {}",
-                        cache_path.display()
-                    )
-                },
-            )?;
-        if decoded_len != bytes.len() {
-            anyhow::bail!(
-                "verification key cache {} has trailing bytes",
-                cache_path.display()
-            );
-        }
-
-        info!(path = %cache_path.display(), "Loaded verification key from cache");
-        return Ok(vk);
+        return load_vk_from_disk(cache_path, security);
     }
 
     let vk = verifier
@@ -358,6 +402,12 @@ fn load_or_generate_vk(
         .context("while attempting to generate verification key")?;
     let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
         .context("while attempting to bincode-encode verification key cache payload")?;
+    if let Some(parent) = cache_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("while attempting to create {}", parent.display()))?;
+        }
+    }
     std::fs::write(cache_path, encoded)
         .with_context(|| format!("while attempting to write {}", cache_path.display()))?;
 
@@ -365,28 +415,20 @@ fn load_or_generate_vk(
     Ok(vk)
 }
 
-fn vk_cache_path(program: &Program, security: SecurityLevel) -> Result<PathBuf> {
-    let manifest_sha256 = program.manifest().bin.sha256.trim();
-    if manifest_sha256.is_empty() {
-        anyhow::bail!(
-            "guest manifest has empty bin_sha256, cannot derive verification key cache path"
-        );
-    }
-
-    // The VK depends on the security level — keep separate caches so an old
-    // 80-bit VK isn't reused when the prover is now producing 100-bit proofs.
-    Ok(PathBuf::from(format!(
-        "vk-{manifest_sha256}-{security}.bin"
-    )))
-}
-
 /// Resolves the guest dist directory: `ERAVM_PROVER_HOST_GUEST_DIR` env var if
 /// set, otherwise the workspace-relative path baked in at compile time. Lets a
 /// binary built on one machine find the guest dist on another (e.g. the CI
 /// prove-batch flow builds host on a CPU runner and runs it on the GPU runner).
-pub fn dist_dir() -> PathBuf {
+pub fn dist_dir() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("ERAVM_PROVER_HOST_GUEST_DIR") {
-        return PathBuf::from(p);
+        return std::path::PathBuf::from(p);
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
+}
+
+/// Repo-relative default location for the FRI verification key. The server
+/// resolves this against the project workspace at compile time; the Docker
+/// image overrides the path via `--fri-vk` / `FRI_VK`.
+pub fn default_fri_vk_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/fri_vk.bin")
 }
