@@ -382,6 +382,11 @@ jobs:
           # libcudart and bellman-cuda's .so live in the staged dir.
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
+          # Default stack size for any Rust-spawned thread that doesn't set
+          # one via `Builder::stack_size`. SNARK wrapping needs much more than
+          # the 2 MB default; the server's prover thread already overrides
+          # this explicitly, but inner library threads inherit this.
+          RUST_MIN_STACK: "134217728"
         run: |
           # SNARK wrapper recursion needs a large stack — see README.md.
           ulimit -s unlimited

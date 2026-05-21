@@ -142,7 +142,17 @@ fn main() -> Result<()> {
     let prover = prover_builder
         .build(job_rx, result_tx)
         .context("while building prover worker")?;
-    let prover_handle: std::thread::JoinHandle<()> = std::thread::spawn(move || prover.run());
+    // SNARK wrapper recursion needs much more stack than Rust's 2 MB
+    // `std::thread::spawn` default. `ulimit -s unlimited` (and the README
+    // guidance) only affects the main thread, not spawned ones, so we set the
+    // stack explicitly here. 128 MB is generous virtual mem; only the used
+    // portion gets backed by physical pages.
+    const PROVER_THREAD_STACK_SIZE: usize = 128 * 1024 * 1024;
+    let prover_handle: std::thread::JoinHandle<()> = std::thread::Builder::new()
+        .name("prover".to_owned())
+        .stack_size(PROVER_THREAD_STACK_SIZE)
+        .spawn(move || prover.run())
+        .context("while spawning prover thread")?;
 
     let client = JobServerClient::new(
         cli.prover_id,

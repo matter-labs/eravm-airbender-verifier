@@ -116,6 +116,12 @@ ENV PROVER_GUEST_DIST_DIR=/guest-program
 # you are mounting it from a different path.
 ENV SNARK_TRUSTED_SETUP_FILE=/setup/setup.key
 
+# Default stack size for Rust-spawned threads inside the server process. The
+# server's prover thread already sets its own stack size, but inner library
+# threads (rayon, etc.) inherit this default. Required because the SNARK
+# wrapper's recursion blows past Rust's 2 MB default.
+ENV RUST_MIN_STACK=134217728
+
 # Optional Prometheus metrics port
 EXPOSE 3000
 
