@@ -1,7 +1,11 @@
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use eravm_prover_host::{prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions};
+use eravm_prover_host::{
+    default_trusted_setup_download_url, default_trusted_setup_path, deserialize_from_file,
+    download_trusted_setup_if_not_present, prove_batches_fri, run_batches, wrap_to_snark,
+    SnarkOptions, SnarkWrapperVK,
+};
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
 
@@ -40,6 +44,9 @@ enum Command {
     Run(RunArgs),
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
+    /// Download the bellman SNARK trusted setup (CRS) so it is on disk before
+    /// running `prove-snark`. Skips the download if the file already exists.
+    DownloadTrustedSetup(DownloadTrustedSetupArgs),
 }
 
 #[derive(Debug, Args)]
@@ -79,6 +86,22 @@ struct ProveFriArgs {
 }
 
 #[derive(Debug, Args)]
+struct DownloadTrustedSetupArgs {
+    /// Where to write the trusted setup file.
+    #[arg(
+        long,
+        env = "SNARK_TRUSTED_SETUP_FILE",
+        default_value_os_t = default_trusted_setup_path(),
+    )]
+    output: PathBuf,
+
+    /// URL to download from. Defaults to the GCS bucket that matches the
+    /// build's SNARK feature set (CPU vs `snark_gpu`).
+    #[arg(long, default_value_t = default_trusted_setup_download_url().to_string())]
+    url: String,
+}
+
+#[derive(Debug, Args)]
 struct ProveSnarkArgs {
     #[arg(long, value_delimiter = ',')]
     proof_files: Vec<PathBuf>,
@@ -89,8 +112,14 @@ struct ProveSnarkArgs {
     #[arg(long)]
     worker_threads: Option<usize>,
 
-    #[arg(long)]
+    #[arg(long, env = "SNARK_TRUSTED_SETUP_FILE")]
     trusted_setup: Option<PathBuf>,
+
+    /// Optional path to a pre-generated SNARK VK JSON. When set, the VK is
+    /// loaded once at startup and reused for every wrap; otherwise it is
+    /// derived from the setup chain.
+    #[arg(long)]
+    snark_vk: Option<PathBuf>,
 
     #[arg(long)]
     use_zk: bool,
@@ -130,6 +159,10 @@ fn main() -> Result<()> {
                 args.security.into(),
             )
         }
+        Command::DownloadTrustedSetup(args) => {
+            download_trusted_setup_if_not_present(&args.output, &args.url)
+                .context("while attempting to download the SNARK trusted setup")
+        }
         Command::ProveSnark(args) => {
             let snark_options = SnarkOptions {
                 worker_threads: args.worker_threads,
@@ -137,9 +170,23 @@ fn main() -> Result<()> {
                 use_zk: args.use_zk,
                 save_intermediates: args.save_intermediates,
             };
-            wrap_to_snark(&args.proof_files, &args.output_dir, &snark_options)
+            let snark_vk = load_snark_vk(args.snark_vk.as_deref())?;
+            wrap_to_snark(
+                &args.proof_files,
+                &args.output_dir,
+                &snark_options,
+                snark_vk,
+            )
         }
     }
+}
+
+fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK>> {
+    let Some(path) = path else { return Ok(None) };
+    let path_string = path.to_string_lossy().into_owned();
+    let vk: SnarkWrapperVK = deserialize_from_file(&path_string)
+        .with_context(|| format!("while loading SNARK VK from {}", path.display()))?;
+    Ok(Some(vk))
 }
 
 fn init_tracing() -> Result<()> {

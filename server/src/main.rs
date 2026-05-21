@@ -1,4 +1,5 @@
-mod network;
+mod client;
+mod jobs;
 mod types;
 mod worker;
 
@@ -11,11 +12,15 @@ use std::time::Duration;
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
-use eravm_prover_host::FriPipeline;
+use eravm_prover_host::{
+    deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline, SnarkWrapperVK,
+};
 use tracing::info;
 
-use network::{network_worker, NetworkWorkerConfig};
-use worker::prover_worker;
+use client::JobServerClient;
+use jobs::JobWorker;
+use types::ProverMode;
+use worker::{ProverWorker, ProverWorkerBuilder};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,11 +32,18 @@ struct Cli {
     #[arg(long, env = "PROVER_SERVER_URL")]
     server_url: String,
 
+    /// Pipeline this prover runs:
+    /// `fri-only` (default) — proves FRI, submits FRI;
+    /// `fri-snark` — proves FRI + SNARK, submits both;
+    /// `snark-only` — wraps FRI proofs into SNARKs, submits SNARK.
+    #[arg(long, env = "PROVER_MODE", value_enum, default_value_t = ProverMode::FriOnly)]
+    mode: ProverMode,
+
     /// How long to wait between polls when no job is available (milliseconds)
     #[arg(long, env = "PROVER_POLL_INTERVAL_MS", default_value = "5000")]
     poll_interval_ms: u64,
 
-    /// Number of worker threads for the GPU prover
+    /// Number of worker threads for the GPU FRI prover
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
@@ -44,6 +56,19 @@ struct Cli {
     #[arg(long, env = "PROVER_SUBMIT_ATTEMPTS", default_value = "3")]
     submit_attempts: usize,
 
+    /// TCP connect timeout for HTTP calls to the job server (milliseconds)
+    #[arg(long, env = "PROVER_HTTP_CONNECT_TIMEOUT_MS", default_value = "5000")]
+    http_connect_timeout_ms: u64,
+
+    /// Per-request timeout for polling job inputs (milliseconds)
+    #[arg(long, env = "PROVER_POLL_TIMEOUT_MS", default_value = "30000")]
+    poll_timeout_ms: u64,
+
+    /// Per-request timeout for submitting proof results (milliseconds).
+    /// SNARK submissions can be large, so this is generally larger than the poll timeout.
+    #[arg(long, env = "PROVER_SUBMIT_TIMEOUT_MS", default_value = "120000")]
+    submit_timeout_ms: u64,
+
     /// Port to expose Prometheus metrics on (disabled if not set)
     #[arg(long, env = "PROVER_METRICS_PORT")]
     metrics_port: Option<u16>,
@@ -51,6 +76,29 @@ struct Cli {
     /// Path to the compiled guest program directory
     #[arg(long, env = "PROVER_GUEST_DIST_DIR")]
     guest_dist_dir: Option<PathBuf>,
+
+    /// Path to the trusted setup (CRS) for the SNARK wrapper.
+    /// Required when `--mode` is `fri-snark` or `snark-only`.
+    #[arg(
+        long,
+        env = "SNARK_TRUSTED_SETUP_FILE",
+        required_if_eq_any = [("mode", "fri-snark"), ("mode", "snark-only")],
+    )]
+    snark_trusted_setup: Option<PathBuf>,
+
+    /// Use a zero-knowledge SNARK wrapping path. Off by default.
+    #[arg(long, env = "SNARK_USE_ZK")]
+    snark_use_zk: bool,
+
+    /// Worker threads for the SNARK wrapper (defaults to wrapper's own default).
+    #[arg(long, env = "SNARK_THREADS")]
+    snark_threads: Option<usize>,
+
+    /// Optional path to a pre-generated SNARK VK JSON. When set, the VK is
+    /// loaded once at startup and reused for every wrap; otherwise it is
+    /// derived from the setup chain.
+    #[arg(long, env = "SNARK_VK")]
+    snark_vk: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -63,17 +111,17 @@ fn main() -> Result<()> {
         info!(port, "Metrics server started");
     }
 
-    let dist_dir = cli.guest_dist_dir.unwrap_or_else(default_dist_dir);
-    let pipeline = FriPipeline::new(&dist_dir, cli.worker_threads, SecurityLevel::default())
-        .context("while building FRI pipeline")?;
+    let dist_dir = cli.guest_dist_dir.clone().unwrap_or_else(default_dist_dir);
+    let security = SecurityLevel::default();
 
-    let client = reqwest::blocking::Client::new();
+    let prover_builder = build_prover(&cli, &dist_dir, security)?;
+
     let poll_interval = Duration::from_millis(cli.poll_interval_ms);
 
-    // Channel capacity 1: the network worker can buffer one job ahead while the prover is busy.
+    // Channel capacity 1: the job worker can buffer one job ahead while the prover is busy.
     let (job_tx, job_rx) = mpsc::sync_channel(1);
-    // Channel capacity 1: the prover sends one result at a time.
-    let (result_tx, result_rx) = mpsc::sync_channel(1);
+    // Channel capacity 2 to accommodate `fri-snark` mode emitting two results per job.
+    let (result_tx, result_rx) = mpsc::sync_channel(2);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     ctrlc::set_handler({
@@ -85,26 +133,95 @@ fn main() -> Result<()> {
     })
     .context("while setting Ctrl-C handler")?;
 
-    info!(server_url = %cli.server_url, "Starting prover server");
+    info!(
+        server_url = %cli.server_url,
+        mode = ?cli.mode,
+        "Starting prover server"
+    );
 
-    let prover_handle = std::thread::spawn(move || {
-        prover_worker(pipeline, job_rx, result_tx);
-    });
+    let prover = prover_builder
+        .build(job_rx, result_tx)
+        .context("while building prover worker")?;
+    // SNARK wrapper recursion needs much more stack than Rust's 2 MB
+    // `std::thread::spawn` default. `ulimit -s unlimited` (and the README
+    // guidance) only affects the main thread, not spawned ones, so we set the
+    // stack explicitly here. 128 MB is generous virtual mem; only the used
+    // portion gets backed by physical pages.
+    const PROVER_THREAD_STACK_SIZE: usize = 128 * 1024 * 1024;
+    let prover_handle: std::thread::JoinHandle<()> = std::thread::Builder::new()
+        .name("prover".to_owned())
+        .stack_size(PROVER_THREAD_STACK_SIZE)
+        .spawn(move || prover.run())
+        .context("while spawning prover thread")?;
 
-    network_worker(NetworkWorkerConfig {
-        job_tx,
-        result_rx,
-        client,
-        server_url: cli.server_url,
-        prover_id: cli.prover_id,
-        poll_interval,
-        submit_attempts: cli.submit_attempts,
-        shutdown,
+    let client = JobServerClient::new(
+        cli.prover_id,
+        cli.submit_attempts,
+        cli.server_url,
+        Duration::from_millis(cli.http_connect_timeout_ms),
+        Duration::from_millis(cli.poll_timeout_ms),
+        Duration::from_millis(cli.submit_timeout_ms),
+    )
+    .context("while building job server client")?;
+
+    let job_worker_handle: std::thread::JoinHandle<()> = std::thread::spawn(move || {
+        JobWorker::new(client, job_tx, result_rx, shutdown, cli.mode, poll_interval).run()
     });
 
     info!("Waiting for prover to finish current job...");
     prover_handle.join().expect("prover thread panicked");
+    job_worker_handle
+        .join()
+        .expect("job worker thread panicked");
     Ok(())
+}
+
+fn build_prover(
+    cli: &Cli,
+    dist_dir: &std::path::Path,
+    security: SecurityLevel,
+) -> Result<ProverWorkerBuilder> {
+    let snark_options = SnarkOptions {
+        worker_threads: cli.snark_threads,
+        trusted_setup: cli.snark_trusted_setup.clone(),
+        use_zk: cli.snark_use_zk,
+        // Server path drives the wrapper directly and never persists intermediates.
+        save_intermediates: false,
+    };
+
+    let build_fri = || {
+        FriPipeline::new(dist_dir, cli.worker_threads, security)
+            .context("while building FRI pipeline")
+    };
+    let build_snark = || -> Result<SnarkPipeline> {
+        let snark_vk = load_snark_vk(cli.snark_vk.as_deref())?;
+        SnarkPipeline::new(&snark_options, snark_vk).context("while building SNARK pipeline")
+    };
+
+    let builder = ProverWorker::builder();
+    Ok(match cli.mode {
+        ProverMode::FriOnly => builder.with_fri(build_fri()?),
+        ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
+        ProverMode::SnarkOnly => {
+            // The worker doesn't run the GPU FRI prover here, but the FRI
+            // proofs we receive from the job server still have to be verified
+            // before we burn cycles wrapping them into a SNARK.
+            let verifier = FriVerifier::new(dist_dir, security)
+                .context("while building FRI verifier for snark-only mode")?;
+            builder
+                .with_fri_verifier(verifier)
+                .with_snark(build_snark()?)
+        }
+    })
+}
+
+fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK>> {
+    let Some(path) = path else { return Ok(None) };
+    let path_string = path.to_string_lossy().into_owned();
+    let vk: SnarkWrapperVK = deserialize_from_file(&path_string)
+        .with_context(|| format!("while loading SNARK VK from {}", path.display()))?;
+    info!(path = %path.display(), "Loaded SNARK VK from file");
+    Ok(Some(vk))
 }
 
 fn init_tracing() -> Result<()> {

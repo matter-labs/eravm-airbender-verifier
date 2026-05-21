@@ -1,4 +1,5 @@
 mod fri;
+mod setup_download;
 mod snark;
 mod statistics;
 
@@ -8,11 +9,15 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{dist_dir, FriPipeline, ProveOutput};
-pub use crate::snark::SnarkOptions;
+pub use crate::fri::{dist_dir, FriPipeline, FriVerifier, ProveOutput, RawFriProof};
+pub use crate::setup_download::{
+    default_trusted_setup_download_url, default_trusted_setup_path,
+    download_trusted_setup_if_not_present,
+};
+pub use crate::snark::{SnarkOptions, SnarkPipeline};
+pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 
 use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
-use crate::snark::SnarkPipeline;
 use crate::statistics::StatisticsCollector;
 
 // ==============================================================================
@@ -83,19 +88,22 @@ pub fn wrap_to_snark(
     proof_files: &[PathBuf],
     output_root: &Path,
     snark_options: &SnarkOptions,
+    snark_vk: Option<SnarkWrapperVK>,
 ) -> Result<()> {
-    let mut pipeline = SnarkPipeline::new(snark_options)?;
+    let mut pipeline = SnarkPipeline::new(snark_options, snark_vk)?;
 
     for (index, proof_file) in proof_files.iter().enumerate() {
         let raw_proof = load_raw_proof(proof_file)
             .with_context(|| format!("while attempting to load {}", proof_file.display()))?;
         let output_dir = proof_file_output_dir(output_root, proof_file)?;
-        pipeline.prove(raw_proof, &output_dir).with_context(|| {
-            format!(
-                "while attempting to wrap raw proof {} into a SNARK",
-                proof_file.display()
-            )
-        })?;
+        pipeline
+            .prove_and_save_outcome(raw_proof, &output_dir)
+            .with_context(|| {
+                format!(
+                    "while attempting to wrap raw proof {} into a SNARK",
+                    proof_file.display()
+                )
+            })?;
 
         info!(
             proof_file = %proof_file.display(),

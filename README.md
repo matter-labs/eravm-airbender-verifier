@@ -152,10 +152,13 @@ git checkout <desired_branch> # e.g. popzxc-snark-integrated-properly at the tim
 # Download artifacts for proving
 git lfs install
 
-# Set up CRS key and stack for SNARK proving
-# IMPORTANT: CPU/GPU use different keys
-curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2\^24.key --output setup.key &
-curl https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_compact.key --output setup_gpu.key
+# Set up CRS key and stack for SNARK proving. The trusted setup must already
+# exist on disk before the prover starts — point at it via `--trusted-setup`
+# or `SNARK_TRUSTED_SETUP_FILE` (mirrors era's `KZG_TRUSTED_SETUP_FILE`).
+# IMPORTANT: CPU/GPU use different keys. The `download-trusted-setup`
+# subcommand picks the right URL based on the build's `snark_gpu` feature.
+cargo run --release -p eravm-prover-host -- download-trusted-setup --output setup.key &
+cargo run --release -p eravm-prover-host --features snark_gpu -- download-trusted-setup --output setup_gpu.key
 
 ulimit -s unlimited
 

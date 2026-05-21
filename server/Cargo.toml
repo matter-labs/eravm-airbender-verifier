@@ -16,6 +16,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 eravm-prover-host.workspace = true
 reqwest.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 serde_with = {workspace = true, features = ["hex"]}
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -27,3 +28,8 @@ axum.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 zksync_cli_utils.workspace = true
+
+[features]
+# Compile the SNARK wrapper in GPU mode. Requires `bellman-cuda` (see README).
+# Forwards to the host crate's identically-named feature.
+snark_gpu = ["eravm-prover-host/snark_gpu"]
