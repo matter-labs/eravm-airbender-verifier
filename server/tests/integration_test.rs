@@ -1,21 +1,21 @@
-//! Integration tests: start the prover server binary, serve one real batch via a local HTTP
-//! server, wait up to `TEST_TIMEOUT` for the proof(s) to be submitted, then verify them.
+//! Integration test: starts the prover server binary, serves one real batch via a local HTTP
+//! server, waits for the proof(s) to be submitted, then verifies them.
 //!
-//! Two scenarios are covered, gated by `#[ignore]` because they need a GPU, the built guest
-//! binary, and the LFS batch corpus:
+//! Gated by `#[ignore]` because it needs a GPU, the built guest binary, and the LFS batch
+//! corpus.
 //!
-//! * `prover_server_proves_one_batch` — default `fri-only` mode; verifies the FRI proof.
-//! * `prover_server_proves_fri_then_snark` — runs `fri-only` to produce the FRI proof,
-//!   kills that prover, then starts a fresh `snark-only` prover that picks the FRI proof up via
-//!   `/airbender/snark_inputs` and submits the SNARK proof. Exercises both new modes plus the
-//!   `snark_inputs` endpoint in one go. The trusted setup is fetched into the system temp dir on
-//!   first run (matches the build's `snark_gpu` feature — GPU `setup_compact.key` when enabled,
-//!   CPU `setup_2^24.key` otherwise); override the path via `IT_SNARK_TRUSTED_SETUP` to reuse a
-//!   local copy.
+//! `prover_server_proves_fri_then_snark` runs `fri-only` to produce the FRI proof against
+//! `/airbender/submit_proofs`, kills that prover, then starts a fresh `snark-only` prover that
+//! picks the captured FRI proof up via `/airbender/snark_inputs` and submits the SNARK proof to
+//! `/airbender/submit_snark_proofs`. Covers both new modes plus the `snark_inputs` endpoint, and
+//! incidentally exercises the same fri-only path the old single-mode smoke test did. The trusted
+//! setup is fetched into the system temp dir on first run (matches the build's `snark_gpu`
+//! feature — GPU `setup_compact.key` when enabled, CPU `setup_2^24.key` otherwise); override the
+//! path via `IT_SNARK_TRUSTED_SETUP` to reuse a local copy.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -47,24 +47,6 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// the killed fri-only prover's context is reaped, the next allocator hits
 /// `cudaErrorMemoryAllocation`.
 const GPU_RECLAIM_DELAY: Duration = Duration::from_secs(5);
-
-/// Serializes the GPU-using integration tests inside a single test-binary
-/// invocation. `cargo test` runs tests in parallel by default; without this
-/// lock the two `#[tokio::test]`s below both spawn a prover that grabs the
-/// whole GPU, and the second one panics with `cudaErrorMemoryAllocation`.
-/// An async-aware mutex is used because the guard is held across `.await`s
-/// for the duration of each test.
-static GPU_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-/// Acquire `GPU_TEST_LOCK`. Use `let _gpu_lock = acquire_gpu_lock().await;`
-/// at the start of every test that spawns the prover server (don't bind to
-/// `_` directly — that drops the guard immediately).
-async fn acquire_gpu_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    GPU_TEST_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
 
 // ---------------------------------------------------------------------------
 // Test HTTP server state and handlers
@@ -378,96 +360,6 @@ async fn await_with_heartbeat(
 // The integration tests
 // ---------------------------------------------------------------------------
 
-/// Runs the full prover server → job server → proof verification pipeline for one batch.
-///
-/// Timeline:
-/// 1. Load batch 506093 and deserialize it to `AirbenderVerifierInput`.
-/// 2. Start a local HTTP server that serves the job once, then hangs returning 204.
-/// 3. Start `eravm-prover-server` pointed at the local server.
-/// 4. Wait up to `TEST_TIMEOUT` for the server to submit the proof.
-/// 5. Verify the submitted proof with `RealVerifier`.
-///
-/// Ignored by default: requires a GPU, the built guest binary, and LFS batch 506093.bin.gz.
-/// Run with `cargo test --test integration_test --release -- --ignored`.
-#[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
-#[tokio::test(flavor = "multi_thread")]
-async fn prover_server_proves_one_batch() {
-    let _gpu_lock = acquire_gpu_lock().await;
-
-    let dist_dir = guest_dist_dir();
-    println!("[test] Guest dist dir: {}", dist_dir.display());
-
-    let (verifier_input, expected_public_input) = load_batch_and_expected_public_input();
-
-    // --- 2. Set up test HTTP server ---
-    let (fri_tx, fri_rx) = oneshot::channel::<Vec<u8>>();
-    // Unused in fri-only mode but the state struct always carries it.
-    let (snark_tx, _snark_rx) = oneshot::channel::<Vec<u8>>();
-    let state = TestServerState {
-        verifier_input: Arc::new(verifier_input),
-        fri_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        fri_proof_capture: Arc::new(Mutex::new(None)),
-        fri_proof_sender: Arc::new(Mutex::new(Some(fri_tx))),
-        snark_input_served: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        snark_proof_sender: Arc::new(Mutex::new(Some(snark_tx))),
-    };
-
-    let app = Router::new()
-        .route("/airbender/proof_inputs", post(handle_proof_inputs))
-        .route(
-            "/airbender/submit_proofs",
-            post(handle_submit_proofs).layer(DefaultBodyLimit::disable()),
-        )
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind test HTTP server");
-    let server_addr = listener
-        .local_addr()
-        .expect("failed to get test server address");
-    println!("[test] Test HTTP server listening on http://{server_addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("test HTTP server exited with error");
-    });
-
-    // --- 3. Start the prover server binary ---
-    let prover_bin = prover_server_bin();
-    println!("[test] Spawning prover server: {}", prover_bin.display());
-    let child = Command::new(&prover_bin)
-        .env("PROVER_SERVER_URL", format!("http://{server_addr}"))
-        .env(
-            "PROVER_GUEST_DIST_DIR",
-            dist_dir.to_str().expect("non-UTF8 guest dist dir"),
-        )
-        .env("PROVER_POLL_INTERVAL_MS", "1000")
-        .env("PROVER_ID", "integration-test")
-        .spawn()
-        .expect("failed to spawn eravm-prover-server");
-    println!("[test] Prover server spawned (pid {})", child.id());
-    let _child_guard = ChildGuard(child);
-
-    // --- 4. Wait up to TEST_TIMEOUT for the proof, printing a heartbeat every minute ---
-    eprintln!(
-        "[test] Waiting for FRI proof (timeout: {}s)...",
-        TEST_TIMEOUT.as_secs()
-    );
-    let started_at = Instant::now();
-    let proof_bytes = await_with_heartbeat("FRI", fri_rx, TEST_TIMEOUT).await;
-
-    println!(
-        "[test] Proof received after {:.1}s ({} bytes)",
-        started_at.elapsed().as_secs_f64(),
-        proof_bytes.len()
-    );
-
-    // --- 5. Verify the proof ---
-    verify_fri_proof(&proof_bytes, &expected_public_input, &dist_dir);
-}
-
 /// Exercises `fri-only` followed by `snark-only` end-to-end against a single
 /// test HTTP server:
 /// 1. Start a prover in `fri-only` mode, wait for the FRI submission to land
@@ -482,8 +374,6 @@ async fn prover_server_proves_one_batch() {
 #[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_proves_fri_then_snark() {
-    let _gpu_lock = acquire_gpu_lock().await;
-
     let dist_dir = guest_dist_dir();
     println!("[test] Guest dist dir: {}", dist_dir.display());
 
