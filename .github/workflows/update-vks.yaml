@@ -134,6 +134,11 @@ jobs:
         uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
         with:
           inherit-toolchain: true
+          # PR code runs cargo here. With caching enabled, a malicious PR
+          # could poison the Actions cache (keyed by branch / default
+          # branch) and the poisoned entries would later be read by main
+          # builds. Disable caching for this workflow only.
+          cache: false
 
       - name: Install cargo-binutils
         working-directory: ./airbender-platform
@@ -217,8 +222,11 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # The only job with a write-scoped token. It runs zero Rust, no PR code,
-  # and does not touch the guest or the host binary — just `cp` and `git`.
+  # The only job with a write-scoped token. Commits via the Git Data REST
+  # API — no `actions/checkout`, no PR files on disk, no shell, no chance
+  # of an `.gitattributes` / hook / build script from the PR executing in
+  # this privileged context. The vks artifact is the only PR-derived input
+  # and is treated as opaque bytes.
   # ---------------------------------------------------------------------------
   commit:
     name: commit
@@ -228,81 +236,98 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: ${{ needs.trigger.outputs.head_repo }}
-          ref: ${{ needs.trigger.outputs.head_ref }}
-          persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify head is unchanged
-        env:
-          EXPECTED_SHA: ${{ needs.trigger.outputs.head_sha }}
-        run: |
-          actual=$(git rev-parse HEAD)
-          if [ "$actual" != "$EXPECTED_SHA" ]; then
-            echo "::error::PR head moved between trigger ($EXPECTED_SHA) and checkout ($actual). Re-run /update-vks."
-            exit 1
-          fi
-
       - name: Download regenerated VKs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: update-vks-vks
           path: vks-download
 
-      - name: Copy regenerated VKs into vks/
-        run: |
-          mkdir -p vks
-          # Only the canonical filenames are accepted; anything else would be
-          # an unexpected artifact and we'd rather fail than commit it.
-          for f in fri_vk.bin snark_vk.json; do
-            if [ ! -f "vks-download/$f" ]; then
-              echo "::error::Expected $f in regenerated VK artifact"
-              exit 1
-            fi
-            cp -v "vks-download/$f" "vks/$f"
-          done
-
-      - name: Commit and push if changed
+      - name: Commit vks/ via Git Data API
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ needs.trigger.outputs.pr_number }}
           HEAD_REF: ${{ needs.trigger.outputs.head_ref }}
-        run: |
-          if git diff --quiet -- vks/; then
-            echo "::notice::vks/ already matches the regenerated keys; nothing to commit."
-            gh pr comment "$PR_NUMBER" --body \
-              ":white_check_mark: \`/update-vks\`: \`vks/\` already matches the regenerated keys."
-            exit 0
-          fi
+          EXPECTED_SHA: ${{ needs.trigger.outputs.head_sha }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const branch = process.env.HEAD_REF;
+            const expectedSha = process.env.EXPECTED_SHA;
+            const prNumber = Number(process.env.PR_NUMBER);
 
-          git diff --stat -- vks/
+            // Canonical filenames only. Anything else in the artifact is
+            // unexpected and we'd rather fail than commit it.
+            const files = [
+              { path: 'vks/fri_vk.bin',    local: 'vks-download/fri_vk.bin'    },
+              { path: 'vks/snark_vk.json', local: 'vks-download/snark_vk.json' },
+            ];
+            for (const f of files) {
+              if (!fs.existsSync(f.local)) {
+                core.setFailed(`expected ${f.local} in regenerated VK artifact`);
+                return;
+              }
+            }
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            // Refuse to push if the PR head moved between trigger validation
+            // and this step — better to fail and ask for a re-run than to
+            // surprise the author with a commit on a SHA they have since
+            // rebased away from.
+            const ref = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+            const headSha = ref.data.object.sha;
+            if (headSha !== expectedSha) {
+              core.setFailed(`PR head moved (${expectedSha} -> ${headSha}); re-run /update-vks`);
+              return;
+            }
 
-          git add -- vks/
-          git commit \
-            -m "chore(vks): refresh committed verification keys" \
-            -m "Regenerated by \`/update-vks\` on ${{ needs.trigger.outputs.head_sha }}."
+            const parentCommit = await github.rest.git.getCommit({ owner, repo, commit_sha: headSha });
+            const baseTreeSha = parentCommit.data.tree.sha;
 
-          git push origin "HEAD:${HEAD_REF}"
+            const blobs = [];
+            for (const f of files) {
+              const blob = await github.rest.git.createBlob({
+                owner, repo,
+                content: fs.readFileSync(f.local).toString('base64'),
+                encoding: 'base64',
+              });
+              blobs.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.data.sha });
+            }
 
-          new_sha=$(git rev-parse HEAD)
-          gh pr comment "$PR_NUMBER" --body \
-            ":white_check_mark: \`/update-vks\`: pushed refreshed \`vks/\` as \`$new_sha\`."
+            const tree = await github.rest.git.createTree({
+              owner, repo,
+              base_tree: baseTreeSha,
+              tree: blobs,
+            });
 
-      - name: "React :tada: on success"
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
-            -f content='hooray' >/dev/null
+            const postComment = (body) => github.rest.issues.createComment({
+              owner, repo, issue_number: prNumber, body,
+            });
+            const react = (content) => github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: Number(process.env.COMMENT_ID), content,
+            });
+
+            if (tree.data.sha === baseTreeSha) {
+              core.info(`vks/ already matches; nothing to commit`);
+              await postComment(`:white_check_mark: \`/update-vks\`: \`vks/\` already matches the regenerated keys.`);
+              await react('hooray');
+              return;
+            }
+
+            const commit = await github.rest.git.createCommit({
+              owner, repo,
+              message: `chore(vks): refresh committed verification keys\n\nRegenerated by /update-vks on ${expectedSha}.`,
+              tree: tree.data.sha,
+              parents: [headSha],
+            });
+
+            await github.rest.git.updateRef({
+              owner, repo, ref: `heads/${branch}`, sha: commit.data.sha,
+            });
+
+            core.info(`pushed commit ${commit.data.sha} to ${branch}`);
+            await postComment(`:white_check_mark: \`/update-vks\`: pushed refreshed \`vks/\` as \`${commit.data.sha}\`.`);
+            await react('hooray');
 
   # ---------------------------------------------------------------------------
   # Leave a clear note on the PR (and react :-1:) if any earlier job failed,
