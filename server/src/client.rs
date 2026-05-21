@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use airbender_host::{Inputs, Proof};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use eravm_prover_host::SnarkWrapperProof;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{info, warn};
@@ -67,14 +67,17 @@ impl JobServerClient {
         else {
             return Ok(None);
         };
-        // The verifier needs a V2 payload; V1 corpus upgrades transparently
-        // via the wire adapter. Metadata is read from the upgraded payload
-        // but the original `input` is what the guest encoder consumes.
-        let v2 = input
-            .clone()
-            .into_v2()
-            .context("proof generation data has no payload (V0)")?;
-        let batch_number = v2.vm_run_data.l1_batch_number.0;
+        // Read the batch number directly from the payload without consuming
+        // `input` — both V1 and V2 carry a `V2AirbenderVerifierInput` inside,
+        // and the host's guest-encoder takes `&input` below.
+        let batch_number = match &input {
+            AirbenderVerifierInput::V0 => {
+                bail!("unexpected AirbenderVerifierInput::V0 from job server")
+            }
+            AirbenderVerifierInput::V1(payload) | AirbenderVerifierInput::V2(payload) => {
+                payload.vm_run_data.l1_batch_number.0
+            }
+        };
         let mut inputs = Inputs::new();
         inputs
             .push(&input)
