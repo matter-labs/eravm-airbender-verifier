@@ -31,113 +31,85 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Builds the PR's guest. The one job that runs PR-controlled cargo —
-  # kept on a read-only token with `persist-credentials: false` and no
-  # actions/cache.
-  guest-build:
-    name: guest-build
-    permissions:
-      contents: read
-    runs-on: matterlabs-ci-runner-high-performance
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: ${{ inputs.head_repo }}
-          ref: ${{ inputs.head_sha }}
-          persist-credentials: false
-
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
-          path: airbender-platform
-          persist-credentials: false
-
-      - name: Install linux packages
-        shell: 'bash -ex {0}'
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
-          ${SUDO} apt-get update
-          ${SUDO} apt-get install -y libclang-dev clang
-
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-          # PR code writes to actions/cache otherwise.
-          cache: false
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      - name: Build guest
-        working-directory: ./guest
-        run: cargo airbender build
-
-      - name: Upload guest dist
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: update-vks-guest-dist
-          path: guest/dist/app
-          if-no-files-found: error
-          retention-days: 1
-
-  # Runs `gen-vks` from the trusted main-built image against the PR's guest.
-  # No Rust compiles here, and the host binary doesn't execute guest code.
+  # Runs `gen-vks` using the host binary + guest dist already built by the
+  # PR's `ci-run` workflow (`server-integration-build` job). No Rust
+  # compiles in this workflow — the PR-built binaries are downloaded as
+  # artifacts. `ci-run` must have completed successfully on `head_sha`
+  # before `/update-vks` is invoked; otherwise this job fails fast.
   regen:
     name: regen
-    needs: guest-build
     permissions:
       contents: read
-      packages: read # pull from ghcr.io
+      actions: read # download artifacts from another workflow run
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 60
     env:
-      IMAGE: ghcr.io/${{ github.repository }}:latest
+      LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
     steps:
+      - name: Locate PR build run
+        id: build_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          run_id=$(gh run list \
+            --repo "$GH_REPO" \
+            --workflow ci-check.yaml \
+            --limit 50 \
+            --json databaseId,headSha,status,conclusion \
+            --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .status == \"completed\" and .conclusion == \"success\")] | first | .databaseId // empty")
+          if [ -z "$run_id" ]; then
+            echo "::error::No successful ci-run found for head_sha=$HEAD_SHA. Wait for CI to finish and re-comment /update-vks."
+            exit 1
+          fi
+          echo "Using ci-run #$run_id"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download prover-host binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-host-bin
+          path: stage/bin
+          run-id: ${{ steps.build_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download guest dist
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: update-vks-guest-dist
+          name: eravm-prover-server-guest-dist
           path: stage/guest
+          run-id: ${{ steps.build_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to ghcr.io
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: eravm-prover-server-bellman-cuda
+          path: stage/cuda-libs
+          run-id: ${{ steps.build_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull trusted host image
-        run: docker pull "$IMAGE"
+      - name: Make host binary executable
+        run: chmod +x stage/bin/eravm-prover-host
 
-      - name: Prepare output directory
+      - name: Download SNARK trusted setup
         run: |
+          mkdir -p stage/setup
+          ./stage/bin/eravm-prover-host download-trusted-setup \
+              --output stage/setup/setup.key
+
+      - name: Regenerate VKs
+        env:
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/stage/guest
+          RUST_BACKTRACE: 1
+          RUST_MIN_STACK: "134217728"
+        run: |
+          ulimit -s unlimited
           mkdir -p vks-output
-          chmod 777 vks-output
-
-      - name: Run gen-vks inside the trusted image
-        run: |
-          docker run --rm \
-            --gpus all \
-            --ulimit stack=-1 \
-            -v "${{ github.workspace }}/stage/guest:/guest-pr:ro" \
-            -v "${{ github.workspace }}/vks-output:/vks-output" \
-            -e ERAVM_PROVER_HOST_GUEST_DIR=/guest-pr \
-            -e RUST_BACKTRACE=1 \
-            -e RUST_MIN_STACK=134217728 \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c "ulimit -s unlimited && /usr/local/bin/eravm-prover-host gen-vks --output-dir /vks-output --trusted-setup /setup/setup.key"
+          ./stage/bin/eravm-prover-host gen-vks \
+              --output-dir vks-output \
+              --trusted-setup stage/setup/setup.key
           ls -lh vks-output
 
       - name: Upload regenerated VKs
@@ -247,7 +219,7 @@ jobs:
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
-    needs: [guest-build, regen, commit]
+    needs: [regen, commit]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:
