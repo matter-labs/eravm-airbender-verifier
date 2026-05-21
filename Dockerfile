@@ -119,4 +119,10 @@ ENV SNARK_TRUSTED_SETUP_FILE=/setup/setup.key
 # Optional Prometheus metrics port
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/eravm-prover-server"]
+# SNARK wrapper recursion needs an unbounded stack — see README.md. Wrap the
+# binary in a shell so we can raise the soft RLIMIT_STACK before exec'ing it;
+# glibc seeds pthread stack sizes from RLIMIT_STACK, so this also reaches the
+# prover's worker threads. The container runtime must permit it (`docker run
+# --ulimit stack=-1`, or no explicit Kubernetes cap), otherwise the soft limit
+# clamps to the hard limit and SNARK proving will still crash.
+ENTRYPOINT ["/bin/sh", "-c", "ulimit -s unlimited; exec /usr/local/bin/eravm-prover-server \"$@\"", "--"]
