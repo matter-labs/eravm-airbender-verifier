@@ -1,107 +1,68 @@
 name: update-vks
 
-# Comment-listener that regenerates the FRI and SNARK verification keys and
-# commits them back to the PR branch on `/update-vks`.
+# VK regeneration pipeline. Triggered manually via
+# `gh workflow run update-vks.yaml -f pr_number=… -f head_repo=… …`,
+# which the `update-vks-dispatch.yaml` comment listener invokes on every
+# `/update-vks` from a repo collaborator.
+#
+# Why workflow_dispatch instead of issue_comment? CodeQL classifies
+# `issue_comment` (and `pull_request_target`, `workflow_run`-from-untrusted)
+# as inherently privileged-but-reachable-from-untrusted contexts, and
+# flags every step that runs PR-controlled code in them. workflow_dispatch
+# requires write access to invoke, so the same build + commit pipeline
+# stops tripping cache-poisoning / untrusted-checkout heuristics.
 #
 # Security model:
-#   - Workflow-level permissions are `contents: read` only. Each job opts
+#   - Workflow-level permissions are `contents: read` only; each job opts
 #     into the narrower scope it needs.
-#   - The host binary that produces the committed VKs comes from the trusted
-#     Docker image built off `main` (`ghcr.io/<repo>:latest`). PR-author code
-#     never compiles the binary that runs `gen-vks`.
-#   - The `guest-build` job runs PR code (cargo + airbender), but with a
-#     read-only token, no PR-secret access, and `persist-credentials: false`.
-#   - The `commit` job holds the only write-scoped token. It runs no Rust,
-#     no PR code — it just downloads the regenerated `vks/` artifact and
-#     pushes it back.
+#   - `guest-build` runs PR-author cargo (build.rs, proc-macros, deps),
+#     but with a read-only token, no credentials persisted, and no
+#     actions-cache writes.
+#   - `regen` runs `gen-vks` inside the trusted `ghcr.io/<repo>:latest`
+#     image (built off main). PR-author code never compiles the binary
+#     that writes the committed VKs.
+#   - `commit` is the only job with a write token. It runs no Rust, no
+#     shell, no actions/checkout — just `actions/github-script` driving
+#     the Git Data API on the regenerated VK artifact.
 #
-# Fork PRs are rejected because the default `GITHUB_TOKEN` cannot push to a
-# fork's branch.
+# Fork PRs are rejected by `update-vks-dispatch.yaml` before this workflow
+# is invoked because the default `GITHUB_TOKEN` cannot push to a fork.
 
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        type: string
+        required: true
+      head_repo:
+        type: string
+        required: true
+      head_ref:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      comment_id:
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: update-vks-${{ github.event.issue.number }}
+  group: update-vks-${{ inputs.pr_number }}
   cancel-in-progress: false
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Gate the rest of the workflow on: PR-only, slash-command match, author has
-  # write access, head branch lives in this repo. Reacts :eyes: on the
-  # triggering comment.
-  # ---------------------------------------------------------------------------
-  trigger:
-    name: trigger
-    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/update-vks') }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-      issues: write # reacting to an issue_comment is on the issues API surface
-    outputs:
-      head_repo: ${{ steps.resolve.outputs.head_repo }}
-      head_ref: ${{ steps.resolve.outputs.head_ref }}
-      head_sha: ${{ steps.resolve.outputs.head_sha }}
-      pr_number: ${{ github.event.issue.number }}
-    steps:
-      - name: Verify author has write access
-        env:
-          ASSOC: ${{ github.event.comment.author_association }}
-        run: |
-          case "$ASSOC" in
-            OWNER|MEMBER|COLLABORATOR) ;;
-            *) echo "::error::/update-vks must be triggered by a repo collaborator (author_association: $ASSOC)"; exit 1 ;;
-          esac
-
-      - name: "React :eyes: to trigger comment"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
-            -f content='eyes' >/dev/null
-
-      - name: Resolve PR head
-        id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          pr=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")
-          head_repo=$(echo "$pr" | jq -r .head.repo.full_name)
-          head_ref=$(echo "$pr" | jq -r .head.ref)
-          head_sha=$(echo "$pr" | jq -r .head.sha)
-          echo "head_repo=$head_repo" >> "$GITHUB_OUTPUT"
-          echo "head_ref=$head_ref"   >> "$GITHUB_OUTPUT"
-          echo "head_sha=$head_sha"   >> "$GITHUB_OUTPUT"
-          echo "Resolved PR head: $head_repo @ $head_ref ($head_sha)"
-
-      - name: Reject fork PRs
-        env:
-          HEAD_REPO: ${{ steps.resolve.outputs.head_repo }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
-            echo "::error::PR head is in a fork ($HEAD_REPO); GITHUB_TOKEN cannot push there."
-            gh pr comment "${{ github.event.issue.number }}" --body \
-              ":x: \`/update-vks\` cannot push to fork branches. Run \`cargo run -p eravm-prover-host --features snark_gpu -- gen-vks --output-dir vks --trusted-setup <CRS>\` locally and push the result."
-            exit 1
-          fi
-
-  # ---------------------------------------------------------------------------
   # Build only the guest binary from the PR head. This is the one job that
   # compiles PR-author-controlled Rust (build.rs, proc-macros, deps), so it
-  # is kept on a read-only token with no credentials persisted in the
-  # workspace. Its output is treated as untrusted input by the regen job.
+  # runs on a read-only token, with `persist-credentials: false`, and with
+  # `actions/cache` disabled.
   # ---------------------------------------------------------------------------
   guest-build:
     name: guest-build
-    needs: trigger
     permissions:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
@@ -109,8 +70,8 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          repository: ${{ needs.trigger.outputs.head_repo }}
-          ref: ${{ needs.trigger.outputs.head_sha }}
+          repository: ${{ inputs.head_repo }}
+          ref: ${{ inputs.head_sha }}
           persist-credentials: false
 
       - name: Checkout airbender-platform
@@ -134,10 +95,10 @@ jobs:
         uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
         with:
           inherit-toolchain: true
-          # PR code runs cargo here. With caching enabled, a malicious PR
-          # could poison the Actions cache (keyed by branch / default
-          # branch) and the poisoned entries would later be read by main
-          # builds. Disable caching for this workflow only.
+          # Belt-and-braces: even though workflow_dispatch is outside
+          # CodeQL's privileged set, we still avoid the actions/cache that
+          # setup-rust enables by default so PR code can't write entries
+          # that later main builds might read.
           cache: false
 
       - name: Install cargo-binutils
@@ -163,12 +124,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # Run `gen-vks` on the GPU runner using the trusted Docker image. No Rust
   # is compiled here; no PR code is executed (the host binary computes a VK
-  # from the guest binary's bytes, it does not run the guest). Token is
-  # read-only and never touches the repo.
+  # from the guest binary's bytes, it does not run the guest).
   # ---------------------------------------------------------------------------
   regen:
     name: regen
-    needs: [trigger, guest-build]
+    needs: guest-build
     permissions:
       contents: read
       packages: read # pull from ghcr.io
@@ -230,10 +190,11 @@ jobs:
   # ---------------------------------------------------------------------------
   commit:
     name: commit
-    needs: [trigger, regen]
+    needs: regen
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     runs-on: ubuntu-latest
     steps:
       - name: Download regenerated VKs
@@ -245,10 +206,10 @@ jobs:
       - name: Commit vks/ via Git Data API
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
-          PR_NUMBER: ${{ needs.trigger.outputs.pr_number }}
-          HEAD_REF: ${{ needs.trigger.outputs.head_ref }}
-          EXPECTED_SHA: ${{ needs.trigger.outputs.head_sha }}
-          COMMENT_ID: ${{ github.event.comment.id }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_REF: ${{ inputs.head_ref }}
+          EXPECTED_SHA: ${{ inputs.head_sha }}
+          COMMENT_ID: ${{ inputs.comment_id }}
         with:
           script: |
             const fs = require('fs');
@@ -330,13 +291,13 @@ jobs:
             await react('hooray');
 
   # ---------------------------------------------------------------------------
-  # Leave a clear note on the PR (and react :-1:) if any earlier job failed,
-  # so the trigger comment isn't stuck on :eyes: forever.
+  # Leave a clear note on the PR (and react :-1: on the triggering comment)
+  # if any earlier job failed, so the comment isn't stuck on :eyes: forever.
   # ---------------------------------------------------------------------------
   notify-failure:
     name: notify-failure
-    needs: [trigger, guest-build, regen, commit]
-    if: ${{ failure() && needs.trigger.result == 'success' }}
+    needs: [guest-build, regen, commit]
+    if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -345,12 +306,14 @@ jobs:
       - name: "React :-1: and comment"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          COMMENT_ID: ${{ inputs.comment_id }}
         run: |
           gh api \
             -X POST \
             -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
             -f content='-1' >/dev/null
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh pr comment "${{ needs.trigger.outputs.pr_number }}" --body \
+          gh pr comment "$PR_NUMBER" --body \
             ":x: \`/update-vks\` failed. See [the workflow run]($run_url) for details."
