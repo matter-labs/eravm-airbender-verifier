@@ -1,32 +1,8 @@
 name: update-vks
 
-# VK regeneration pipeline. Triggered manually via
-# `gh workflow run update-vks.yaml -f pr_number=… -f head_repo=… …`,
-# which the `update-vks-dispatch.yaml` comment listener invokes on every
-# `/update-vks` from a repo collaborator.
-#
-# Why workflow_dispatch instead of issue_comment? CodeQL classifies
-# `issue_comment` (and `pull_request_target`, `workflow_run`-from-untrusted)
-# as inherently privileged-but-reachable-from-untrusted contexts, and
-# flags every step that runs PR-controlled code in them. workflow_dispatch
-# requires write access to invoke, so the same build + commit pipeline
-# stops tripping cache-poisoning / untrusted-checkout heuristics.
-#
-# Security model:
-#   - Workflow-level permissions are `contents: read` only; each job opts
-#     into the narrower scope it needs.
-#   - `guest-build` runs PR-author cargo (build.rs, proc-macros, deps),
-#     but with a read-only token, no credentials persisted, and no
-#     actions-cache writes.
-#   - `regen` runs `gen-vks` inside the trusted `ghcr.io/<repo>:latest`
-#     image (built off main). PR-author code never compiles the binary
-#     that writes the committed VKs.
-#   - `commit` is the only job with a write token. It runs no Rust, no
-#     shell, no actions/checkout — just `actions/github-script` driving
-#     the Git Data API on the regenerated VK artifact.
-#
-# Fork PRs are rejected by `update-vks-dispatch.yaml` before this workflow
-# is invoked because the default `GITHUB_TOKEN` cannot push to a fork.
+# VK regeneration pipeline. Dispatched by `update-vks-dispatch.yaml`.
+# Builds the PR's guest, regenerates the VKs inside the trusted Docker
+# image, and commits the result to the PR branch.
 
 on:
   workflow_dispatch:
@@ -55,12 +31,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Build only the guest binary from the PR head. This is the one job that
-  # compiles PR-author-controlled Rust (build.rs, proc-macros, deps), so it
-  # runs on a read-only token, with `persist-credentials: false`, and with
-  # `actions/cache` disabled.
-  # ---------------------------------------------------------------------------
+  # Builds the PR's guest. The one job that runs PR-controlled cargo —
+  # kept on a read-only token with `persist-credentials: false` and no
+  # actions/cache.
   guest-build:
     name: guest-build
     permissions:
@@ -95,10 +68,7 @@ jobs:
         uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
         with:
           inherit-toolchain: true
-          # Belt-and-braces: even though workflow_dispatch is outside
-          # CodeQL's privileged set, we still avoid the actions/cache that
-          # setup-rust enables by default so PR code can't write entries
-          # that later main builds might read.
+          # PR code writes to actions/cache otherwise.
           cache: false
 
       - name: Install cargo-binutils
@@ -121,11 +91,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # ---------------------------------------------------------------------------
-  # Run `gen-vks` on the GPU runner using the trusted Docker image. No Rust
-  # is compiled here; no PR code is executed (the host binary computes a VK
-  # from the guest binary's bytes, it does not run the guest).
-  # ---------------------------------------------------------------------------
+  # Runs `gen-vks` from the trusted main-built image against the PR's guest.
+  # No Rust compiles here, and the host binary doesn't execute guest code.
   regen:
     name: regen
     needs: guest-build
@@ -181,13 +148,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # ---------------------------------------------------------------------------
-  # The only job with a write-scoped token. Commits via the Git Data REST
-  # API — no `actions/checkout`, no PR files on disk, no shell, no chance
-  # of an `.gitattributes` / hook / build script from the PR executing in
-  # this privileged context. The vks artifact is the only PR-derived input
-  # and is treated as opaque bytes.
-  # ---------------------------------------------------------------------------
+  # The only job with a write-scoped token. Commits via the Git Data API
+  # so no PR file ever lands on disk in this context.
   commit:
     name: commit
     needs: regen
@@ -218,27 +180,21 @@ jobs:
             const expectedSha = process.env.EXPECTED_SHA;
             const prNumber = Number(process.env.PR_NUMBER);
 
-            // Canonical filenames only. Anything else in the artifact is
-            // unexpected and we'd rather fail than commit it.
             const files = [
               { path: 'vks/fri_vk.bin',    local: 'vks-download/fri_vk.bin'    },
               { path: 'vks/snark_vk.json', local: 'vks-download/snark_vk.json' },
             ];
             for (const f of files) {
               if (!fs.existsSync(f.local)) {
-                core.setFailed(`expected ${f.local} in regenerated VK artifact`);
+                core.setFailed(`missing ${f.local}`);
                 return;
               }
             }
 
-            // Refuse to push if the PR head moved between trigger validation
-            // and this step — better to fail and ask for a re-run than to
-            // surprise the author with a commit on a SHA they have since
-            // rebased away from.
             const ref = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
             const headSha = ref.data.object.sha;
             if (headSha !== expectedSha) {
-              core.setFailed(`PR head moved (${expectedSha} -> ${headSha}); re-run /update-vks`);
+              core.setFailed(`PR head moved (${expectedSha} -> ${headSha})`);
               return;
             }
 
@@ -269,15 +225,14 @@ jobs:
             });
 
             if (tree.data.sha === baseTreeSha) {
-              core.info(`vks/ already matches; nothing to commit`);
-              await postComment(`:white_check_mark: \`/update-vks\`: \`vks/\` already matches the regenerated keys.`);
+              await postComment(`:white_check_mark: \`vks/\` already up to date.`);
               await react('hooray');
               return;
             }
 
             const commit = await github.rest.git.createCommit({
               owner, repo,
-              message: `chore(vks): refresh committed verification keys\n\nRegenerated by /update-vks on ${expectedSha}.`,
+              message: `chore(vks): refresh committed verification keys`,
               tree: tree.data.sha,
               parents: [headSha],
             });
@@ -286,14 +241,10 @@ jobs:
               owner, repo, ref: `heads/${branch}`, sha: commit.data.sha,
             });
 
-            core.info(`pushed commit ${commit.data.sha} to ${branch}`);
-            await postComment(`:white_check_mark: \`/update-vks\`: pushed refreshed \`vks/\` as \`${commit.data.sha}\`.`);
+            await postComment(`:white_check_mark: Pushed \`${commit.data.sha}\`.`);
             await react('hooray');
 
-  # ---------------------------------------------------------------------------
-  # Leave a clear note on the PR (and react :-1: on the triggering comment)
-  # if any earlier job failed, so the comment isn't stuck on :eyes: forever.
-  # ---------------------------------------------------------------------------
+  # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
     needs: [guest-build, regen, commit]
@@ -315,5 +266,4 @@ jobs:
             "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
             -f content='-1' >/dev/null
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh pr comment "$PR_NUMBER" --body \
-            ":x: \`/update-vks\` failed. See [the workflow run]($run_url) for details."
+          gh pr comment "$PR_NUMBER" --body ":x: [run]($run_url)"

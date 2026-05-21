@@ -456,6 +456,11 @@ jobs:
     if: needs.vk-check-changes.outputs.should_run == 'true'
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 30
+    # eravm-prover-host links against era-bellman-cuda and libcudart.so.13
+    # via `--features snark_gpu`, so every step that runs the binary needs
+    # the staged CUDA libs on the loader path.
+    env:
+      LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -491,7 +496,6 @@ jobs:
           # Point the host at the staged guest dir; the baked-in
           # CARGO_MANIFEST_DIR points to the build runner.
           ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/stage/guest
-          LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
           RUST_MIN_STACK: "134217728"
         run: |

@@ -1,23 +1,12 @@
 name: update-vks-dispatch
 
-# Comment listener for `/update-vks`. Runs in the `issue_comment` context
-# (privileged: GITHUB_TOKEN can write to the repo, comments come from
-# arbitrary users), and is intentionally tiny: it only checks the trigger,
-# resolves the PR head, and then `gh workflow run`s the actual build
-# pipeline at `update-vks.yaml`. No `actions/checkout`, no PR code on disk,
-# no `cargo` / `docker run` against PR-controlled inputs.
-#
-# The build pipeline runs as `workflow_dispatch`, which CodeQL does not
-# classify as a privileged-but-untrusted trigger: it requires write access
-# to invoke, so collaborator-controlled PR code never executes in an
-# `issue_comment`-flavored context.
+# Comment listener for `/update-vks`. Validates the trigger and dispatches
+# `update-vks.yaml`. Never checks out PR code.
 
 on:
   issue_comment:
     types: [created]
 
-# Bare minimum: react to comments + look up the PR + invoke the
-# `update-vks.yaml` workflow_dispatch.
 permissions:
   issues: write
   pull-requests: read
@@ -39,10 +28,10 @@ jobs:
         run: |
           case "$ASSOC" in
             OWNER|MEMBER|COLLABORATOR) ;;
-            *) echo "::error::/update-vks must be triggered by a repo collaborator (author_association: $ASSOC)"; exit 1 ;;
+            *) echo "::error::author_association=$ASSOC"; exit 1 ;;
           esac
 
-      - name: "React :eyes: to trigger comment"
+      - name: "React :eyes:"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -62,19 +51,12 @@ jobs:
           head_repo=$(echo "$pr" | jq -r .head.repo.full_name)
           head_ref=$(echo "$pr"  | jq -r .head.ref)
           head_sha=$(echo "$pr"  | jq -r .head.sha)
-          echo "Resolved PR head: $head_repo @ $head_ref ($head_sha)"
 
           if [ "$head_repo" != "${{ github.repository }}" ]; then
-            echo "::error::PR head is in a fork ($head_repo); GITHUB_TOKEN cannot push there."
-            gh pr comment "$PR_NUMBER" --body \
-              ":x: \`/update-vks\` cannot push to fork branches. Run \`cargo run -p eravm-prover-host --features snark_gpu -- gen-vks --output-dir vks --trusted-setup <CRS>\` locally and push the result."
+            gh pr comment "$PR_NUMBER" --body ":x: \`/update-vks\`: fork PRs are not supported."
             exit 1
           fi
 
-          # `gh workflow run` against `update-vks.yaml` on the default
-          # branch. workflow_dispatch is the only trigger CodeQL doesn't
-          # treat as inherently privileged-but-untrusted, which is the
-          # whole reason for the split.
           gh workflow run update-vks.yaml \
             --ref "${{ github.event.repository.default_branch }}" \
             -f "pr_number=$PR_NUMBER" \
