@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -42,6 +42,29 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 // SNARK wrapping (CPU in the server crate) is the long pole; bump the cap for fri-snark.
 const FRI_SNARK_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
+/// CUDA driver cleanup window after SIGKILL'ing a GPU-using child. The
+/// snark-only prover initializes its own GPU context; if we start it before
+/// the killed fri-only prover's context is reaped, the next allocator hits
+/// `cudaErrorMemoryAllocation`.
+const GPU_RECLAIM_DELAY: Duration = Duration::from_secs(5);
+
+/// Serializes the GPU-using integration tests inside a single test-binary
+/// invocation. `cargo test` runs tests in parallel by default; without this
+/// lock the two `#[tokio::test]`s below both spawn a prover that grabs the
+/// whole GPU, and the second one panics with `cudaErrorMemoryAllocation`.
+/// An async-aware mutex is used because the guard is held across `.await`s
+/// for the duration of each test.
+static GPU_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+/// Acquire `GPU_TEST_LOCK`. Use `let _gpu_lock = acquire_gpu_lock().await;`
+/// at the start of every test that spawns the prover server (don't bind to
+/// `_` directly — that drops the guard immediately).
+async fn acquire_gpu_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    GPU_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 // ---------------------------------------------------------------------------
 // Test HTTP server state and handlers
@@ -369,6 +392,8 @@ async fn await_with_heartbeat(
 #[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_proves_one_batch() {
+    let _gpu_lock = acquire_gpu_lock().await;
+
     let dist_dir = guest_dist_dir();
     println!("[test] Guest dist dir: {}", dist_dir.display());
 
@@ -457,6 +482,8 @@ async fn prover_server_proves_one_batch() {
 #[ignore = "requires GPU, built guest binary, and LFS batch 506093.bin.gz"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_proves_fri_then_snark() {
+    let _gpu_lock = acquire_gpu_lock().await;
+
     let dist_dir = guest_dist_dir();
     println!("[test] Guest dist dir: {}", dist_dir.display());
 
@@ -551,6 +578,17 @@ async fn prover_server_proves_fri_then_snark() {
     // don't fight over the GPU.
     println!("[test] Phase 1 complete; stopping fri-only prover");
     drop(fri_guard);
+
+    // SIGKILL is synchronous from the kernel's PoV, but the CUDA driver
+    // doesn't always reap the dead context immediately — kicking off the
+    // snark-only prover too soon makes its first `cudaMalloc` race with the
+    // tail of the reclaim and fail with `cudaErrorMemoryAllocation`. A short
+    // pause is cheap insurance.
+    println!(
+        "[test] Sleeping {:?} to let the CUDA driver reclaim GPU state",
+        GPU_RECLAIM_DELAY
+    );
+    tokio::time::sleep(GPU_RECLAIM_DELAY).await;
 
     // --- 3b. Phase 2: spawn snark-only prover. It will poll
     //        `/airbender/snark_inputs`, receive the captured FRI proof, wrap
