@@ -47,11 +47,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to GCP Artifact Registry
+        if: github.event_name == 'push'
+        shell: bash
+        run: gcloud auth configure-docker us-docker.pkg.dev -q
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
           tags: |
             type=sha,prefix=,format=long
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
