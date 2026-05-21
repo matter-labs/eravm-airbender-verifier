@@ -51,7 +51,8 @@ enum Command {
     /// server only loads VKs from disk, so this is how committed VK files in
     /// `vks/` get refreshed when the guest binary or wrapper recursion
     /// changes. CI re-runs this and `git diff --exit-code`s the output.
-    GenVks(GenVksArgs),
+    #[command(name = "gen-vks")]
+    GenerateVks(GenerateVksArgs),
 }
 
 #[derive(Debug, Args)]
@@ -96,7 +97,7 @@ struct ProveFriArgs {
 }
 
 #[derive(Debug, Args)]
-struct GenVksArgs {
+struct GenerateVksArgs {
     /// Where to write the verification key files. Both `fri_vk.bin` and
     /// `snark_vk.json` are written under this directory.
     #[arg(long, default_value = "vks")]
@@ -207,7 +208,7 @@ fn main() -> Result<()> {
                 snark_vk,
             )
         }
-        Command::GenVks(args) => {
+        Command::GenerateVks(args) => {
             std::fs::create_dir_all(&args.output_dir).with_context(|| {
                 format!(
                     "while attempting to create VK output directory {}",
