@@ -1,0 +1,9 @@
+.git
+.DS_Store
+target
+artifacts
+project-doc
+era-bellman-cuda
+guest/dist
+testdata/era_mainnet_batches/binary/*.bin
+testdata/era_mainnet_batches/binary/*.bin.gz
