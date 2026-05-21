@@ -57,8 +57,8 @@ jobs:
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
           images: |
-            ghcr.io/${{ github.repository }}
             us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
+            ghcr.io/${{ github.repository }}
           tags: |
             type=sha,prefix=,format=long
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
