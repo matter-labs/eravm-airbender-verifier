@@ -1,0 +1,269 @@
+name: update-vks
+
+# VK regeneration pipeline. Dispatched by `update-vks-dispatch.yaml`.
+# Builds the PR's guest, regenerates the VKs inside the trusted Docker
+# image, and commits the result to the PR branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        type: string
+        required: true
+      head_repo:
+        type: string
+        required: true
+      head_ref:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      comment_id:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-vks-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  # Builds the PR's guest. The one job that runs PR-controlled cargo —
+  # kept on a read-only token with `persist-credentials: false` and no
+  # actions/cache.
+  guest-build:
+    name: guest-build
+    permissions:
+      contents: read
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ inputs.head_repo }}
+          ref: ${{ inputs.head_sha }}
+          persist-credentials: false
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          path: airbender-platform
+          persist-credentials: false
+
+      - name: Install linux packages
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+          ${SUDO} apt-get update
+          ${SUDO} apt-get install -y libclang-dev clang
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+          # PR code writes to actions/cache otherwise.
+          cache: false
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs `gen-vks` from the trusted main-built image against the PR's guest.
+  # No Rust compiles here, and the host binary doesn't execute guest code.
+  regen:
+    name: regen
+    needs: guest-build
+    permissions:
+      contents: read
+      packages: read # pull from ghcr.io
+    runs-on: matterlabs-ci-hetzner-rtx6000-gpu
+    timeout-minutes: 60
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}:latest
+    steps:
+      - name: Download guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-guest-dist
+          path: stage/guest
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull trusted host image
+        run: docker pull "$IMAGE"
+
+      - name: Prepare output directory
+        run: |
+          mkdir -p vks-output
+          chmod 777 vks-output
+
+      - name: Run gen-vks inside the trusted image
+        run: |
+          docker run --rm \
+            --gpus all \
+            --ulimit stack=-1 \
+            -v "${{ github.workspace }}/stage/guest:/guest-pr:ro" \
+            -v "${{ github.workspace }}/vks-output:/vks-output" \
+            -e ERAVM_PROVER_HOST_GUEST_DIR=/guest-pr \
+            -e RUST_BACKTRACE=1 \
+            -e RUST_MIN_STACK=134217728 \
+            --entrypoint /bin/sh \
+            "$IMAGE" \
+            -c "ulimit -s unlimited && /usr/local/bin/eravm-prover-host gen-vks --output-dir /vks-output --trusted-setup /setup/setup.key"
+          ls -lh vks-output
+
+      - name: Upload regenerated VKs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-vks
+          path: vks-output
+          if-no-files-found: error
+          retention-days: 1
+
+  # The only job with a write-scoped token. Commits via the Git Data API
+  # so no PR file ever lands on disk in this context.
+  commit:
+    name: commit
+    needs: regen
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download regenerated VKs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-vks
+          path: vks-download
+
+      - name: Commit vks/ via Git Data API
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_REF: ${{ inputs.head_ref }}
+          EXPECTED_SHA: ${{ inputs.head_sha }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const branch = process.env.HEAD_REF;
+            const expectedSha = process.env.EXPECTED_SHA;
+            const prNumber = Number(process.env.PR_NUMBER);
+
+            const files = [
+              { path: 'vks/fri_vk.bin',    local: 'vks-download/fri_vk.bin'    },
+              { path: 'vks/snark_vk.json', local: 'vks-download/snark_vk.json' },
+            ];
+            for (const f of files) {
+              if (!fs.existsSync(f.local)) {
+                core.setFailed(`missing ${f.local}`);
+                return;
+              }
+            }
+
+            const ref = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+            const headSha = ref.data.object.sha;
+            if (headSha !== expectedSha) {
+              core.setFailed(`PR head moved (${expectedSha} -> ${headSha})`);
+              return;
+            }
+
+            const parentCommit = await github.rest.git.getCommit({ owner, repo, commit_sha: headSha });
+            const baseTreeSha = parentCommit.data.tree.sha;
+
+            const blobs = [];
+            for (const f of files) {
+              const blob = await github.rest.git.createBlob({
+                owner, repo,
+                content: fs.readFileSync(f.local).toString('base64'),
+                encoding: 'base64',
+              });
+              blobs.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.data.sha });
+            }
+
+            const tree = await github.rest.git.createTree({
+              owner, repo,
+              base_tree: baseTreeSha,
+              tree: blobs,
+            });
+
+            const postComment = (body) => github.rest.issues.createComment({
+              owner, repo, issue_number: prNumber, body,
+            });
+            const react = (content) => github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: Number(process.env.COMMENT_ID), content,
+            });
+
+            if (tree.data.sha === baseTreeSha) {
+              await postComment(`:white_check_mark: \`vks/\` already up to date.`);
+              await react('hooray');
+              return;
+            }
+
+            const commit = await github.rest.git.createCommit({
+              owner, repo,
+              message: `chore(vks): refresh committed verification keys`,
+              tree: tree.data.sha,
+              parents: [headSha],
+            });
+
+            await github.rest.git.updateRef({
+              owner, repo, ref: `heads/${branch}`, sha: commit.data.sha,
+            });
+
+            await postComment(`:white_check_mark: Pushed \`${commit.data.sha}\`.`);
+            await react('hooray');
+
+  # React :-1: + post a run link if any earlier job failed.
+  notify-failure:
+    name: notify-failure
+    needs: [guest-build, regen, commit]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: "React :-1: and comment"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+        run: |
+          gh api \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content='-1' >/dev/null
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh pr comment "$PR_NUMBER" --body ":x: [run]($run_url)"
