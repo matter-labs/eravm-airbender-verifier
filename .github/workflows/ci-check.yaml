@@ -383,6 +383,8 @@ jobs:
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
         run: |
+          # SNARK wrapper recursion needs a large stack — see README.md.
+          ulimit -s unlimited
           ./stage/bin/integration_test --ignored --nocapture
 
   pr-checks:
