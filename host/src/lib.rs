@@ -55,7 +55,11 @@ pub fn prove_batches_fri(
     vk_path: &Path,
     security: SecurityLevel,
 ) -> Result<()> {
-    let pipeline = FriPipeline::new(&dist_dir(), vk_path, worker_threads, security)?;
+    // Host CLI is a dev/debug entry point — generate the FRI VK on the fly
+    // if it isn't checked in yet, so a fresh-guest workflow doesn't require
+    // the SNARK trusted setup just to FRI-prove a batch.
+    let pipeline =
+        FriPipeline::new_with_generated_vk(&dist_dir(), vk_path, worker_threads, security)?;
     let mut statistics = StatisticsCollector::default();
 
     for (index, batch_input) in batch_inputs.iter().enumerate() {

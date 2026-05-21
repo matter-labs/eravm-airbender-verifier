@@ -131,13 +131,46 @@ pub struct FriPipeline {
 }
 
 impl FriPipeline {
+    /// Strict constructor: hard-fails if `vk_path` is missing. Used by the
+    /// server, where a stale or absent VK must never silently regenerate.
     pub fn new(
         dist_dir: &Path,
         vk_path: &Path,
         worker_threads: Option<usize>,
         security: SecurityLevel,
     ) -> Result<Self> {
-        let verifier = FriVerifier::load(dist_dir, vk_path, security)?;
+        Self::with_verifier(
+            dist_dir,
+            FriVerifier::load(dist_dir, vk_path, security)?,
+            worker_threads,
+            security,
+        )
+    }
+
+    /// Lenient constructor: generates the VK at `vk_path` if it doesn't
+    /// exist yet. Used by the host `prove-fri` CLI so a dev can FRI-prove
+    /// against a fresh guest without first running `gen-vks` (which also
+    /// requires the SNARK trusted setup). The server never calls this.
+    pub fn new_with_generated_vk(
+        dist_dir: &Path,
+        vk_path: &Path,
+        worker_threads: Option<usize>,
+        security: SecurityLevel,
+    ) -> Result<Self> {
+        Self::with_verifier(
+            dist_dir,
+            FriVerifier::load_or_generate(dist_dir, vk_path, security)?,
+            worker_threads,
+            security,
+        )
+    }
+
+    fn with_verifier(
+        dist_dir: &Path,
+        verifier: FriVerifier,
+        worker_threads: Option<usize>,
+        security: SecurityLevel,
+    ) -> Result<Self> {
         // Reload the program for the prover builder. Cheap relative to GPU init.
         let program = Program::load(dist_dir).context("while attempting to load guest program")?;
 
