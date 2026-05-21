@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS builder
+# NOTE: CUDA base is intentionally pinned BELOW airbender-platform's test-gpu
+# matrix (which uses 12.9.1) because the airbender-prover GPU node pool's host
+# driver does not yet meet CUDA 12.9's minimum (~575.x or 525.60.13 + compat).
+# Revert to 12.9.1-{devel,runtime}-ubuntu22.04 once the cluster driver is bumped.
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -91,7 +95,7 @@ RUN mkdir -p /bellman-cuda-libs \
         -exec cp -v {} /bellman-cuda-libs/ \;
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.9.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
