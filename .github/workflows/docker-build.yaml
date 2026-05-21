@@ -11,7 +11,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/docker-build.yaml'
   push:
-    branches: [main, deniallugo-snark-verifier]
+    branches: [main, feat/server-vks-from-disk]
     paths:
       - Dockerfile
       - 'server/**'
