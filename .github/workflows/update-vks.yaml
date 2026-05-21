@@ -257,13 +257,16 @@ jobs:
       - name: "React :-1: and comment"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
           PR_NUMBER: ${{ inputs.pr_number }}
           COMMENT_ID: ${{ inputs.comment_id }}
         run: |
           gh api \
             -X POST \
             -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
+            "repos/${GH_REPO}/issues/comments/${COMMENT_ID}/reactions" \
             -f content='-1' >/dev/null
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          run_url="${SERVER_URL}/${GH_REPO}/actions/runs/${RUN_ID}"
           gh pr comment "$PR_NUMBER" --body ":x: [run]($run_url)"
