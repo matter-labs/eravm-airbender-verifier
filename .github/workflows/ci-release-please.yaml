@@ -1,0 +1,33 @@
+name: ci-run-release-please
+
+# Give permissions to the release-please bot to open and update PRs
+# and commit version updates across the shared release files
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+  issues: write
+
+# Run the workflow on push to the main branch and manually
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # Prepare the release PR with changelog updates and create github releases.
+  # Docker images are published by docker-build.yaml on the underlying main
+  # commit, so this workflow only handles release-please bookkeeping.
+  release-please:
+    uses: matter-labs/zksync-ci-common/.github/workflows/release-please.yaml@v1
+    secrets:
+      gh_token: ${{ secrets.RELEASE_TOKEN }}
+      slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
+    with:
+      config: '.github/release-please/config.json'
+      manifest: '.github/release-please/manifest.json'
+      upgrade-dependencies: false
+      update-cargo-lock: true
+      publish-to-crates-io: false
+      notify-slack: true
