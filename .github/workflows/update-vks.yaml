@@ -51,16 +51,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          HEAD_REF: ${{ inputs.head_ref }}
           HEAD_SHA: ${{ inputs.head_sha }}
         run: |
+          # Scope by branch first so we don't scan unrelated PRs; then
+          # precision-filter by head_sha to pick the run for the exact
+          # commit, in case the branch has been force-pushed since.
           run_id=$(gh run list \
             --repo "$GH_REPO" \
             --workflow ci-check.yaml \
-            --limit 50 \
+            --branch "$HEAD_REF" \
+            --limit 20 \
             --json databaseId,headSha,status,conclusion \
             --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .status == \"completed\" and .conclusion == \"success\")] | first | .databaseId // empty")
           if [ -z "$run_id" ]; then
-            echo "::error::No successful ci-run found for head_sha=$HEAD_SHA. Wait for CI to finish and re-comment /update-vks."
+            echo "::error::No successful ci-run found for $HEAD_REF@$HEAD_SHA. Wait for CI to finish and re-comment /update-vks."
             exit 1
           fi
           echo "Using ci-run #$run_id"
