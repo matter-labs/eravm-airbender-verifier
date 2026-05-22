@@ -43,31 +43,22 @@ jobs:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image published by airbender-platform's
+    # ci-release pipeline at this tag. Pinned to the same tag as the Rust
+    # deps in Cargo.toml so the CLI and the airbender-* crates stay in
+    # lockstep. Ships nightly Rust + cargo-binutils + cargo-airbender +
+    # clang + cmake + the CUDA 12.9 devel toolchain — no manual install
+    # steps required.
     container:
-      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:0.0.1
     env:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
-      - name: Install git
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y git
-
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: ${{ inputs.head_repo }}
           ref: ${{ inputs.head_sha }}
-          persist-credentials: false
-
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          ref: 6a81afcf992f586256b943ba3241254202de8901
-          path: airbender-platform
           persist-credentials: false
 
       - name: Setup runner
@@ -76,7 +67,7 @@ jobs:
       - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: apt-get install -y clang build-essential curl libclang-dev
+        run: apt-get update && apt-get install -y libclang-dev
 
       - name: Build era-bellman-cuda
         run: |
@@ -84,14 +75,6 @@ jobs:
           cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
 
       - name: Build guest
         working-directory: ./guest
