@@ -1,0 +1,149 @@
+name: ci-release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Git tag to release.'
+        required: true
+        type: string
+      prerelease_name:
+        description: 'Suffix for a manual pre-release (blank = full release)'
+        required: false
+        type: string
+        default: ''
+      push_docker_image:
+        description: 'Push the eravm-prover-server Docker image to GHCR'
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to release.'
+        required: true
+        type: string
+      prerelease_name:
+        description: 'Suffix for a manual pre-release (blank = full release)'
+        required: false
+        type: string
+        default: ''
+      push_docker_image:
+        description: 'Push the eravm-prover-server Docker image to GHCR'
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: 'bash -ex {0}'
+
+jobs:
+  prepare-release:
+    name: Sync release metadata
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      tag_name: ${{ steps.release_info.outputs.tag_name }}
+      version_name: ${{ steps.release_info.outputs.version_name }}
+    steps:
+      - name: Validate release tag
+        id: release_info
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          if [[ -z "${TAG_NAME}" ]]; then
+            echo "Release tag is required."
+            exit 1
+          fi
+
+          if [[ ! "${TAG_NAME}" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo "Release tag '${TAG_NAME}' contains unsupported characters."
+            echo "Only alphanumeric characters, dots, and dashes are allowed."
+            exit 1
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "version_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update release-please release artifacts
+        if: ${{ inputs.prerelease_name == '' }}
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ inputs.tag }}
+
+      - name: Update manual pre-release metadata
+        if: ${{ inputs.prerelease_name != '' }}
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: eravm-airbender-verifier ${{ inputs.tag }}${{ inputs.prerelease_name && format(' {0}', inputs.prerelease_name) || '' }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+
+  release-docker-image:
+    name: Build eravm-prover-server Docker image
+    runs-on: matterlabs-ci-runner-high-performance
+    needs:
+      - prepare-release
+    if: ${{ inputs.push_docker_image }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+
+      - name: Build and push Docker image
+        uses: ./.github/actions/publish-docker-image
+        with:
+          image_name: eravm-airbender-verifier
+          dockerfile: Dockerfile
+          tag: ${{ inputs.tag }}
+          publish_latest: ${{ inputs.prerelease_name == '' }}
+          registry_username: ${{ github.actor }}
+          registry_password: ${{ secrets.GITHUB_TOKEN }}
+
+  retry-on-failure:
+    permissions:
+      actions: write
+    if: failure() && fromJSON(github.run_attempt) < 3
+    needs:
+      - prepare-release
+      - release-docker-image
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run retry.yml -F run_id=${{ github.run_id }}
+
+  # Send a Slack notification on workflow failure.
+  notify-failure:
+    if: failure() && fromJSON(github.run_attempt) >= 3
+    name: Notify failure via Slack
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - release-docker-image
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":x: Release workflow failed after 3 attempts.\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }

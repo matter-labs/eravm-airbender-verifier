@@ -1,0 +1,8 @@
+.git
+.github
+target
+tmp
+**/dist
+**/target
+**/.cargo/registry
+**/.cargo/git
