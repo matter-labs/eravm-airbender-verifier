@@ -397,6 +397,8 @@ jobs:
           IT_PROVER_SERVER_BIN: ${{ github.workspace }}/stage/bin/eravm-prover-server
           IT_GUEST_DIST_DIR: ${{ github.workspace }}/stage/guest
           IT_BATCHES_DIR: ${{ github.workspace }}/testdata/era_mainnet_batches/binary
+          IT_FRI_VK: ${{ github.workspace }}/vks/fri_vk.bin
+          IT_SNARK_VK: ${{ github.workspace }}/vks/snark_vk.json
           # libcudart and bellman-cuda's .so live in the staged dir.
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1
