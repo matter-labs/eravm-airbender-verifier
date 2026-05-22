@@ -6,7 +6,6 @@ permissions:
   contents: write
   pull-requests: write
   id-token: write
-  attestations: write
   issues: write
 
 # Run the workflow on push to the main branch and manually
@@ -18,7 +17,8 @@ on:
 
 jobs:
   # Prepare the release PR with changelog updates and create github releases.
-  # Do not publish to crates.io or upgrade dependencies.
+  # Docker images are published by docker-build.yaml on the underlying main
+  # commit, so this workflow only handles release-please bookkeeping.
   release-please:
     uses: matter-labs/zksync-ci-common/.github/workflows/release-please.yaml@v1
     secrets:
@@ -31,22 +31,3 @@ jobs:
       update-cargo-lock: true
       publish-to-crates-io: false
       notify-slack: true
-
-  # Publish release artifacts (currently the eravm-prover-server Docker image).
-  release-artifacts:
-    if: ${{ always() && needs.release-please.outputs.releases_created == 'true' }}
-    needs: release-please
-    # Reusable workflows cannot elevate GITHUB_TOKEN permissions on their own.
-    # Grant the scopes that ci-release.yaml needs to update the release, push
-    # the image to GHCR, and rerun transient release failures.
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      packages: write
-      actions: write
-    uses: ./.github/workflows/ci-release.yaml
-    with:
-      tag: ${{ needs.release-please.outputs.tag_name }}
-      push_docker_image: true
-    secrets: inherit
