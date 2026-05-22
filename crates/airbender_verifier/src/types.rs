@@ -85,35 +85,31 @@ impl Default for CommitmentInput {
 
 /// Versioned wire format for verifier input.
 ///
-/// The bincode payload begins with a variant tag so the on-disk corpus and
-/// the host↔guest channel can evolve without rewriting the format each time
-/// the payload changes.
+/// - `V0`: reserved with no payload; pins later discriminants.
+/// - `V1`: pre-v31 bincode layout, decoded via [`crate::v1_compat`].
+/// - `V2`: canonical post-v31 layout.
 ///
-/// `V0` is a placeholder with no payload. It pins V1 at discriminant `1` so
-/// removing or shuffling variants does not silently change the encoding of
-/// every existing dump.
+/// Both `V1` and `V2` carry the same Rust payload; only the on-wire shape
+/// differs. [`AirbenderVerifierInput::into_v2`] strips the tag.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// V1 is large because the verifier payload is large; boxing would add a heap
-// indirection without changing the bincode wire shape, so we accept the size.
 #[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
     V0,
-    V1(V1AirbenderVerifierInput),
+    V1(#[serde(with = "crate::v1_compat")] V2AirbenderVerifierInput),
+    V2(V2AirbenderVerifierInput),
 }
 
 impl AirbenderVerifierInput {
-    /// Extract the V1 payload, erroring on the reserved `V0` marker.
-    pub fn into_v1(self) -> anyhow::Result<V1AirbenderVerifierInput> {
+    /// Strip the wire-version tag. Errors on the reserved `V0` marker.
+    pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
-            AirbenderVerifierInput::V1(v1) => Ok(v1),
-            AirbenderVerifierInput::V0 => {
-                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1")
-            }
+            Self::V0 => anyhow::bail!("AirbenderVerifierInput::V0 has no payload"),
+            Self::V1(payload) | Self::V2(payload) => Ok(payload),
         }
     }
 }
 
-/// Verifier input payload (V1).
+/// Canonical verifier input payload.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
@@ -121,7 +117,7 @@ impl AirbenderVerifierInput {
 /// (e.g., the serialization roundtrip test) can construct an input without
 /// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V1AirbenderVerifierInput {
+pub struct V2AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,

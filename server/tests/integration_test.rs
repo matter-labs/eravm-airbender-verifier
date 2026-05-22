@@ -274,17 +274,18 @@ fn load_batch_and_expected_public_input() -> (AirbenderVerifierInput, [u32; 8]) 
         number: 506093,
         path: batch_path,
     };
-    let v1 = load_batch(&batch_input)
-        .expect("failed to load batch")
-        .into_v1()
-        .expect("expected AirbenderVerifierInput::V1 from disk");
-    let expected_public_input = v1
+    // Forward whatever wire variant `load_batch` returns. The 506093 corpus
+    // is V1, so the mock HTTP server serves a `V1` envelope and exercises the
+    // V1→server→guest path end-to-end. V2 round-trip is locked separately by
+    // `test_serialization_roundtrip_v2` in `zksync_airbender_verifier`.
+    let input = load_batch(&batch_input).expect("failed to load batch");
+    let expected_public_input = input
         .clone()
         .verify()
         .expect("native verify failed")
         .proof_public_input;
     println!("[test] Native verify produced public input: {expected_public_input:?}");
-    (AirbenderVerifierInput::V1(v1), expected_public_input)
+    (input, expected_public_input)
 }
 
 /// Verifies a bincode-encoded `Proof` payload against the cached VK.

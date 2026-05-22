@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 use fast::FastTraceTracer;
 use legacy::LegacyTraceTracer;
 pub use types::{CompareOptions, ComparisonOutcome, ComparisonReport, Divergence, TxLocation};
-use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
@@ -36,7 +36,7 @@ struct TxExecutionCapture {
 }
 
 pub fn compare(
-    input: V1AirbenderVerifierInput,
+    input: V2AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<ComparisonReport> {
     let storage_snapshot = create_storage_snapshot(&input);
@@ -238,7 +238,7 @@ fn divergence_report(
     }
 }
 
-fn default_location(input: &V1AirbenderVerifierInput) -> TxLocation {
+fn default_location(input: &V2AirbenderVerifierInput) -> TxLocation {
     TxLocation {
         l2_block_number: input
             .l2_blocks_execution_data
@@ -250,7 +250,7 @@ fn default_location(input: &V1AirbenderVerifierInput) -> TxLocation {
     }
 }
 
-fn create_storage_snapshot(input: &V1AirbenderVerifierInput) -> StorageSnapshot {
+fn create_storage_snapshot(input: &V2AirbenderVerifierInput) -> StorageSnapshot {
     let storage = input
         .vm_run_data
         .witness_block_state

@@ -28,4 +28,4 @@ tracing.workspace = true
 zksync_cli_utils.workspace = true
 zksync_contracts.workspace = true
 
-bincode_v1 = { package = "bincode", version = "1" }
+bincode.workspace = true

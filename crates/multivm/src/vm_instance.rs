@@ -169,6 +169,15 @@ impl<S: ReadStorage, H: HistoryMode> LegacyVmInstance<S, H> {
                 );
                 Self::Vm1_5_2(vm)
             }
+            VmVersion::VmMediumInterop => {
+                let vm = vm_latest::Vm::new_with_subversion(
+                    l1_batch_env,
+                    system_env,
+                    storage_view,
+                    vm_latest::MultiVmSubversion::MediumInterop,
+                );
+                Self::Vm1_5_2(vm)
+            }
             _ => panic!("Unsupported VM version {:?}", vm_version),
         }
     }

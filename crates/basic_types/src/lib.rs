@@ -37,6 +37,7 @@ pub mod commitment;
 mod conversions;
 pub mod protocol_version;
 pub mod serde_wrappers;
+pub mod settlement;
 mod stop_guard;
 pub mod vm;
 pub mod web3;
@@ -243,6 +244,12 @@ basic_type!(
 basic_type!(
     /// Unique identifier of the priority operation in the ZKsync network.
     PriorityOpId,
+    u64
+);
+
+basic_type!(
+    /// ChainId of a settlement layer.
+    SLChainId,
     u64
 );
 

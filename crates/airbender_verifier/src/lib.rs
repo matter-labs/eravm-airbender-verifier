@@ -9,6 +9,7 @@ pub mod commitment;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod types;
+pub mod v1_compat;
 
 use anyhow::{bail, Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
@@ -43,7 +44,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
-    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
+    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V2AirbenderVerifierInput,
     WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
@@ -82,21 +83,21 @@ pub trait Verify {
 }
 
 impl Verify for AirbenderVerifierInput {
-    /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
-    /// payload, so it produces an error.
+    /// Strip the wire-version tag and verify the payload. Errors on the
+    /// reserved `V0` marker.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        self.into_v1()?.verify()
+        self.into_v2()?.verify()
     }
 }
 
-impl Verify for V1AirbenderVerifierInput {
+impl Verify for V2AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some`.
     fn verify(mut self) -> anyhow::Result<VerificationResult> {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
         let commitment_input = self.commitment_input.take().context(
-            "V1AirbenderVerifierInput::verify requires `commitment_input`; \
+            "V2AirbenderVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;
         let state = execute(self)?;
@@ -140,7 +141,7 @@ impl VmExecutionState {
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: V2AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -715,11 +716,15 @@ where
 mod tests {
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
-    use zksync_types::commitment::BlobHash;
+    use zksync_types::{
+        commitment::{BlobHash, L2DACommitmentScheme, L2PubdataValidator, PubdataParams},
+        settlement::SettlementLayer,
+        Address,
+    };
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::types::{AirbenderVerifierInput, V2AirbenderVerifierInput, VMRunWitnessInputData};
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -892,21 +897,59 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_serialization_roundtrip() {
-        let v1 = V1AirbenderVerifierInput {
-            vm_run_data: VMRunWitnessInputData {
-                l1_batch_number: Default::default(),
-                used_bytecodes: Default::default(),
-                initial_heap_content: vec![],
-                protocol_version: Default::default(),
-                bootloader_code: vec![],
-                default_account_code_hash: Default::default(),
-                evm_emulator_code_hash: Some(Default::default()),
-                storage_refunds: vec![],
-                pubdata_costs: vec![],
-                witness_block_state: Default::default(),
+    fn sample_vm_run_data(version: ProtocolVersionId) -> VMRunWitnessInputData {
+        VMRunWitnessInputData {
+            l1_batch_number: Default::default(),
+            used_bytecodes: Default::default(),
+            initial_heap_content: vec![],
+            protocol_version: version,
+            bootloader_code: vec![],
+            default_account_code_hash: Default::default(),
+            evm_emulator_code_hash: Some(Default::default()),
+            storage_refunds: vec![],
+            pubdata_costs: vec![],
+            witness_block_state: Default::default(),
+        }
+    }
+
+    fn sample_first_l2_block() -> L2BlockEnv {
+        L2BlockEnv {
+            number: 0,
+            timestamp: 0,
+            prev_block_hash: H256([1; 32]),
+            max_virtual_blocks_to_create: 0,
+            interop_roots: vec![],
+        }
+    }
+
+    fn sample_system_env(version: ProtocolVersionId) -> SystemEnv {
+        SystemEnv {
+            zk_porter_available: false,
+            version,
+            base_system_smart_contracts: BaseSystemContracts {
+                bootloader: SystemContractCode {
+                    code: vec![1; 32],
+                    hash: H256([1; 32]),
+                },
+                default_aa: SystemContractCode {
+                    code: vec![1; 32],
+                    hash: H256([1; 32]),
+                },
+                evm_emulator: None,
             },
+            bootloader_gas_limit: 0,
+            execution_mode: TxExecutionMode::VerifyExecute,
+            default_validation_computational_gas_limit: 0,
+            chain_id: Default::default(),
+        }
+    }
+
+    fn sample_payload(
+        version: ProtocolVersionId,
+        pubdata_validator: L2PubdataValidator,
+    ) -> V2AirbenderVerifierInput {
+        V2AirbenderVerifierInput {
+            vm_run_data: sample_vm_run_data(version),
             merkle_paths: WitnessInputMerklePaths::new(0),
             l2_blocks_execution_data: vec![],
             l1_batch_env: L1BatchEnv {
@@ -914,45 +957,88 @@ mod tests {
                 number: Default::default(),
                 timestamp: 0,
                 fee_input: Default::default(),
+                interop_fee: U256::zero(),
                 fee_account: Default::default(),
                 enforced_base_fee: None,
-                first_l2_block: L2BlockEnv {
-                    number: 0,
-                    timestamp: 0,
-                    prev_block_hash: H256([1; 32]),
-                    max_virtual_blocks_to_create: 0,
-                    interop_roots: vec![],
-                },
+                first_l2_block: sample_first_l2_block(),
+                settlement_layer: SettlementLayer::default(),
             },
-            system_env: SystemEnv {
-                zk_porter_available: false,
-                version: Default::default(),
-                base_system_smart_contracts: BaseSystemContracts {
-                    bootloader: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    default_aa: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    evm_emulator: None,
-                },
-                bootloader_gas_limit: 0,
-                execution_mode: TxExecutionMode::VerifyExecute,
-                default_validation_computational_gas_limit: 0,
-                chain_id: Default::default(),
-            },
-            pubdata_params: Default::default(),
+            system_env: sample_system_env(version),
+            pubdata_params: PubdataParams::new(pubdata_validator, Default::default()).unwrap(),
             commitment_input: None,
-        };
-        let avi = AirbenderVerifierInput::V1(v1);
-        let serialized =
-            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
-        let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
-            .expect("Failed to deserialize AirbenderVerifierInput.");
+        }
+    }
 
-        assert_eq!(avi, deserialized);
+    /// V2 wire fixture: post-v31 protocol with the `CommitmentScheme` validator.
+    fn sample_v2() -> V2AirbenderVerifierInput {
+        sample_payload(
+            ProtocolVersionId::Version31,
+            L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
+        )
+    }
+
+    /// V1 wire fixture: pre-v31 protocol with an address-shaped validator
+    /// (zero address — the legacy default for chains that didn't set one).
+    fn sample_v1() -> V2AirbenderVerifierInput {
+        sample_payload(
+            ProtocolVersionId::Version29,
+            L2PubdataValidator::Address(Address::zero()),
+        )
+    }
+
+    /// Encodes / decodes via the same bincode config (`bincode 2`, varint
+    /// `standard()`) that `cli_utils::load_batch` uses, so this round-trip
+    /// pins the exact wire shape the on-disk corpus is loaded against.
+    fn bincode_roundtrip(avi: AirbenderVerifierInput) {
+        let bytes =
+            bincode::serde::encode_to_vec(&avi, bincode::config::standard()).expect("serialize");
+        let (decoded, _): (AirbenderVerifierInput, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .expect("deserialize");
+        assert_eq!(avi, decoded);
+    }
+
+    fn try_bincode_serialize(
+        avi: &AirbenderVerifierInput,
+    ) -> Result<Vec<u8>, impl std::error::Error> {
+        bincode::serde::encode_to_vec(avi, bincode::config::standard())
+    }
+
+    /// Pins the V2 bincode wire so future struct changes can't silently
+    /// alter the on-disk layout.
+    #[test]
+    fn test_serialization_roundtrip_v2() {
+        bincode_roundtrip(AirbenderVerifierInput::V2(sample_v2()));
+    }
+
+    /// Pins the V1 bincode wire. The on-disk corpus in
+    /// `testdata/era_mainnet_batches/` rides `V1(...)`; if this breaks, the
+    /// corpus stops loading.
+    #[test]
+    fn test_serialization_roundtrip_v1() {
+        bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
+    }
+
+    /// V1 wire is lossy in one direction: post-v31-only state on a V2 payload
+    /// (non-default `interop_fee` / `settlement_layer`, `CommitmentScheme`
+    /// validator) cannot be encoded — V1 only exists to consume legacy bytes.
+    #[test]
+    fn test_v1_wire_rejects_post_v31_state() {
+        let mut payload = sample_v1();
+        payload.l1_batch_env.interop_fee = U256::from(1);
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+
+        let mut payload = sample_v1();
+        payload.l1_batch_env.settlement_layer = SettlementLayer::for_tests();
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+
+        let payload = sample_v2(); // CommitmentScheme validator
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+    }
+
+    #[test]
+    fn test_into_v2_rejects_v0() {
+        assert!(AirbenderVerifierInput::V0.into_v2().is_err());
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
