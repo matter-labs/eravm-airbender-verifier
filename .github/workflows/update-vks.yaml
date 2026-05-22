@@ -31,69 +31,134 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Runs `gen-vks` using the host binary + guest dist already built by the
-  # PR's `ci-run` workflow (`server-integration-build` job). No Rust
-  # compiles in this workflow — the PR-built binaries are downloaded as
-  # artifacts. `ci-run` must have completed successfully on `head_sha`
-  # before `/update-vks` is invoked; otherwise this job fails fast.
-  regen:
-    name: regen
+  # Build the host CLI and guest from the PR head. Done inside this
+  # workflow so /update-vks doesn't have to wait for the PR's ci-run to
+  # finish — and so a ci-run that ends in failure (e.g. because vk-check
+  # fails on stale VKs) doesn't block us from finding artifacts. Mirrors
+  # `server-integration-build` in ci-check.yaml; permissions stay
+  # read-only because no PR code should ever see the push token.
+  build:
+    name: build
     permissions:
       contents: read
-      actions: read # download artifacts from another workflow run
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    container:
+      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+    env:
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
+    steps:
+      - name: Install git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y git
+
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ inputs.head_repo }}
+          ref: ${{ inputs.head_sha }}
+          persist-credentials: false
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          path: airbender-platform
+          persist-credentials: false
+
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      - name: Install extra apt packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: apt-get install -y clang build-essential curl libclang-dev
+
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
+
+      - name: Install cargo-binutils
+        working-directory: ./airbender-platform
+        run: cargo install cargo-binutils --locked --force
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Build eravm-prover-host (snark_gpu)
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo build --release -p eravm-prover-host --locked --features snark_gpu
+
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+
+      - name: Upload prover-host binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-prover-host-bin
+          path: target/release/eravm-prover-host
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-bellman-cuda
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
+  regen:
+    name: regen
+    needs: build
+    permissions:
+      contents: read
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 60
     env:
       LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
     steps:
-      - name: Locate PR build run
-        id: build_run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          HEAD_REF: ${{ inputs.head_ref }}
-          HEAD_SHA: ${{ inputs.head_sha }}
-        run: |
-          # Scope by branch first so we don't scan unrelated PRs; then
-          # precision-filter by head_sha to pick the run for the exact
-          # commit, in case the branch has been force-pushed since.
-          run_id=$(gh run list \
-            --repo "$GH_REPO" \
-            --workflow ci-check.yaml \
-            --branch "$HEAD_REF" \
-            --limit 20 \
-            --json databaseId,headSha,status,conclusion \
-            --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .status == \"completed\" and .conclusion == \"success\")] | first | .databaseId // empty")
-          if [ -z "$run_id" ]; then
-            echo "::error::No successful ci-run found for $HEAD_REF@$HEAD_SHA. Wait for CI to finish and re-comment /update-vks."
-            exit 1
-          fi
-          echo "Using ci-run #$run_id"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-
       - name: Download prover-host binary
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eravm-prover-host-bin
+          name: update-vks-prover-host-bin
           path: stage/bin
-          run-id: ${{ steps.build_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download guest dist
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eravm-prover-server-guest-dist
+          name: update-vks-guest-dist
           path: stage/guest
-          run-id: ${{ steps.build_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download bellman-cuda libraries
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eravm-prover-server-bellman-cuda
+          name: update-vks-bellman-cuda
           path: stage/cuda-libs
-          run-id: ${{ steps.build_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Make host binary executable
         run: chmod +x stage/bin/eravm-prover-host
@@ -224,7 +289,7 @@ jobs:
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
-    needs: [regen, commit]
+    needs: [build, regen, commit]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:
