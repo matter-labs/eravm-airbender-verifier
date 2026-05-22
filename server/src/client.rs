@@ -67,8 +67,7 @@ impl JobServerClient {
         // matching this verifier's `V1AirbenderVerifierInput`. We deserialize
         // the bare payload here and wrap it in the local versioned enum so the
         // host↔guest channel and on-disk bincode corpus keep using V1.
-        let Some(v1) =
-            self.poll_json::<V1AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
+        let Some(v1) = self.poll_json::<V1AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
         else {
             return Ok(None);
         };
