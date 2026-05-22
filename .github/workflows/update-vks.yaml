@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: matter-labs/airbender-platform
-          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          ref: 6a81afcf992f586256b943ba3241254202de8901
           path: airbender-platform
           persist-credentials: false
 
