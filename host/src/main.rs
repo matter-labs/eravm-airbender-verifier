@@ -26,6 +26,21 @@ impl From<SecurityLevelArg> for SecurityLevel {
     }
 }
 
+impl From<SecurityLevel> for SecurityLevelArg {
+    fn from(security: SecurityLevel) -> Self {
+        match security {
+            SecurityLevel::Bits80 => Self::Bits80,
+            SecurityLevel::Bits100 => Self::Bits100,
+        }
+    }
+}
+
+impl Default for SecurityLevelArg {
+    fn default() -> Self {
+        SecurityLevel::default().into()
+    }
+}
+
 impl std::fmt::Display for SecurityLevelArg {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}", SecurityLevel::from(*self))
@@ -87,7 +102,7 @@ struct ProveFriArgs {
     #[arg(long)]
     worker_threads: Option<usize>,
 
-    #[arg(long, default_value_t = SecurityLevelArg::Bits80)]
+    #[arg(long, default_value_t = SecurityLevelArg::default())]
     security: SecurityLevelArg,
 
     /// Path to the committed FRI verification key. Reused if present;
@@ -103,7 +118,7 @@ struct GenerateVksArgs {
     #[arg(long, default_value = "vks")]
     output_dir: PathBuf,
 
-    #[arg(long, default_value_t = SecurityLevelArg::Bits80)]
+    #[arg(long, default_value_t = SecurityLevelArg::default())]
     security: SecurityLevelArg,
 
     /// SNARK trusted setup (CRS). Required to derive the SNARK wrapper VK.
