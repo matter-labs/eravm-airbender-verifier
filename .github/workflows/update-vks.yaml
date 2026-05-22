@@ -31,16 +31,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Builds the PR's guest. The one job that runs PR-controlled cargo —
-  # kept on a read-only token with `persist-credentials: false` and no
-  # actions/cache.
-  guest-build:
-    name: guest-build
+  # Build the host CLI and guest from the PR head. Done inside this
+  # workflow so /update-vks doesn't have to wait for the PR's ci-run to
+  # finish — and so a ci-run that ends in failure (e.g. because vk-check
+  # fails on stale VKs) doesn't block us from finding artifacts. Mirrors
+  # `server-integration-build` in ci-check.yaml; permissions stay
+  # read-only because no PR code should ever see the push token.
+  build:
+    name: build
     permissions:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
-    timeout-minutes: 45
+    timeout-minutes: 90
+    container:
+      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+    env:
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
     steps:
+      - name: Install git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y git
+
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: ${{ inputs.head_repo }}
@@ -51,25 +66,24 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: matter-labs/airbender-platform
-          ref: 5b1e81043ed03ea4e215510e9653eace5d09c50f
+          ref: 6a81afcf992f586256b943ba3241254202de8901
           path: airbender-platform
           persist-credentials: false
 
-      - name: Install linux packages
-        shell: 'bash -ex {0}'
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: |
-          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
-          ${SUDO} apt-get update
-          ${SUDO} apt-get install -y libclang-dev clang
+        run: apt-get install -y clang build-essential curl libclang-dev
 
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-          # PR code writes to actions/cache otherwise.
-          cache: false
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
 
       - name: Install cargo-binutils
         working-directory: ./airbender-platform
@@ -83,6 +97,25 @@ jobs:
         working-directory: ./guest
         run: cargo airbender build
 
+      - name: Build eravm-prover-host (snark_gpu)
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo build --release -p eravm-prover-host --locked --features snark_gpu
+
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+
+      - name: Upload prover-host binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-prover-host-bin
+          path: target/release/eravm-prover-host
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
@@ -91,53 +124,62 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Runs `gen-vks` from the trusted main-built image against the PR's guest.
-  # No Rust compiles here, and the host binary doesn't execute guest code.
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-bellman-cuda
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
   regen:
     name: regen
-    needs: guest-build
+    needs: build
     permissions:
       contents: read
-      packages: read # pull from ghcr.io
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 60
     env:
-      IMAGE: ghcr.io/${{ github.repository }}:latest
+      LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
     steps:
+      - name: Download prover-host binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-prover-host-bin
+          path: stage/bin
+
       - name: Download guest dist
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: update-vks-guest-dist
           path: stage/guest
 
-      - name: Log in to ghcr.io
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: update-vks-bellman-cuda
+          path: stage/cuda-libs
 
-      - name: Pull trusted host image
-        run: docker pull "$IMAGE"
+      - name: Make host binary executable
+        run: chmod +x stage/bin/eravm-prover-host
 
-      - name: Prepare output directory
+      - name: Download SNARK trusted setup
         run: |
+          mkdir -p stage/setup
+          ./stage/bin/eravm-prover-host download-trusted-setup \
+              --output stage/setup/setup.key
+
+      - name: Regenerate VKs
+        env:
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/stage/guest
+          RUST_BACKTRACE: 1
+          RUST_MIN_STACK: "134217728"
+        run: |
+          ulimit -s unlimited
           mkdir -p vks-output
-          chmod 777 vks-output
-
-      - name: Run gen-vks inside the trusted image
-        run: |
-          docker run --rm \
-            --gpus all \
-            --ulimit stack=-1 \
-            -v "${{ github.workspace }}/stage/guest:/guest-pr:ro" \
-            -v "${{ github.workspace }}/vks-output:/vks-output" \
-            -e ERAVM_PROVER_HOST_GUEST_DIR=/guest-pr \
-            -e RUST_BACKTRACE=1 \
-            -e RUST_MIN_STACK=134217728 \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c "ulimit -s unlimited && /usr/local/bin/eravm-prover-host gen-vks --output-dir /vks-output --trusted-setup /setup/setup.key"
+          ./stage/bin/eravm-prover-host gen-vks \
+              --output-dir vks-output \
+              --trusted-setup stage/setup/setup.key
           ls -lh vks-output
 
       - name: Upload regenerated VKs
@@ -247,7 +289,7 @@ jobs:
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
-    needs: [guest-build, regen, commit]
+    needs: [build, regen, commit]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:
