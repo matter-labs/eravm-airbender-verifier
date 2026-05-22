@@ -20,10 +20,10 @@ jobs:
   lints:
     name: lints
     runs-on: ubuntu-latest
-    # Skip the heavy work on release-please PRs — they only touch CHANGELOG /
-    # version files. `pr-checks` still runs and reports success so the PR
-    # stays mergeable under branch protection.
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    # Skip the build matrix on release-please PRs — they only touch CHANGELOG /
+    # version files. `pr-checks` still runs; its shell check treats `skipped`
+    # jobs as success so the PR stays mergeable under branch protection.
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
     steps:
@@ -47,7 +47,7 @@ jobs:
   tests:
     name: tests
     runs-on: matterlabs-ci-runner-high-performance
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
     steps:
@@ -65,7 +65,7 @@ jobs:
   vm-compare-batches:
     name: vm-compare-batches
     runs-on: matterlabs-ci-runner-high-performance
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -103,7 +103,7 @@ jobs:
   host-run-batches:
     name: host-run-batches
     runs-on: matterlabs-ci-runner-high-performance
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -172,7 +172,7 @@ jobs:
   server-integration-build:
     name: server-integration-build
     runs-on: matterlabs-ci-runner-high-performance
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     timeout-minutes: 90
     container:
       image: nvidia/cuda:13.0.3-devel-ubuntu22.04
@@ -328,7 +328,7 @@ jobs:
   server-integration-run:
     name: server-integration-run
     needs: server-integration-build
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    if: ${{ !contains(github.head_ref, 'release-please--branches') }}
     # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
     # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
     # Same runner used by prove-batch.yaml.
@@ -403,19 +403,19 @@ jobs:
 
   pr-checks:
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && !cancelled()
     needs:
       - lints
       - tests
       - vm-compare-batches
       - host-run-batches
     steps:
-      - name: Skip on release-please PRs
-        if: ${{ startsWith(github.head_ref, 'release-please--') }}
-        run: echo "release-please PR — skipping aggregated CI gate to keep the PR mergeable"
-
-      - name: Decide on PR checks
-        if: ${{ !startsWith(github.head_ref, 'release-please--') }}
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
-        with:
-          jobs: ${{ toJSON(needs) }}
+      - name: Status
+        # Fail only if a needed job actually failed. `skipped` (e.g. all jobs
+        # skipped on a release-please PR) is treated as success so the PR
+        # stays mergeable. Mirrors matter-labs/zksync-era's `ci-success` job.
+        run: |
+          if [[ ${{ contains(join(needs.*.result, ','), 'failure') }} == "true" ]]; then
+            echo "Intentionally failing to block PR from merging"
+            exit 1
+          fi
