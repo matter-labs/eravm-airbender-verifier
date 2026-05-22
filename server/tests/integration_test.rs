@@ -35,7 +35,7 @@ use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present, SnarkWrapperProof,
 };
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -57,7 +57,9 @@ type CapturedFriProof = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
 #[derive(Clone)]
 struct TestServerState {
-    verifier_input: Arc<AirbenderVerifierInput>,
+    /// Stored as the bare V1 payload so the test mock matches the upstream
+    /// zksync-era wire format (a flat struct, no version enum wrapper).
+    verifier_input: Arc<V1AirbenderVerifierInput>,
     /// One-shot latch for `/airbender/proof_inputs`: serve the job once, then 204.
     fri_input_served: Arc<std::sync::atomic::AtomicBool>,
     /// Latest FRI submission captured by `/airbender/submit_proofs`. Read by
@@ -267,7 +269,7 @@ impl Drop for ChildGuard {
 
 /// Loads batch 506093 from the LFS corpus and returns the verifier input plus
 /// the natively-computed proof public input that a real proof must match.
-fn load_batch_and_expected_public_input() -> (AirbenderVerifierInput, [u32; 8]) {
+fn load_batch_and_expected_public_input() -> (V1AirbenderVerifierInput, [u32; 8]) {
     let batch_path = batch_file_path("506093.bin.gz");
     println!("[test] Loading batch from: {}", batch_path.display());
     let batch_input = BatchInputFile {
@@ -284,7 +286,7 @@ fn load_batch_and_expected_public_input() -> (AirbenderVerifierInput, [u32; 8]) 
         .expect("native verify failed")
         .proof_public_input;
     println!("[test] Native verify produced public input: {expected_public_input:?}");
-    (AirbenderVerifierInput::V1(v1), expected_public_input)
+    (v1, expected_public_input)
 }
 
 /// Verifies a bincode-encoded `Proof` payload against the cached VK.
