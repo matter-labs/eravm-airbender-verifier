@@ -20,6 +20,10 @@ jobs:
   lints:
     name: lints
     runs-on: ubuntu-latest
+    # Skip the heavy work on release-please PRs — they only touch CHANGELOG /
+    # version files. `pr-checks` still runs and reports success so the PR
+    # stays mergeable under branch protection.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
     steps:
@@ -43,6 +47,7 @@ jobs:
   tests:
     name: tests
     runs-on: matterlabs-ci-runner-high-performance
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
     steps:
@@ -60,6 +65,7 @@ jobs:
   vm-compare-batches:
     name: vm-compare-batches
     runs-on: matterlabs-ci-runner-high-performance
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -97,6 +103,7 @@ jobs:
   host-run-batches:
     name: host-run-batches
     runs-on: matterlabs-ci-runner-high-performance
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -165,6 +172,7 @@ jobs:
   server-integration-build:
     name: server-integration-build
     runs-on: matterlabs-ci-runner-high-performance
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     timeout-minutes: 90
     container:
       image: nvidia/cuda:13.0.3-devel-ubuntu22.04
@@ -320,6 +328,7 @@ jobs:
   server-integration-run:
     name: server-integration-run
     needs: server-integration-build
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
     # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
     # Same runner used by prove-batch.yaml.
@@ -401,7 +410,12 @@ jobs:
       - vm-compare-batches
       - host-run-batches
     steps:
+      - name: Skip on release-please PRs
+        if: ${{ startsWith(github.head_ref, 'release-please--') }}
+        run: echo "release-please PR — skipping aggregated CI gate to keep the PR mergeable"
+
       - name: Decide on PR checks
+        if: ${{ !startsWith(github.head_ref, 'release-please--') }}
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
           jobs: ${{ toJSON(needs) }}
