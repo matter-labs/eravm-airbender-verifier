@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use eravm_prover_host::SnarkWrapperProof;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{info, warn};
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::{AirbenderVerifierInput, V1AirbenderVerifierInput};
 
 use crate::types::{SubmitFriProofRequest, SubmitSnarkProofRequest, WorkerJob};
 
@@ -63,14 +63,16 @@ impl JobServerClient {
     }
 
     pub fn fetch_fri_job(&self) -> Result<Option<WorkerJob>> {
-        let Some(input) = self.poll_json::<AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
+        // zksync-era's `AirbenderVerifierInput` is a flat struct on the wire,
+        // matching this verifier's `V1AirbenderVerifierInput`. We deserialize
+        // the bare payload here and wrap it in the local versioned enum so the
+        // host↔guest channel and on-disk bincode corpus keep using V1.
+        let Some(v1) = self.poll_json::<V1AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
         else {
             return Ok(None);
         };
-        let AirbenderVerifierInput::V1(ref v1) = input else {
-            anyhow::bail!("expected AirbenderVerifierInput::V1");
-        };
         let batch_number = v1.vm_run_data.l1_batch_number.0;
+        let input = AirbenderVerifierInput::V1(v1);
         let mut inputs = Inputs::new();
         inputs
             .push(&input)

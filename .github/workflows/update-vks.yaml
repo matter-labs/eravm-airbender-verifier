@@ -190,101 +190,59 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The only job with a write-scoped token. Commits via the Git Data API
-  # so no PR file ever lands on disk in this context.
   commit:
     name: commit
     needs: regen
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ inputs.head_ref }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Verify PR head unchanged
+        env:
+          EXPECTED_SHA: ${{ inputs.head_sha }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::PR head moved ($EXPECTED_SHA -> $actual)"
+            exit 1
+          fi
+
       - name: Download regenerated VKs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: update-vks-vks
-          path: vks-download
+          path: vks
 
-      - name: Commit vks/ via Git Data API
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      - name: Commit and push
         env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          HEAD_REF: ${{ inputs.head_ref }}
-          EXPECTED_SHA: ${{ inputs.head_sha }}
           COMMENT_ID: ${{ inputs.comment_id }}
-        with:
-          script: |
-            const fs = require('fs');
-            const { owner, repo } = context.repo;
-            const branch = process.env.HEAD_REF;
-            const expectedSha = process.env.EXPECTED_SHA;
-            const prNumber = Number(process.env.PR_NUMBER);
+        run: |
+          user=$(gh api user --jq .login)
+          git config user.name  "$user"
+          git config user.email "${user}@users.noreply.github.com"
 
-            const files = [
-              { path: 'vks/fri_vk.bin',    local: 'vks-download/fri_vk.bin'    },
-              { path: 'vks/snark_vk.json', local: 'vks-download/snark_vk.json' },
-            ];
-            for (const f of files) {
-              if (!fs.existsSync(f.local)) {
-                core.setFailed(`missing ${f.local}`);
-                return;
-              }
-            }
+          git add vks/
+          if git diff --staged --quiet; then
+            body=":white_check_mark: \`vks/\` already up to date."
+          else
+            git commit -m "chore(vks): refresh committed verification keys"
+            git push
+            body=":white_check_mark: Pushed \`$(git rev-parse HEAD)\`."
+          fi
 
-            const ref = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
-            const headSha = ref.data.object.sha;
-            if (headSha !== expectedSha) {
-              core.setFailed(`PR head moved (${expectedSha} -> ${headSha})`);
-              return;
-            }
-
-            const parentCommit = await github.rest.git.getCommit({ owner, repo, commit_sha: headSha });
-            const baseTreeSha = parentCommit.data.tree.sha;
-
-            const blobs = [];
-            for (const f of files) {
-              const blob = await github.rest.git.createBlob({
-                owner, repo,
-                content: fs.readFileSync(f.local).toString('base64'),
-                encoding: 'base64',
-              });
-              blobs.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.data.sha });
-            }
-
-            const tree = await github.rest.git.createTree({
-              owner, repo,
-              base_tree: baseTreeSha,
-              tree: blobs,
-            });
-
-            const postComment = (body) => github.rest.issues.createComment({
-              owner, repo, issue_number: prNumber, body,
-            });
-            const react = (content) => github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: Number(process.env.COMMENT_ID), content,
-            });
-
-            if (tree.data.sha === baseTreeSha) {
-              await postComment(`:white_check_mark: \`vks/\` already up to date.`);
-              await react('hooray');
-              return;
-            }
-
-            const commit = await github.rest.git.createCommit({
-              owner, repo,
-              message: `chore(vks): refresh committed verification keys`,
-              tree: tree.data.sha,
-              parents: [headSha],
-            });
-
-            await github.rest.git.updateRef({
-              owner, repo, ref: `heads/${branch}`, sha: commit.data.sha,
-            });
-
-            await postComment(`:white_check_mark: Pushed \`${commit.data.sha}\`.`);
-            await react('hooray');
+          gh pr comment "$PR_NUMBER" --body "$body"
+          gh api -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GH_REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content='hooray' >/dev/null
 
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
