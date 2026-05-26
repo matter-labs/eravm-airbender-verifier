@@ -164,6 +164,29 @@ impl SnarkPipeline {
     }
 }
 
+/// Resolves the phase-3 wrapper VK from the trusted setup chain. Used by the
+/// `gen-vks` host subcommand to commit a deterministic SNARK VK file into the
+/// repo; the server then loads that file directly instead of re-deriving on
+/// startup.
+pub fn derive_snark_vk(options: &SnarkOptions) -> Result<SnarkWrapperVK> {
+    let mut wrapper = SnarkWrapper::new(SnarkWrapperConfig {
+        bin: None,
+        text: None,
+        trusted_setup: options.trusted_setup.clone(),
+        threads: options.worker_threads,
+        risc_wrapper_vk: None,
+        compression_vk: None,
+        snark_vk: None,
+    })
+    .context("while attempting to initialize the SNARK wrapper for VK derivation")?;
+
+    let vk = wrapper
+        .snark_vk()
+        .context("while attempting to derive SNARK VK")?
+        .clone();
+    Ok(vk)
+}
+
 fn save_wrapper_artifact<T: serde::Serialize>(artifact: &T, path: &Path) -> Result<()> {
     let path_string = path.to_string_lossy().into_owned();
     serialize_to_file(artifact, &path_string)

@@ -30,14 +30,12 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
-use airbender_host::{
-    Program, Proof, ProverLevel, SecurityLevel, VerificationKey, VerificationRequest, Verifier,
-};
+use airbender_host::{Program, Proof, ProverLevel, SecurityLevel, VerificationRequest, Verifier};
 use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
-    download_trusted_setup_if_not_present, SnarkWrapperProof,
+    download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
 };
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -59,7 +57,9 @@ type CapturedFriProof = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
 #[derive(Clone)]
 struct TestServerState {
-    verifier_input: Arc<AirbenderVerifierInput>,
+    /// Stored as the bare V1 payload so the test mock matches the upstream
+    /// zksync-era wire format (a flat struct, no version enum wrapper).
+    verifier_input: Arc<V1AirbenderVerifierInput>,
     /// One-shot latch for `/airbender/proof_inputs`: serve the job once, then 204.
     fri_input_served: Arc<AtomicBool>,
     /// Latest FRI submission captured by `/airbender/submit_proofs`. Read by
@@ -75,7 +75,7 @@ struct TestServerState {
 struct BatchTestInput {
     number: u32,
     filename: String,
-    verifier_input: AirbenderVerifierInput,
+    verifier_input: V1AirbenderVerifierInput,
     expected_public_input: [u32; 8],
 }
 
@@ -407,35 +407,6 @@ async fn handle_submit_snark_proofs(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Loads the VK from `cache_path` if it exists; otherwise generates and caches it.
-fn load_or_generate_vk(verifier: &impl Verifier, cache_path: &std::path::Path) -> VerificationKey {
-    if cache_path.exists() {
-        let bytes = std::fs::read(cache_path).expect("failed to read VK cache");
-        let (vk, decoded_len): (VerificationKey, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .expect("failed to decode VK cache");
-        assert_eq!(decoded_len, bytes.len(), "VK cache has trailing bytes");
-        println!(
-            "[test] Loaded verification key from cache: {}",
-            cache_path.display()
-        );
-        return vk;
-    }
-
-    println!("[test] Generating verification key (this may take a while)...");
-    let vk = verifier
-        .generate_vk(SecurityLevel::default())
-        .expect("failed to generate VK");
-    let encoded = bincode::serde::encode_to_vec(&vk, bincode::config::standard())
-        .expect("failed to encode VK for caching");
-    std::fs::write(cache_path, &encoded).expect("failed to write VK cache");
-    println!(
-        "[test] Verification key cached at: {}",
-        cache_path.display()
-    );
-    vk
-}
-
 /// Resolution order for paths the test consumes:
 /// 1. `IT_<NAME>` env var (set by CI when running a prebuilt test binary on a
 ///    different machine than the one that compiled it — `CARGO_MANIFEST_DIR`
@@ -470,6 +441,23 @@ fn prover_server_bin() -> PathBuf {
     std::env::var_os("IT_PROVER_SERVER_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_eravm-prover-server")))
+}
+
+/// Path to the committed FRI verification key. Both the spawned prover and
+/// the in-test proof verifier load this file directly — the server is
+/// configured to never derive a VK on the fly, so it must exist.
+fn fri_vk_path() -> PathBuf {
+    std::env::var_os("IT_FRI_VK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/fri_vk.bin"))
+}
+
+/// Path to the committed SNARK wrapper verification key. Required for the
+/// `snark-only` phase of the test; not consumed in the FRI-only phase.
+fn snark_vk_path() -> PathBuf {
+    std::env::var_os("IT_SNARK_VK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/snark_vk.json"))
 }
 
 /// CRS used by the SNARK wrapper. The build's `snark_gpu` feature picks the
@@ -665,16 +653,17 @@ fn load_batch_and_expected_public_input(filename: &str) -> BatchTestInput {
     BatchTestInput {
         number,
         filename: filename.to_owned(),
-        verifier_input: AirbenderVerifierInput::V1(v1),
+        verifier_input: v1,
         expected_public_input,
     }
 }
 
-/// Verifies a bincode-encoded `Proof` payload against the cached VK.
+/// Verifies a bincode-encoded `Proof` payload against the committed FRI VK.
 fn verify_fri_proof(
     proof_bytes: &[u8],
     expected_public_input: &[u32; 8],
     dist_dir: &std::path::Path,
+    vk_path: &std::path::Path,
 ) {
     println!("[test] Loading guest program for verification...");
     let program = Program::load(dist_dir).expect("failed to load guest program");
@@ -683,13 +672,8 @@ fn verify_fri_proof(
         .build()
         .expect("failed to build RealVerifier");
 
-    let manifest_sha256 = program.manifest().bin.sha256.trim().to_owned();
-    assert!(
-        !manifest_sha256.is_empty(),
-        "guest manifest has empty sha256"
-    );
-    let vk_cache = PathBuf::from(format!("vk-{manifest_sha256}.bin"));
-    let vk = load_or_generate_vk(&verifier, &vk_cache);
+    let vk = load_vk_from_disk(vk_path, SecurityLevel::default())
+        .expect("failed to load committed FRI verification key");
 
     println!("[test] Deserializing proof...");
     let (proof, _): (Proof, usize) =
@@ -824,6 +808,25 @@ async fn prover_server_proves_fri_then_snark() {
         .to_str()
         .expect("non-UTF8 SNARK trusted setup path")
         .to_owned();
+    let fri_vk = fri_vk_path();
+    let snark_vk = snark_vk_path();
+    assert!(
+        fri_vk.exists(),
+        "FRI verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        fri_vk.display()
+    );
+    assert!(
+        snark_vk.exists(),
+        "SNARK verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        snark_vk.display()
+    );
+    let fri_vk_str = fri_vk.to_str().expect("non-UTF8 FRI VK path").to_owned();
+    let snark_vk_str = snark_vk
+        .to_str()
+        .expect("non-UTF8 SNARK VK path")
+        .to_owned();
+    println!("[test] FRI VK: {fri_vk_str}");
+    println!("[test] SNARK VK: {snark_vk_str}");
 
     // --- 3a. Phase 1: spawn fri-only prover, wait for FRI proof, then kill it. ---
     println!(
@@ -834,6 +837,7 @@ async fn prover_server_proves_fri_then_snark() {
         .env("PROVER_SERVER_URL", &server_url)
         .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
         .env("PROVER_MODE", "fri-only")
+        .env("FRI_VK", &fri_vk_str)
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "integration-test-fri")
         .spawn()
@@ -881,6 +885,8 @@ async fn prover_server_proves_fri_then_snark() {
         .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
         .env("PROVER_MODE", "snark-only")
         .env("SNARK_TRUSTED_SETUP_FILE", &trusted_setup_str)
+        .env("FRI_VK", &fri_vk_str)
+        .env("SNARK_VK", &snark_vk_str)
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "integration-test-snark")
         .spawn()
@@ -905,7 +911,7 @@ async fn prover_server_proves_fri_then_snark() {
     );
 
     // --- 4. Verify the FRI proof cryptographically and round-trip the SNARK payload. ---
-    verify_fri_proof(&fri_bytes, &expected_public_input, &dist_dir);
+    verify_fri_proof(&fri_bytes, &expected_public_input, &dist_dir, &fri_vk);
 
     // The server JSON-encodes `SnarkWrapperProof` before hex-encoding into the
     // request body. Deserializing it back is the strongest payload-shape check
@@ -943,6 +949,15 @@ async fn prover_server_generates_fri_fixtures() {
 
     let fixture_dir = fri_fixtures_dir();
     println!("[test] FRI fixture dir: {}", fixture_dir.display());
+
+    let fri_vk = fri_vk_path();
+    assert!(
+        fri_vk.exists(),
+        "FRI verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        fri_vk.display()
+    );
+    let fri_vk_str = fri_vk.to_str().expect("non-UTF8 FRI VK path").to_owned();
+    println!("[test] FRI VK: {fri_vk_str}");
 
     let batch_files = batch_files_from_env(&["506093.bin.gz", "506094.bin.gz", "506095.bin.gz"]);
     println!("[test] FRI fixture batch files: {batch_files:?}");
@@ -1028,6 +1043,7 @@ async fn prover_server_generates_fri_fixtures() {
             .env("PROVER_SERVER_URL", &server_url)
             .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
             .env("PROVER_MODE", "fri-only")
+            .env("FRI_VK", &fri_vk_str)
             .env("PROVER_POLL_INTERVAL_MS", "1000")
             .env(
                 "PROVER_ID",
@@ -1065,7 +1081,7 @@ async fn prover_server_generates_fri_fixtures() {
         );
         tokio::time::sleep(GPU_RECLAIM_DELAY).await;
 
-        verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir);
+        verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir, &fri_vk);
         manifest_entries.push(write_fri_fixture(&fixture_dir, batch, fri_bytes));
         println!(
             "[test] Batch {} FRI fixture finished in {:.1}s",
@@ -1100,6 +1116,26 @@ async fn prover_server_replays_snark_only_fixtures() {
     let trusted_setup = snark_trusted_setup_path();
     println!("[test] SNARK trusted setup: {}", trusted_setup.display());
 
+    let fri_vk = fri_vk_path();
+    let snark_vk = snark_vk_path();
+    assert!(
+        fri_vk.exists(),
+        "FRI verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        fri_vk.display()
+    );
+    assert!(
+        snark_vk.exists(),
+        "SNARK verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        snark_vk.display()
+    );
+    let fri_vk_str = fri_vk.to_str().expect("non-UTF8 FRI VK path").to_owned();
+    let snark_vk_str = snark_vk
+        .to_str()
+        .expect("non-UTF8 SNARK VK path")
+        .to_owned();
+    println!("[test] FRI VK: {fri_vk_str}");
+    println!("[test] SNARK VK: {snark_vk_str}");
+
     let fixture_dir = fri_fixtures_dir();
     println!("[test] FRI fixture dir: {}", fixture_dir.display());
     let fixtures = load_fri_fixtures(&fixture_dir);
@@ -1115,6 +1151,7 @@ async fn prover_server_replays_snark_only_fixtures() {
             &fixture.proof_bytes,
             &fixture.expected_public_input,
             &dist_dir,
+            &fri_vk,
         );
     }
     let fixtures = Arc::new(fixtures);
@@ -1188,6 +1225,8 @@ async fn prover_server_replays_snark_only_fixtures() {
         .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
         .env("PROVER_MODE", "snark-only")
         .env("SNARK_TRUSTED_SETUP_FILE", &trusted_setup_str)
+        .env("FRI_VK", &fri_vk_str)
+        .env("SNARK_VK", &snark_vk_str)
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "integration-test-snark-fixtures")
         .spawn()
@@ -1257,6 +1296,26 @@ async fn prover_server_proves_multi_batch_fri_snark() {
 
     let trusted_setup = snark_trusted_setup_path();
     println!("[test] SNARK trusted setup: {}", trusted_setup.display());
+
+    let fri_vk = fri_vk_path();
+    let snark_vk = snark_vk_path();
+    assert!(
+        fri_vk.exists(),
+        "FRI verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        fri_vk.display()
+    );
+    assert!(
+        snark_vk.exists(),
+        "SNARK verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        snark_vk.display()
+    );
+    let fri_vk_str = fri_vk.to_str().expect("non-UTF8 FRI VK path").to_owned();
+    let snark_vk_str = snark_vk
+        .to_str()
+        .expect("non-UTF8 SNARK VK path")
+        .to_owned();
+    println!("[test] FRI VK: {fri_vk_str}");
+    println!("[test] SNARK VK: {snark_vk_str}");
 
     let batch_files = batch_files_from_env(&["506093.bin.gz", "506094.bin.gz", "506095.bin.gz"]);
     println!("[test] Multi-batch fri-snark files: {batch_files:?}");
@@ -1339,6 +1398,8 @@ async fn prover_server_proves_multi_batch_fri_snark() {
         .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
         .env("PROVER_MODE", "fri-snark")
         .env("SNARK_TRUSTED_SETUP_FILE", &trusted_setup_str)
+        .env("FRI_VK", &fri_vk_str)
+        .env("SNARK_VK", &snark_vk_str)
         .env("PROVER_POLL_INTERVAL_MS", "1000")
         .env("PROVER_ID", "integration-test-fri-snark")
         .spawn()
@@ -1387,7 +1448,7 @@ async fn prover_server_proves_multi_batch_fri_snark() {
             snark_bytes.len()
         );
 
-        verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir);
+        verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir, &fri_vk);
         let _snark_proof: SnarkWrapperProof = serde_json::from_slice(&snark_bytes)
             .expect("SNARK proof body did not deserialize as SnarkWrapperProof JSON");
         println!(

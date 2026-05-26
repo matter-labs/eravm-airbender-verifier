@@ -75,6 +75,13 @@ ENV BELLMAN_CUDA_DIR=/workspace/era-bellman-cuda
 # Step 3: build the server binary with GPU SNARK proving enabled.
 RUN cargo build --release --locked --package eravm-prover-server --features snark_gpu
 
+# Step 3b: also build the host CLI so the runtime image can run `gen-vks`
+# (and the other host subcommands) without a separate toolchain. The
+# `/update-vks` CI workflow pulls this image and invokes `eravm-prover-host`
+# from it, so PR-author code never compiles the binary that produces the
+# committed verification keys.
+RUN cargo build --release --locked --package eravm-prover-host --features snark_gpu
+
 # Step 4: pre-fetch the bellman SNARK trusted setup so the runtime image ships
 # with it already in place. GPU build uses `setup_compact.key`. Override via
 # `--build-arg SNARK_TRUSTED_SETUP_URL=...`.
@@ -100,7 +107,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/target/release/eravm-prover-server /usr/local/bin/eravm-prover-server
+COPY --from=builder /workspace/target/release/eravm-prover-host /usr/local/bin/eravm-prover-host
 COPY --from=builder /workspace/guest/dist/app /guest-program
+COPY --from=builder /workspace/vks /vks
 COPY --from=builder /setup/setup.key /setup/setup.key
 COPY --from=builder /bellman-cuda-libs /usr/local/lib/bellman-cuda
 
@@ -110,6 +119,12 @@ RUN echo "/usr/local/lib/bellman-cuda" > /etc/ld.so.conf.d/bellman-cuda.conf \
     && ldconfig
 
 ENV PROVER_GUEST_DIST_DIR=/guest-program
+
+# The committed FRI and SNARK verification keys ship with the image. The
+# server hard-fails at startup if either file is missing or doesn't match
+# the bundled guest binary — it never derives a VK on the fly.
+ENV FRI_VK=/vks/fri_vk.bin
+ENV SNARK_VK=/vks/snark_vk.json
 
 # Bellman SNARK trusted setup ships with the image. The server fails fast at
 # startup if the file is missing; override `SNARK_TRUSTED_SETUP_FILE` only if
