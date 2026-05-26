@@ -127,7 +127,7 @@ struct FriProofFixtureManifest {
     batches: Vec<FriProofFixtureManifestEntry>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 struct FriProofFixtureManifestEntry {
     batch_number: u32,
     batch_file: String,
@@ -581,15 +581,32 @@ fn write_fri_fixture(
     }
 }
 
-fn write_fri_fixture_manifest(dir: &std::path::Path, entries: Vec<FriProofFixtureManifestEntry>) {
-    let manifest = FriProofFixtureManifest { batches: entries };
+/// Writes the manifest atomically: serialize, write to a sibling tmp file,
+/// then rename onto the final path. The fixture generator calls this after
+/// every successful batch so a crash mid-run still leaves a valid manifest
+/// describing the fixtures that did finish — the snark-only replay test can
+/// then pick up the partial fixture set without manual recovery.
+fn write_fri_fixture_manifest(dir: &std::path::Path, entries: &[FriProofFixtureManifestEntry]) {
+    let manifest = FriProofFixtureManifest {
+        batches: entries.to_vec(),
+    };
     let manifest_path = fri_fixture_manifest_path(dir);
+    let tmp_path = manifest_path.with_extension("json.tmp");
     let encoded =
         serde_json::to_vec_pretty(&manifest).expect("failed to serialize FRI fixture manifest");
-    std::fs::write(&manifest_path, encoded)
-        .unwrap_or_else(|err| panic!("failed to write {}: {err}", manifest_path.display()));
+    std::fs::write(&tmp_path, encoded)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", tmp_path.display()));
+    std::fs::rename(&tmp_path, &manifest_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to rename {} -> {}: {err}",
+            tmp_path.display(),
+            manifest_path.display()
+        )
+    });
     println!(
-        "[test] Wrote FRI fixture manifest: {}",
+        "[test] Wrote FRI fixture manifest ({} batch{}): {}",
+        entries.len(),
+        if entries.len() == 1 { "" } else { "es" },
         manifest_path.display()
     );
 }
@@ -1083,6 +1100,10 @@ async fn prover_server_generates_fri_fixtures() {
 
         verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir, &fri_vk);
         manifest_entries.push(write_fri_fixture(&fixture_dir, batch, fri_bytes));
+        // Rewrite the manifest after each batch so a later panic (e.g. the
+        // upstream `assert_caps_mach` bug on batch 3) still leaves a valid
+        // manifest covering the batches that did finish.
+        write_fri_fixture_manifest(&fixture_dir, &manifest_entries);
         println!(
             "[test] Batch {} FRI fixture finished in {:.1}s",
             batch.number,
@@ -1090,7 +1111,6 @@ async fn prover_server_generates_fri_fixtures() {
         );
     }
 
-    write_fri_fixture_manifest(&fixture_dir, manifest_entries);
     println!(
         "[test] FRI fixture generation finished in {:.1}s",
         full_run_started_at.elapsed().as_secs_f64()
