@@ -43,11 +43,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # invokes to produce app.bin / app.text from the guest ELF.
 RUN cargo install cargo-binutils --locked
 
-# Install cargo-airbender at the exact commit pinned in Cargo.lock.
+# Install cargo-airbender at the exact tag pinned in Cargo.lock.
 # --no-default-features skips GPU support in the tool itself (only needed for `prove`, not `build`).
 RUN cargo install \
         --git https://github.com/matter-labs/airbender-platform \
-        --rev 6a81afcf992f586256b943ba3241254202de8901 \
+        --tag v0.2.1 \
         cargo-airbender \
         --no-default-features
 

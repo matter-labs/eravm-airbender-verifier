@@ -108,7 +108,7 @@ jobs:
         with:
           repository: matter-labs/airbender-platform
           # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 6a81afcf992f586256b943ba3241254202de8901
+          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
           path: airbender-platform
 
       - name: Install linux packages
@@ -192,7 +192,7 @@ jobs:
         with:
           repository: matter-labs/airbender-platform
           # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 6a81afcf992f586256b943ba3241254202de8901
+          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
           path: airbender-platform
 
       # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket; cmake; rustc.
