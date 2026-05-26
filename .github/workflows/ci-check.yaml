@@ -97,49 +97,38 @@ jobs:
   host-run-batches:
     name: host-run-batches
     runs-on: matterlabs-ci-runner-high-performance
+    # Prebuilt cargo-airbender image (CPU, no CUDA toolkit) published by
+    # airbender-platform's ci-release pipeline at this tag. Pinned to the
+    # same tag as the Rust deps in Cargo.toml so the CLI and the airbender-*
+    # crates stay in lockstep. Ships nightly Rust + cargo-binutils +
+    # cargo-airbender, so the per-step installs are no longer needed.
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 6a81afcf992f586256b943ba3241254202de8901
-          path: airbender-platform
+      # The container runs as root but the runner-mounted workspace is owned
+      # by a different uid, so git refuses to touch it with "dubious ownership".
+      # actions/checkout sets safe.directory for itself but it doesn't always
+      # carry over to subsequent steps' git invocations (e.g. git lfs install).
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install linux packages
         shell: 'bash -ex {0}'
         env:
           DEBIAN_FRONTEND: noninteractive
-        if: ${{ runner.os == 'Linux' }}
         run: |
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO=sudo
-          fi
-          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+          apt-get update && apt-get install -y libclang-dev git-lfs
 
       - name: Install Git LFS
         run: git lfs install --local
 
       - name: Pull CI mainnet batches
         run: ./scripts/fetch_lfs_batches.sh "$CI_BATCHES"
-
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
 
       - name: Build guest
         working-directory: ./guest
@@ -166,37 +155,23 @@ jobs:
     name: server-integration-build
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image published by airbender-platform's
+    # ci-release pipeline at this tag. Pinned to the same tag as the Rust
+    # deps in Cargo.toml so the CLI and the airbender-* crates stay in
+    # lockstep. Ships nightly Rust + cargo-binutils + cargo-airbender +
+    # clang + cmake + the CUDA 12.9 devel toolchain — no manual install
+    # steps required.
     container:
-      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1
     env:
       # The runtime runner is an RTX 6000 Ada (sm_89). Match prove-batch.yaml.
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
-      # The nvidia/cuda devel image is minimal — no git. Install it BEFORE
-      # actions/checkout: without git in PATH, checkout silently falls back to
-      # a REST API tarball download and the workspace ends up without a `.git`
-      # directory. (We don't pull LFS here; the batch is fetched on the run
-      # job since this build doesn't read it.)
-      - name: Install git
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y git
-
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: 6a81afcf992f586256b943ba3241254202de8901
-          path: airbender-platform
-
-      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket; cmake; rustc.
-      # Same composite used by build-host in prove-batch.yaml.
+      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket. Same
+      # composite used by build-host in prove-batch.yaml.
       - name: Setup runner
         uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
 
@@ -204,7 +179,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get install -y clang build-essential curl libclang-dev
+          apt-get update && apt-get install -y libclang-dev
 
       - name: Inspect toolchain
         run: |
@@ -221,14 +196,6 @@ jobs:
           cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
 
       - name: Build guest
         working-directory: ./guest
