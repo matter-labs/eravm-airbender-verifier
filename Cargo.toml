@@ -1,3 +1,8 @@
+# `trim-paths` is still unstable on the pinned nightly toolchain; opt in so the
+# `[profile.release] trim-paths` setting below is honored. Requires nightly Cargo,
+# which this workspace already uses via rust-toolchain.toml.
+cargo-features = ["trim-paths"]
+
 [workspace]
 members = [
   "crates/basic_types",
@@ -117,6 +122,17 @@ zksync_airbender_verifier = { path = "crates/airbender_verifier" }
 zksync_types = { path = "crates/types" }
 zksync_vm_compare = { path = "crates/vm_compare" }
 zksync_vm_interface = { path = "crates/vm_interface" }
+
+# Strip machine-specific absolute paths (CARGO_HOME deps, RUSTUP_HOME std
+# sources, the workspace root) from compiled artifacts. Without this, panic
+# `Location` strings bake the build machine's paths into the guest `app.bin`,
+# so the FRI verification key (derived from `app.bin`) differs between any two
+# machines with different CARGO_HOME/RUSTUP_HOME — CI, the prod image, and the
+# vast.ai runner all produced divergent keys. Cargo computes the correct
+# `--remap-path-prefix` flags itself, so the build is reproducible regardless
+# of where it runs. Regenerate `vks/` after changing this.
+[profile.release]
+trim-paths = "all"
 
 # This is required to avoid having to specify `RUST_MIN_STACK` for compilation.
 # The reason why this is needed is because these packages are highly optimized, but the optimizations
