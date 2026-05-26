@@ -13,7 +13,8 @@ use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
-    deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions, SnarkPipeline, SnarkWrapperVK,
+    default_fri_vk_path, deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions,
+    SnarkPipeline, SnarkWrapperVK,
 };
 use tracing::info;
 
@@ -77,6 +78,13 @@ struct Cli {
     #[arg(long, env = "PROVER_GUEST_DIST_DIR")]
     guest_dist_dir: Option<PathBuf>,
 
+    /// Path to the committed FRI verification key (bincode). The server
+    /// hard-fails at startup if this file is missing — it never derives the
+    /// VK on the fly. Regenerate with `eravm-prover-host gen-vks` when the
+    /// guest binary changes.
+    #[arg(long, env = "FRI_VK", default_value_os_t = default_fri_vk_path())]
+    fri_vk: PathBuf,
+
     /// Path to the trusted setup (CRS) for the SNARK wrapper.
     /// Required when `--mode` is `fri-snark` or `snark-only`.
     #[arg(
@@ -94,10 +102,14 @@ struct Cli {
     #[arg(long, env = "SNARK_THREADS")]
     snark_threads: Option<usize>,
 
-    /// Optional path to a pre-generated SNARK VK JSON. When set, the VK is
-    /// loaded once at startup and reused for every wrap; otherwise it is
-    /// derived from the setup chain.
-    #[arg(long, env = "SNARK_VK")]
+    /// Path to a committed SNARK VK JSON. Required for `fri-snark` and
+    /// `snark-only` modes — the server never derives this on the fly.
+    /// Regenerate with `eravm-prover-host gen-vks`.
+    #[arg(
+        long,
+        env = "SNARK_VK",
+        required_if_eq_any = [("mode", "fri-snark"), ("mode", "snark-only")],
+    )]
     snark_vk: Option<PathBuf>,
 }
 
@@ -190,7 +202,7 @@ fn build_prover(
     };
 
     let build_fri = || {
-        FriPipeline::new(dist_dir, cli.worker_threads, security)
+        FriPipeline::new(dist_dir, &cli.fri_vk, cli.worker_threads, security)
             .context("while building FRI pipeline")
     };
     let build_snark = || -> Result<SnarkPipeline> {
@@ -206,7 +218,7 @@ fn build_prover(
             // The worker doesn't run the GPU FRI prover here, but the FRI
             // proofs we receive from the job server still have to be verified
             // before we burn cycles wrapping them into a SNARK.
-            let verifier = FriVerifier::new(dist_dir, security)
+            let verifier = FriVerifier::load(dist_dir, &cli.fri_vk, security)
                 .context("while building FRI verifier for snark-only mode")?;
             builder
                 .with_fri_verifier(verifier)

@@ -11,15 +11,10 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/docker-build.yaml'
   push:
-    branches: [main, deniallugo-snark-verifier]
-    paths:
-      - Dockerfile
-      - 'server/**'
-      - 'guest/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/docker-build.yaml'
+    # No `paths:` filter here — tag pushes must always trigger a release build,
+    # and main pushes are infrequent enough that always building is fine.
+    branches: [main, feat/server-vks-from-disk]
+    tags: ['v*']
 
 permissions:
   contents: read
@@ -52,6 +47,13 @@ jobs:
         shell: bash
         run: gcloud auth configure-docker us-docker.pkg.dev -q
 
+      # Tag format mirrors matter-labs/zksync-era's build templates:
+      # <short-sha>-<unix-timestamp>. The timestamp keeps tags unique across
+      # rebuilds of the same commit (e.g. a force-push that doesn't change HEAD).
+      - name: Compute image tag
+        id: tag
+        run: echo "image_tag=$(git rev-parse --short HEAD)-$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
@@ -60,8 +62,10 @@ jobs:
             ghcr.io/${{ github.repository }}
             us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
           tags: |
-            type=sha,prefix=,format=long
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.tag.outputs.image_tag }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
