@@ -103,7 +103,7 @@ jobs:
     # crates stay in lockstep. Ships nightly Rust + cargo-binutils +
     # cargo-airbender, so the per-step installs are no longer needed.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender:0.0.1
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.0
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -155,7 +155,7 @@ jobs:
     # clang + cmake + the CUDA 12.9 devel toolchain — no manual install
     # steps required.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender-cuda:0.0.1
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.0
     env:
       # The runtime runner is an RTX 6000 Ada (sm_89). Match prove-batch.yaml.
       CUDA_ARCH: "89"

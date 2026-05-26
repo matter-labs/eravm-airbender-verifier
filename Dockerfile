@@ -6,7 +6,7 @@
 # version and the airbender-* crate versions stay in lockstep. The image
 # already ships nightly-2026-02-10 + rust-src + llvm-tools-preview + cargo-
 # binutils + cargo-airbender + clang + cmake + the CUDA 12.9 devel toolchain.
-FROM ghcr.io/matter-labs/cargo-airbender-cuda:0.0.1 AS builder
+FROM ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.0 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 

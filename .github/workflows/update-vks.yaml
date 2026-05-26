@@ -50,7 +50,7 @@ jobs:
     # clang + cmake + the CUDA 12.9 devel toolchain — no manual install
     # steps required.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender-cuda:0.0.1
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.0
     env:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
