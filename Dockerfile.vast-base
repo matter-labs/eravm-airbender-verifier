@@ -19,6 +19,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   clang / libclang-dev  - guest and verifier dependencies
 #   cmake >= 3.28        - required by airbender-platform GPU prover deps
 #   git-lfs              - mainnet batch corpus
+#   docker.io            - `cargo airbender build --reproducible` shells out to
+#                          docker; needs a usable daemon on the rented instance
 #   tmux / less / time   - practical diagnostics on rented instances
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -26,6 +28,7 @@ RUN apt-get update \
         ca-certificates \
         clang \
         curl \
+        docker.io \
         gpg \
         git \
         git-lfs \
