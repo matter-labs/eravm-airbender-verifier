@@ -1786,7 +1786,7 @@ dependencies = [
 
 [[package]]
 name = "eravm-prover-guest"
-version = "0.1.0"
+version = "29.8.0"
 dependencies = [
  "airbender-sdk",
  "zksync_airbender_verifier",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "eravm-prover-host"
-version = "0.1.0"
+version = "29.8.0"
 dependencies = [
  "airbender-host",
  "anyhow",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "eravm-prover-server"
-version = "0.1.0"
+version = "29.8.0"
 dependencies = [
  "airbender-host",
  "anyhow",
@@ -6224,7 +6224,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_airbender_verifier"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "ark-bls12-381",
@@ -6244,7 +6244,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_basic_types"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "airbender-crypto",
  "anyhow",
@@ -6312,7 +6312,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_cli_utils"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -6323,7 +6323,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_contracts"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -6333,7 +6333,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_crypto_primitives"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "airbender-crypto",
  "anyhow",
@@ -6417,7 +6417,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_merkle_tree"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -6443,7 +6443,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_mini_merkle_tree"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "criterion",
  "once_cell",
@@ -6453,7 +6453,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_multivm"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -6506,7 +6506,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_prover_metrics"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -6516,7 +6516,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_system_constants"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "once_cell",
  "zksync_basic_types",
@@ -6524,7 +6524,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_types"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6566,7 +6566,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_vm_compare"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -6582,7 +6582,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_vm_interface"
-version = "29.7.1"
+version = "29.8.0"
 dependencies = [
  "assert_matches",
  "hex",
