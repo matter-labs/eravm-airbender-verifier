@@ -144,6 +144,8 @@ jobs:
   # -----------------------------------------------------------------------------
   guest-check:
     name: guest-check
+    needs: change-filter
+    if: needs.change-filter.outputs.guest == 'true'
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
     container:
@@ -390,15 +392,20 @@ jobs:
           ./stage/bin/integration_test --ignored --nocapture
 
   # -----------------------------------------------------------------------------
-  # Cheap precondition for `vk-check`: only touch the GPU runner when the PR
-  # actually changes something that could affect either VK. Most PRs don't
-  # need the 30-minute regen, so we skip them rather than burning GPU time.
+  # Cheap precondition for the expensive guest/VK guards: only run them when the
+  # PR changes something that could affect the guest app.bin (`guest`) or either
+  # verification key (`vk`). Most PRs touch neither, so we skip the guest rebuild
+  # and the 30-minute GPU VK regen rather than burning runners.
   # -----------------------------------------------------------------------------
-  vk-check-changes:
-    name: vk-check-changes
+  change-filter:
+    name: change-filter
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.filter.outputs.relevant }}
+      # Inputs that can change the guest app.bin (and thus the FRI VK).
+      guest: ${{ steps.filter.outputs.guest }}
+      # Inputs that can change either VK (guest inputs + the host CLI that
+      # derives them + the SNARK wrapper pin + direct edits to committed vks/).
+      vk: ${{ steps.filter.outputs.vk }}
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -406,21 +413,25 @@ jobs:
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           filters: |
-            relevant:
-              # Guest source → app.bin → FRI VK.
+            # Anything the guest binary is built from. The guest links the
+            # workspace `crates/*` (via zksync_airbender_verifier), so a crate
+            # change can move app.bin too.
+            guest: &guest
               - 'guest/**'
-              # Host crate provides the binary that derives both VKs.
+              - 'crates/**'
+              # Cargo.lock / Cargo.toml pin the git deps compiled into the guest.
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              # Toolchain bumps change codegen (and the pinned cargo-airbender
+              # image tag lives in this workflow).
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci-check.yaml'
+            vk:
+              - *guest
+              # Host CLI derives both VKs; wrapper/setup pins move the SNARK VK.
               - 'host/**'
               # Direct edits to committed VKs must always be revalidated.
               - 'vks/**'
-              # Workspace Cargo.lock pins zkos-wrapper / airbender-platform
-              # revs; either bump can move the SNARK VK or the FRI VK format.
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              # Toolchain bumps can change codegen and (rarely) the VK.
-              - 'rust-toolchain.toml'
-              # Self-modification of this workflow.
-              - '.github/workflows/ci-check.yaml'
 
   # -----------------------------------------------------------------------------
   # Re-derive the FRI and SNARK verification keys on the GPU runner and diff
@@ -431,8 +442,8 @@ jobs:
   # -----------------------------------------------------------------------------
   vk-check:
     name: vk-check
-    needs: [server-integration-build, vk-check-changes]
-    if: needs.vk-check-changes.outputs.should_run == 'true'
+    needs: [server-integration-build, change-filter]
+    if: needs.change-filter.outputs.vk == 'true'
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 30
     # eravm-prover-host links against era-bellman-cuda and libcudart.so.13
@@ -497,16 +508,16 @@ jobs:
       - tests
       - vm-compare-batches
       - host-run-batches
+      - change-filter
       - guest-check
       - server-integration-build
       - server-integration-run
-      - vk-check-changes
       - vk-check
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
-          # vk-check legitimately skips on PRs that don't touch the guest,
-          # host, or wrapper-pinning files (see vk-check-changes).
-          allowed-skips: vk-check
+          # guest-check / vk-check legitimately skip on PRs that don't change
+          # the guest binary or the VKs (see change-filter).
+          allowed-skips: guest-check,vk-check
           jobs: ${{ toJSON(needs) }}
