@@ -31,43 +31,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build the host CLI and guest from the PR head. Done inside this
-  # workflow so /update-vks doesn't have to wait for the PR's ci-run to
-  # finish — and so a ci-run that ends in failure (e.g. because vk-check
-  # fails on stale VKs) doesn't block us from finding artifacts. Mirrors
-  # `server-integration-build` in ci-check.yaml; permissions stay
-  # read-only because no PR code should ever see the push token.
-  build:
-    name: build
+  # Rebuild the guest inside the pinned cargo-airbender image. A fixed
+  # toolchain + CARGO_HOME at a fixed workspace path yields a reproducible
+  # app.bin that matches what ci-check's guest-check rebuilds (same image +
+  # invocation). app.elf/app.text/manifest are gitignored byproducts — only
+  # app.bin is committed and consumed.
+  build-guest:
+    name: build-guest
     permissions:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
-    timeout-minutes: 90
+    timeout-minutes: 60
     container:
-      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
-    env:
-      CUDA_ARCH: "89"
-      CUDAARCHS: "89"
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
     steps:
-      - name: Install git
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y git
-
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: ${{ inputs.head_repo }}
           ref: ${{ inputs.head_sha }}
           persist-credentials: false
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
-          repository: matter-labs/airbender-platform
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
+          name: update-vks-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+  # Build the host CLI from the PR head. Done inside this workflow so
+  # /update-vks doesn't have to wait for the PR's ci-run to finish — and so a
+  # ci-run that ends in failure (e.g. because vk-check fails on stale VKs)
+  # doesn't block us from finding artifacts. Mirrors `server-integration-build`
+  # in ci-check.yaml; permissions stay read-only because no PR code should ever
+  # see the push token. The guest is built separately (build-guest) so this
+  # GPU/CUDA-only build never touches the reproducibility-critical app.bin.
+  build-host:
+    name: build-host
+    permissions:
+      contents: read
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image (v0.2.1) — nightly Rust + clang +
+    # cmake + CUDA 12.9 devel. The guest is built separately (build-guest), so
+    # this GPU build never touches the reproducibility-critical app.bin.
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1
+    env:
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ inputs.head_repo }}
+          ref: ${{ inputs.head_sha }}
           persist-credentials: false
 
       - name: Setup runner
@@ -76,7 +97,7 @@ jobs:
       - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: apt-get install -y clang build-essential curl libclang-dev
+        run: apt-get update && apt-get install -y libclang-dev
 
       - name: Build era-bellman-cuda
         run: |
@@ -84,18 +105,6 @@ jobs:
           cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      - name: Build guest
-        working-directory: ./guest
-        run: cargo airbender build
 
       - name: Build eravm-prover-host (snark_gpu)
         env:
@@ -116,14 +125,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Upload guest dist
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: update-vks-guest-dist
-          path: guest/dist/app
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Upload bellman-cuda libraries
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
@@ -134,7 +135,7 @@ jobs:
 
   regen:
     name: regen
-    needs: build
+    needs: [build-guest, build-host]
     permissions:
       contents: read
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
@@ -212,6 +213,16 @@ jobs:
             exit 1
           fi
 
+      # The reproducibly-built guest dist is committed alongside the VKs so the
+      # FRI VK (which embeds sha256(app.bin)) always matches the binary that
+      # ships. Consumers (server, prod image, vast) use the committed dist and
+      # never rebuild the guest.
+      - name: Download regenerated guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+
       - name: Download regenerated VKs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -229,11 +240,11 @@ jobs:
           git config user.name  "$user"
           git config user.email "${user}@users.noreply.github.com"
 
-          git add vks/
+          git add guest/dist/app vks/
           if git diff --staged --quiet; then
-            body=":white_check_mark: \`vks/\` already up to date."
+            body=":white_check_mark: \`guest/dist/app\` + \`vks/\` already up to date."
           else
-            git commit -m "chore(vks): refresh committed verification keys"
+            git commit -m "chore(vks): refresh committed guest dist + verification keys"
             git push
             body=":white_check_mark: Pushed \`$(git rev-parse HEAD)\`."
           fi
@@ -247,7 +258,7 @@ jobs:
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
-    needs: [build, regen, commit]
+    needs: [build-guest, build-host, regen, commit]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:

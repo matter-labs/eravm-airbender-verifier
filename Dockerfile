@@ -1,62 +1,24 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS builder
+# Prebuilt cargo-airbender CUDA image (v0.2.1, matching the airbender-* crates
+# in Cargo.toml). Ships nightly Rust + clang + cmake + the CUDA 12.9 devel
+# toolchain — enough to compile the GPU prover server. The guest is NOT built
+# here (the committed app.bin is used), so cargo-airbender itself goes unused.
+FROM ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# System deps:
-#   clang       – required by guest build (CC=clang in guest/.cargo/config.toml)
-#   cmake 3.28+ – required by airbender-platform GPU prover (via Kitware APT repo)
-#   libssl-dev  – link-time dep for some cargo crates
-#   git, curl   – fetch crates from GitHub git sources
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
-        libssl-dev \
-        clang \
-        git \
-        ca-certificates \
-        curl \
-        gpg \
-    && curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc \
-        | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
-        > /etc/apt/sources.list.d/kitware.list \
-    && apt-get update && apt-get install -y --no-install-recommends cmake \
-    && cmake --version \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-# nightly-2026-02-10 as required by rust-toolchain.toml.
-# rust-src + llvm-tools-preview are needed for the guest RISC-V build:
-#   - rust-src:            enables -Zbuild-std (std compiled from source for riscv32im-risc0-zkvm-elf)
-#   - llvm-tools-preview:  ships the llvm-objcopy binary that cargo-binutils wraps
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain nightly-2026-02-10 --profile minimal \
-    && rustup component add rust-src llvm-tools-preview
-
-# cargo-binutils provides the `cargo objcopy` subcommand that cargo-airbender
-# invokes to produce app.bin / app.text from the guest ELF.
-RUN cargo install cargo-binutils --locked
-
-# Install cargo-airbender at the exact tag pinned in Cargo.lock.
-# --no-default-features skips GPU support in the tool itself (only needed for `prove`, not `build`).
-RUN cargo install \
-        --git https://github.com/matter-labs/airbender-platform \
-        --tag v0.2.1 \
-        cargo-airbender \
-        --no-default-features
 
 WORKDIR /workspace
 COPY . .
 
-# Step 1: build the guest program for RISC-V.
-# Produces guest/dist/app/{app.bin,app.elf,app.text,manifest.toml}.
-RUN cargo airbender build --project guest
+# Step 1: the guest binary (guest/dist/app/app.bin) is committed to the repo and
+# picked up by `COPY . .` above. It is built inside the pinned cargo-airbender
+# image and refreshed through `/update-vks`, not built here. Guard against a
+# context missing the committed binary.
+RUN test -f guest/dist/app/app.bin \
+    || (echo "ERROR: guest/dist/app/app.bin missing from build context." \
+             "It is committed to the repo; refresh it with /update-vks." >&2; exit 1)
 
 # CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
 # build host (which CI lacks) and otherwise falls back to an arch < compute_70,

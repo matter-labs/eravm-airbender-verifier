@@ -28,7 +28,9 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
-use airbender_host::{Program, Proof, ProverLevel, SecurityLevel, VerificationRequest, Verifier};
+use airbender_host::{
+    Proof, ProverLevel, RealVerifierBuilder, SecurityLevel, VerificationRequest, Verifier,
+};
 use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
@@ -282,12 +284,11 @@ fn verify_fri_proof(
     dist_dir: &std::path::Path,
     vk_path: &std::path::Path,
 ) {
-    println!("[test] Loading guest program for verification...");
-    let program = Program::load(dist_dir).expect("failed to load guest program");
-    let verifier = program
-        .real_verifier(ProverLevel::RecursionUnified)
-        .build()
-        .expect("failed to build RealVerifier");
+    println!("[test] Building verifier from committed app.bin...");
+    let verifier =
+        RealVerifierBuilder::new(dist_dir.join("app.bin"), ProverLevel::RecursionUnified)
+            .build()
+            .expect("failed to build RealVerifier");
 
     let vk = load_vk_from_disk(vk_path, SecurityLevel::default())
         .expect("failed to load committed FRI verification key");
