@@ -1,50 +1,21 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS builder
+# Prebuilt cargo-airbender CUDA image (v0.2.1, matching the airbender-* crates
+# in Cargo.toml). Ships nightly Rust + clang + cmake + the CUDA 12.9 devel
+# toolchain — enough to compile the GPU prover server. The guest is NOT built
+# here (the committed app.bin is used), so cargo-airbender itself goes unused.
+FROM ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# System deps:
-#   clang       – required by guest build (CC=clang in guest/.cargo/config.toml)
-#   cmake 3.28+ – required by airbender-platform GPU prover (via Kitware APT repo)
-#   libssl-dev  – link-time dep for some cargo crates
-#   git, curl   – fetch crates from GitHub git sources
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
-        libssl-dev \
-        clang \
-        git \
-        ca-certificates \
-        curl \
-        gpg \
-    && curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc \
-        | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
-        > /etc/apt/sources.list.d/kitware.list \
-    && apt-get update && apt-get install -y --no-install-recommends cmake \
-    && cmake --version \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-# nightly-2026-02-10 as required by rust-toolchain.toml. The guest is no longer
-# built here (see below), so the RISC-V-only `rust-src` / `llvm-tools-preview`
-# components and `cargo-airbender` are not installed in this image.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain nightly-2026-02-10 --profile minimal
 
 WORKDIR /workspace
 COPY . .
 
-# Step 1: the guest dist (guest/dist/app) is committed to the repo and picked
-# up by `COPY . .` above. It is built reproducibly via
-# `cargo airbender build --reproducible` and refreshed through `/update-vks`,
-# not built in this image (a nested `docker run --reproducible` isn't possible
-# during `docker build`). Guard against a context missing the committed dist.
+# Step 1: the guest binary (guest/dist/app/app.bin) is committed to the repo and
+# picked up by `COPY . .` above. It is built inside the pinned cargo-airbender
+# image and refreshed through `/update-vks`, not built here. Guard against a
+# context missing the committed binary.
 RUN test -f guest/dist/app/app.bin \
     || (echo "ERROR: guest/dist/app/app.bin missing from build context." \
              "It is committed to the repo; refresh it with /update-vks." >&2; exit 1)

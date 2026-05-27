@@ -97,22 +97,26 @@ jobs:
   host-run-batches:
     name: host-run-batches
     runs-on: matterlabs-ci-runner-high-performance
+    # Prebuilt cargo-airbender image (CPU) published by airbender-platform's
+    # ci-release pipeline, pinned to the same v0.2.1 as the airbender-* crates
+    # in Cargo.toml. Ships nightly Rust + cargo-binutils + cargo-airbender.
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      # The container runs as root but the runner-mounted workspace is owned by
+      # a different uid, so git refuses to touch it ("dubious ownership").
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install linux packages
-        shell: 'bash -ex {0}'
         env:
           DEBIAN_FRONTEND: noninteractive
-        if: ${{ runner.os == 'Linux' }}
-        run: |
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO=sudo
-          fi
-          ${SUDO} apt update && ${SUDO} apt install -y libclang-dev clang git-lfs
+        run: apt-get update && apt-get install -y libclang-dev git-lfs
 
       - name: Install Git LFS
         run: git lfs install --local
@@ -120,13 +124,8 @@ jobs:
       - name: Pull CI mainnet batches
         run: ./scripts/fetch_lfs_batches.sh "$CI_BATCHES"
 
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-
-      # Uses the committed guest dist (guest/dist/app); the guest is never
-      # rebuilt outside the reproducible guest-check guard / update-vks.
+      # Uses the committed guest dist (guest/dist/app/app.bin); the guest is
+      # never rebuilt outside the guest-check guard / update-vks.
       - name: Run host execution for CI batches
         run: |
           cargo run --release -p eravm-prover-host --locked -- \
@@ -135,62 +134,47 @@ jobs:
             --batch-files "$CI_BATCHES"
 
   # -----------------------------------------------------------------------------
-  # Guard: the guest dist (guest/dist/app) is committed to the repo, and the FRI
-  # VK embeds sha256(app.bin), so prod/CI/vast all consume the committed binary
-  # without rebuilding. This job rebuilds the guest reproducibly
-  # (`cargo airbender build --reproducible` — pinned Docker container, fixed
-  # mount path → bit-for-bit output) and diffs it against the committed dist, so
-  # a guest source change that wasn't accompanied by a refreshed dist + vks
-  # fails CI.
-  #
-  # Runs on a bare runner with the host Docker daemon — it CANNOT run inside a
-  # `container:` job, since the reproducible build bind-mounts the workspace
-  # into a nested `docker run`.
+  # Guard: guest/dist/app/app.bin is committed (the FRI VK embeds sha256(app.bin)),
+  # so prod/CI/vast consume the committed binary without rebuilding. This job
+  # rebuilds the guest inside the pinned cargo-airbender image — a fixed
+  # toolchain + CARGO_HOME at a fixed CI workspace path yields reproducible
+  # output — and diffs it against the committed app.bin (the same image +
+  # invocation update-vks uses to produce it). A guest source change not paired
+  # with a refreshed app.bin + vks fails CI.
   # -----------------------------------------------------------------------------
   guest-check:
     name: guest-check
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
+      # The container runs as root but the runner-mounted workspace is owned by
+      # a different uid, so git refuses to touch it ("dubious ownership").
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
+      - name: Rebuild guest
+        working-directory: ./guest
+        run: cargo airbender build
 
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      # The reproducible toolchain + objcopy live inside the build container,
-      # so the host only needs cargo-airbender + a working Docker daemon.
-      - name: Rebuild guest (reproducible) and diff committed app.bin
+      - name: Diff committed app.bin
         run: |
-          docker info >/dev/null
-          cargo airbender build --reproducible --workspace-root . --project guest
           # Only app.bin is committed/consumed; app.elf/app.text/manifest are
           # gitignored build byproducts, so this diff naturally ignores them.
           if ! git diff --exit-code --stat -- guest/dist/app/app.bin; then
             echo "::error::Committed guest/dist/app/app.bin does not match a fresh" \
-                 "reproducible build. Run \`cargo airbender build --reproducible" \
-                 "--workspace-root . --project guest\`, then \`/update-vks\`, and" \
-                 "commit guest/dist/app/app.bin + vks/."
+                 "build in the pinned cargo-airbender image. Rebuild the guest," \
+                 "run \`/update-vks\`, and commit guest/dist/app/app.bin + vks/."
             git diff --stat -- guest/dist/app/app.bin
             exit 1
           fi
 
   # -----------------------------------------------------------------------------
   # Build the prover-server binary and the integration-test binary on a
-  # high-performance runner inside the nvidia/cuda devel container. This is the
+  # high-performance runner inside the cargo-airbender CUDA image. This is the
   # ONLY place where `gpu-prover` (and transitively `era_cudart_sys`,
   # `bellman-cuda`-using crates) compile — the GPU runner has the driver but no
   # toolkit, so cargo on that runner would either fail or hang.
@@ -203,28 +187,18 @@ jobs:
     name: server-integration-build
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image (v0.2.1) — ships nightly Rust +
+    # clang + cmake + the CUDA 12.9 devel toolchain, so no per-step installs.
     container:
-      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1
     env:
       # The runtime runner is an RTX 6000 Ada (sm_89). Match prove-batch.yaml.
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
-      # The nvidia/cuda devel image is minimal — no git. Install it BEFORE
-      # actions/checkout: without git in PATH, checkout silently falls back to
-      # a REST API tarball download and the workspace ends up without a `.git`
-      # directory. (We don't pull LFS here; the batch is fetched on the run
-      # job since this build doesn't read it.)
-      - name: Install git
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y git
-
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket; cmake; rustc.
+      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket.
       # Same composite used by build-host in prove-batch.yaml.
       - name: Setup runner
         uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
@@ -232,8 +206,7 @@ jobs:
       - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get install -y clang build-essential curl libclang-dev
+        run: apt-get update && apt-get install -y libclang-dev
 
       - name: Inspect toolchain
         run: |

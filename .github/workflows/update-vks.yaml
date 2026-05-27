@@ -31,19 +31,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build the guest reproducibly. `cargo airbender build --reproducible`
-  # compiles inside a pinned Docker container with a fixed mount path, so
-  # `app.bin` (and the FRI VK derived from it) is bit-for-bit identical to
-  # every other context that builds it. This MUST run on a bare runner with
-  # access to the host Docker daemon — it cannot run inside a `container:`
-  # job, because the reproducible build bind-mounts the workspace into a
-  # nested `docker run`, which a job container can't satisfy.
+  # Rebuild the guest inside the pinned cargo-airbender image. A fixed
+  # toolchain + CARGO_HOME at a fixed workspace path yields a reproducible
+  # app.bin that matches what ci-check's guest-check rebuilds (same image +
+  # invocation). app.elf/app.text/manifest are gitignored byproducts — only
+  # app.bin is committed and consumed.
   build-guest:
     name: build-guest
     permissions:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -51,29 +51,9 @@ jobs:
           ref: ${{ inputs.head_sha }}
           persist-credentials: false
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      # The reproducible toolchain + objcopy live inside the build container,
-      # so the host only needs cargo-airbender + a working Docker daemon.
-      - name: Build guest (reproducible)
-        run: |
-          docker info >/dev/null
-          cargo airbender build --reproducible --workspace-root . --project guest
+      - name: Build guest
+        working-directory: ./guest
+        run: cargo airbender build
 
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
@@ -96,19 +76,15 @@ jobs:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image (v0.2.1) — nightly Rust + clang +
+    # cmake + CUDA 12.9 devel. The guest is built separately (build-guest), so
+    # this GPU build never touches the reproducibility-critical app.bin.
     container:
-      image: nvidia/cuda:13.0.3-devel-ubuntu22.04
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1
     env:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"
     steps:
-      - name: Install git
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y git
-
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: ${{ inputs.head_repo }}
@@ -121,7 +97,7 @@ jobs:
       - name: Install extra apt packages
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: apt-get install -y clang build-essential curl libclang-dev
+        run: apt-get update && apt-get install -y libclang-dev
 
       - name: Build era-bellman-cuda
         run: |
