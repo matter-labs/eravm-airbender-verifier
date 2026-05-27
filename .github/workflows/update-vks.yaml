@@ -31,14 +31,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build the host CLI and guest from the PR head. Done inside this
-  # workflow so /update-vks doesn't have to wait for the PR's ci-run to
-  # finish — and so a ci-run that ends in failure (e.g. because vk-check
-  # fails on stale VKs) doesn't block us from finding artifacts. Mirrors
-  # `server-integration-build` in ci-check.yaml; permissions stay
-  # read-only because no PR code should ever see the push token.
-  build:
-    name: build
+  # Build the guest reproducibly. `cargo airbender build --reproducible`
+  # compiles inside a pinned Docker container with a fixed mount path, so
+  # `app.bin` (and the FRI VK derived from it) is bit-for-bit identical to
+  # every other context that builds it. This MUST run on a bare runner with
+  # access to the host Docker daemon — it cannot run inside a `container:`
+  # job, because the reproducible build bind-mounts the workspace into a
+  # nested `docker run`, which a job container can't satisfy.
+  build-guest:
+    name: build-guest
+    permissions:
+      contents: read
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: ${{ inputs.head_repo }}
+          ref: ${{ inputs.head_sha }}
+          persist-credentials: false
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
+          path: airbender-platform
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      # The reproducible toolchain + objcopy live inside the build container,
+      # so the host only needs cargo-airbender + a working Docker daemon.
+      - name: Build guest (reproducible)
+        run: |
+          docker info >/dev/null
+          cargo airbender build --reproducible --workspace-root . --project guest
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+  # Build the host CLI from the PR head. Done inside this workflow so
+  # /update-vks doesn't have to wait for the PR's ci-run to finish — and so a
+  # ci-run that ends in failure (e.g. because vk-check fails on stale VKs)
+  # doesn't block us from finding artifacts. Mirrors `server-integration-build`
+  # in ci-check.yaml; permissions stay read-only because no PR code should ever
+  # see the push token. The guest is built separately (build-guest) so this
+  # GPU/CUDA-only build never touches the reproducibility-critical app.bin.
+  build-host:
+    name: build-host
     permissions:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
@@ -62,14 +115,6 @@ jobs:
           ref: ${{ inputs.head_sha }}
           persist-credentials: false
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
-          persist-credentials: false
-
       - name: Setup runner
         uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
 
@@ -84,18 +129,6 @@ jobs:
           cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      - name: Build guest
-        working-directory: ./guest
-        run: cargo airbender build
 
       - name: Build eravm-prover-host (snark_gpu)
         env:
@@ -116,14 +149,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Upload guest dist
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: update-vks-guest-dist
-          path: guest/dist/app
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Upload bellman-cuda libraries
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
@@ -134,7 +159,7 @@ jobs:
 
   regen:
     name: regen
-    needs: build
+    needs: [build-guest, build-host]
     permissions:
       contents: read
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
@@ -247,7 +272,7 @@ jobs:
   # React :-1: + post a run link if any earlier job failed.
   notify-failure:
     name: notify-failure
-    needs: [build, regen, commit]
+    needs: [build-guest, build-host, regen, commit]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     permissions:

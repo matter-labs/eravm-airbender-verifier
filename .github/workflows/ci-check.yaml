@@ -133,17 +133,17 @@ jobs:
         with:
           inherit-toolchain: true
 
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
       - name: Install cargo-airbender
         working-directory: ./airbender-platform
         run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
 
-      - name: Build guest
+      # Reproducible build so this guest matches the canonical app.bin the FRI
+      # VK is derived from. Runs on a bare runner with the host Docker daemon.
+      - name: Build guest (reproducible)
         working-directory: ./guest
-        run: cargo airbender build
+        run: |
+          docker info >/dev/null
+          cargo airbender build --reproducible --workspace-root ..
 
       - name: Run host execution for CI batches
         run: |
@@ -153,12 +153,65 @@ jobs:
             --batch-files "$CI_BATCHES"
 
   # -----------------------------------------------------------------------------
+  # Build the guest reproducibly. `cargo airbender build --reproducible`
+  # compiles inside a pinned Docker container with a fixed mount path, so
+  # `app.bin` (and the FRI VK derived from it) comes out bit-for-bit identical
+  # regardless of build host. This is the single canonical source of the guest
+  # dist: server-integration-build, server-integration-run, and vk-check all
+  # consume this artifact instead of rebuilding.
+  #
+  # Runs on a bare runner with the host Docker daemon — it CANNOT run inside a
+  # `container:` job, since the reproducible build bind-mounts the workspace
+  # into a nested `docker run`.
+  # -----------------------------------------------------------------------------
+  build-guest:
+    name: build-guest
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Checkout airbender-platform
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: matter-labs/airbender-platform
+          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
+          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
+          path: airbender-platform
+
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
+        with:
+          inherit-toolchain: true
+
+      - name: Install cargo-airbender
+        working-directory: ./airbender-platform
+        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
+
+      # The reproducible toolchain + objcopy live inside the build container,
+      # so the host only needs cargo-airbender + a working Docker daemon.
+      - name: Build guest (reproducible)
+        run: |
+          docker info >/dev/null
+          cargo airbender build --reproducible --workspace-root . --project guest
+
+      - name: Upload guest dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-server-guest-dist
+          path: guest/dist/app
+          if-no-files-found: error
+          retention-days: 1
+
+  # -----------------------------------------------------------------------------
   # Build the prover-server binary and the integration-test binary on a
   # high-performance runner inside the nvidia/cuda devel container. This is the
   # ONLY place where `gpu-prover` (and transitively `era_cudart_sys`,
   # `bellman-cuda`-using crates) compile — the GPU runner has the driver but no
   # toolkit, so cargo on that runner would either fail or hang.
   #
+  # The guest dist comes from `build-guest` (reproducible); this job never
+  # builds it, so the CUDA toolkit can't perturb the VK-critical app.bin.
   # The matching run job (`server-integration-run`) downloads these artifacts
   # and executes them on the GPU runner. No `cargo` runs there.
   # -----------------------------------------------------------------------------
@@ -187,14 +240,6 @@ jobs:
 
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
-
       # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket; cmake; rustc.
       # Same composite used by build-host in prove-batch.yaml.
       - name: Setup runner
@@ -221,18 +266,6 @@ jobs:
           cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-binutils
-        working-directory: ./airbender-platform
-        run: cargo install cargo-binutils --locked --force
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      - name: Build guest
-        working-directory: ./guest
-        run: cargo airbender build
 
       - name: Build eravm-prover-server (snark_gpu)
         env:
@@ -308,14 +341,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Upload guest dist
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: eravm-prover-server-guest-dist
-          path: guest/dist/app
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Upload bellman-cuda libraries
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
@@ -337,7 +362,7 @@ jobs:
   # -----------------------------------------------------------------------------
   server-integration-run:
     name: server-integration-run
-    needs: server-integration-build
+    needs: [build-guest, server-integration-build]
     # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
     # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
     # Same runner used by prove-batch.yaml.
@@ -454,7 +479,7 @@ jobs:
   # -----------------------------------------------------------------------------
   vk-check:
     name: vk-check
-    needs: [server-integration-build, vk-check-changes]
+    needs: [build-guest, server-integration-build, vk-check-changes]
     if: needs.vk-check-changes.outputs.should_run == 'true'
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 30
@@ -527,6 +552,7 @@ jobs:
       - tests
       - vm-compare-batches
       - host-run-batches
+      - build-guest
       - server-integration-build
       - server-integration-run
       - vk-check-changes

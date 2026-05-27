@@ -31,32 +31,25 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 
-# nightly-2026-02-10 as required by rust-toolchain.toml.
-# rust-src + llvm-tools-preview are needed for the guest RISC-V build:
-#   - rust-src:            enables -Zbuild-std (std compiled from source for riscv32im-risc0-zkvm-elf)
-#   - llvm-tools-preview:  ships the llvm-objcopy binary that cargo-binutils wraps
+# nightly-2026-02-10 as required by rust-toolchain.toml. The guest is no longer
+# built here (see below), so the RISC-V-only `rust-src` / `llvm-tools-preview`
+# components and `cargo-airbender` are not installed in this image.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain nightly-2026-02-10 --profile minimal \
-    && rustup component add rust-src llvm-tools-preview
-
-# cargo-binutils provides the `cargo objcopy` subcommand that cargo-airbender
-# invokes to produce app.bin / app.text from the guest ELF.
-RUN cargo install cargo-binutils --locked
-
-# Install cargo-airbender at the exact tag pinned in Cargo.lock.
-# --no-default-features skips GPU support in the tool itself (only needed for `prove`, not `build`).
-RUN cargo install \
-        --git https://github.com/matter-labs/airbender-platform \
-        --tag v0.2.1 \
-        cargo-airbender \
-        --no-default-features
+        | sh -s -- -y --default-toolchain nightly-2026-02-10 --profile minimal
 
 WORKDIR /workspace
 COPY . .
 
-# Step 1: build the guest program for RISC-V.
-# Produces guest/dist/app/{app.bin,app.elf,app.text,manifest.toml}.
-RUN cargo airbender build --project guest
+# Step 1: the guest program is built OUTSIDE this image, reproducibly, via
+# `cargo airbender build --reproducible` (see .github/workflows/docker-build.yaml).
+# `--reproducible` runs a nested `docker run`, which is not possible during
+# `docker build`, so the CI workflow builds the guest on the runner first and
+# leaves the artifacts in the build context for `COPY . .` above to pick up.
+# Guard against an image built from a context that skipped that step.
+RUN test -f guest/dist/app/app.bin \
+    || (echo "ERROR: guest/dist/app/app.bin missing from build context." \
+             "Build the guest reproducibly before 'docker build' — see" \
+             ".github/workflows/docker-build.yaml." >&2; exit 1)
 
 # CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
 # build host (which CI lacks) and otherwise falls back to an arch < compute_70,
