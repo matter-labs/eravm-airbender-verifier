@@ -97,14 +97,14 @@ struct MultiBatchTestServerState {
 #[derive(Clone)]
 struct FriFixtureGenerationState {
     batches: Arc<Vec<BatchTestInput>>,
-    /// Index of the single batch currently eligible to be served via
-    /// `/airbender/proof_inputs`. The test driver flips this to `Some(i)` right
-    /// before spawning the per-batch prover and the handler `take()`s it on the
-    /// first poll so any subsequent poll (or a still-running zombie prover)
-    /// gets 204. Per-batch spawning is a workaround for the cross-batch state
-    /// bleed in `ExecutionProver` that surfaces as an `assert_caps_mach` panic
-    /// — see `prover_server_generates_fri_fixtures` doc-comment.
-    next_serve_index: Arc<Mutex<Option<usize>>>,
+    /// Next batch eligible for `/airbender/proof_inputs`. A single long-lived
+    /// `fri-only` prover picks up batches in order from this index.
+    next_fri_index: Arc<Mutex<usize>>,
+    /// Number of FRI submissions received. The next FRI input is served only
+    /// after the prior batch's FRI proof lands, keeping the single prover on a
+    /// strict `FRI -> FRI -> ...` sequence and never handing out a batch ahead
+    /// of the one still in flight.
+    completed_fri_count: Arc<AtomicUsize>,
     fri_proof_senders: Arc<Mutex<HashMap<u32, oneshot::Sender<Vec<u8>>>>>,
 }
 
@@ -207,11 +207,21 @@ async fn handle_submit_proofs(
 async fn handle_fri_fixture_proof_inputs(
     State(state): State<FriFixtureGenerationState>,
 ) -> impl IntoResponse {
-    let Some(index) = state.next_serve_index.lock().expect("poisoned").take() else {
+    let mut next_fri_index = state.next_fri_index.lock().expect("poisoned");
+    let index = *next_fri_index;
+    if index >= state.batches.len() {
         return StatusCode::NO_CONTENT.into_response();
-    };
+    }
+
+    // Don't hand out batch N until batch N-1's FRI proof has been submitted, so
+    // the single long-lived prover never has two FRI jobs outstanding.
+    let completed_fri = state.completed_fri_count.load(Ordering::SeqCst);
+    if index > completed_fri {
+        return StatusCode::NO_CONTENT.into_response();
+    }
 
     let batch = &state.batches[index];
+    *next_fri_index += 1;
     println!(
         "[test-server] Serving FRI fixture job {} ({})",
         batch.number, batch.filename
@@ -241,6 +251,8 @@ async fn handle_fri_fixture_submit_proofs(
         return StatusCode::BAD_REQUEST;
     };
     let _ = tx.send(proof_bytes);
+    // Unlock the next batch for `/airbender/proof_inputs`.
+    state.completed_fri_count.fetch_add(1, Ordering::SeqCst);
     StatusCode::OK
 }
 
@@ -943,15 +955,15 @@ async fn prover_server_proves_fri_then_snark() {
 /// sizing runs. Set `IT_GENERATE_FRI_FIXTURES=1` and optionally
 /// `IT_FRI_FIXTURES_DIR=/path/to/fixtures`.
 ///
-/// Spawns a fresh `fri-only` prover per batch (with `GPU_RECLAIM_DELAY` in
-/// between) instead of reusing one process across all batches. This is a
-/// workaround for a state-bleed bug in `gpu_prover::ExecutionProver`'s pooled
-/// `LockedBoxedMemoryHolder`/`LockedBoxedTraceChunk` buffers: when the same
-/// `ExecutionProver` runs back-to-back proofs, the third batch trips the
-/// `assert_caps_mach` soundness check in `commit_memory_and_prove` because
-/// stale memory caps from a prior simulation leak into the next. Per-batch
-/// process spawning gives each proof a clean GPU context. Drop this workaround
-/// once the upstream fix lands and the multi-batch test passes.
+/// Reuses a single long-lived `fri-only` prover across all batches: the test
+/// server serves them in order via `/airbender/proof_inputs`, handing out
+/// batch N only once batch N-1's FRI proof has landed. This exercises the same
+/// back-to-back proving path as the live multi-batch test — historically it
+/// tripped a state-bleed bug in `gpu_prover::ExecutionProver`'s pooled
+/// `LockedBoxedMemoryHolder`/`LockedBoxedTraceChunk` buffers (stale memory caps
+/// from a prior simulation leaking into the next, surfacing as an
+/// `assert_caps_mach` panic in `commit_memory_and_prove` around the third
+/// batch). If that resurfaces, fall back to one prover per batch.
 #[ignore = "requires GPU, built guest binary, and LFS batches"]
 #[tokio::test(flavor = "multi_thread")]
 async fn prover_server_generates_fri_fixtures() {
@@ -995,10 +1007,10 @@ async fn prover_server_generates_fri_fixtures() {
         receivers.push((batch.number, fri_rx));
     }
 
-    let next_serve_index = Arc::new(Mutex::new(None));
     let state = FriFixtureGenerationState {
         batches: Arc::clone(&batches),
-        next_serve_index: Arc::clone(&next_serve_index),
+        next_fri_index: Arc::new(Mutex::new(0)),
+        completed_fri_count: Arc::new(AtomicUsize::new(0)),
         fri_proof_senders: Arc::new(Mutex::new(fri_proof_senders)),
     };
 
@@ -1035,46 +1047,32 @@ async fn prover_server_generates_fri_fixtures() {
         .to_owned();
 
     println!(
-        "[test] Spawning one fri-only prover per batch for {} fixture batches: {}",
+        "[test] Spawning one long-lived fri-only prover for {} fixture batches: {}",
         batches.len(),
         prover_bin.display()
     );
 
+    // One long-lived prover services every batch. The server gates
+    // `/airbender/proof_inputs` so it only sees batch N after batch N-1's FRI
+    // proof lands, but the GPU context persists across all of them.
+    let child = Command::new(&prover_bin)
+        .env("PROVER_SERVER_URL", &server_url)
+        .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
+        .env("PROVER_MODE", "fri-only")
+        .env("FRI_VK", &fri_vk_str)
+        .env("PROVER_POLL_INTERVAL_MS", "1000")
+        .env("PROVER_ID", "integration-test-fri-fixtures")
+        .spawn()
+        .expect("failed to spawn fri-only eravm-prover-server");
+    println!("[test] fri-only prover spawned (pid {})", child.id());
+    let _guard = ChildGuard(child);
+
     let mut manifest_entries = Vec::new();
     let full_run_started_at = Instant::now();
     let fri_timeout = fri_proof_timeout();
-    for (idx, (batch, (batch_number, fri_rx))) in batches.iter().zip(receivers).enumerate() {
+    for (batch, (batch_number, fri_rx)) in batches.iter().zip(receivers) {
         assert_eq!(batch.number, batch_number);
         let batch_started_at = Instant::now();
-
-        // Arm the server to serve exactly this batch on the next prover poll.
-        // The handler `take()`s the index, so any follow-up poll from the same
-        // prover (before we kill it) gets 204 and can't pick up batch idx+1.
-        *next_serve_index.lock().expect("poisoned") = Some(idx);
-
-        println!(
-            "[test] Spawning fri-only prover for batch {}: {}",
-            batch.number,
-            prover_bin.display()
-        );
-        let child = Command::new(&prover_bin)
-            .env("PROVER_SERVER_URL", &server_url)
-            .env("PROVER_GUEST_DIST_DIR", &dist_dir_str)
-            .env("PROVER_MODE", "fri-only")
-            .env("FRI_VK", &fri_vk_str)
-            .env("PROVER_POLL_INTERVAL_MS", "1000")
-            .env(
-                "PROVER_ID",
-                format!("integration-test-fri-fixtures-{}", batch.number),
-            )
-            .spawn()
-            .expect("failed to spawn fri-only eravm-prover-server");
-        println!(
-            "[test] fri-only prover spawned for batch {} (pid {})",
-            batch.number,
-            child.id()
-        );
-        let guard = ChildGuard(child);
 
         eprintln!(
             "[test] Waiting for FRI fixture proof for batch {} (timeout: {}s)...",
@@ -1090,20 +1088,11 @@ async fn prover_server_generates_fri_fixtures() {
             fri_bytes.len()
         );
 
-        // Tear the prover down before processing the proof and starting the
-        // next batch — keeps each batch's GPU context fully isolated.
-        drop(guard);
-        println!(
-            "[test] Sleeping {:?} to let the CUDA driver reclaim GPU state before next batch",
-            GPU_RECLAIM_DELAY
-        );
-        tokio::time::sleep(GPU_RECLAIM_DELAY).await;
-
         verify_fri_proof(&fri_bytes, &batch.expected_public_input, &dist_dir, &fri_vk);
         manifest_entries.push(write_fri_fixture(&fixture_dir, batch, fri_bytes));
         // Rewrite the manifest after each batch so a later panic (e.g. the
-        // upstream `assert_caps_mach` bug on batch 3) still leaves a valid
-        // manifest covering the batches that did finish.
+        // `assert_caps_mach` state-bleed bug resurfacing around batch 3) still
+        // leaves a valid manifest covering the batches that did finish.
         write_fri_fixture_manifest(&fixture_dir, &manifest_entries);
         println!(
             "[test] Batch {} FRI fixture finished in {:.1}s",
