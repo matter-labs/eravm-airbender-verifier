@@ -2,7 +2,10 @@ mod fast;
 mod legacy;
 mod types;
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe},
+};
 
 use anyhow::{bail, Result};
 use fast::FastTraceTracer;
@@ -33,6 +36,12 @@ type FastCompareVm = FastVmInstance<CompareStorage, FastTraceTracer>;
 struct TxExecutionCapture {
     used_compression: bool,
     trace: TransactionTrace,
+}
+
+#[derive(Debug)]
+enum TxExecutionAttempt {
+    Completed(TxExecutionCapture),
+    Panicked(String),
 }
 
 pub fn compare(
@@ -71,9 +80,32 @@ pub fn compare(
             };
             last_location = Some(location.clone());
 
-            let legacy = execute_tx_legacy(tx, &mut legacy_vm, options)?;
-            let fast = execute_tx_fast(tx, &mut fast_vm, options)?;
+            let legacy = catch_vm_panic(|| execute_tx_legacy(tx, &mut legacy_vm, options))?;
+            let fast = catch_vm_panic(|| execute_tx_fast(tx, &mut fast_vm, options))?;
             compared_transactions += 1;
+
+            let (legacy, fast) = match (legacy, fast) {
+                (TxExecutionAttempt::Completed(legacy), TxExecutionAttempt::Completed(fast)) => {
+                    (legacy, fast)
+                }
+                (legacy, fast) => {
+                    divergences.push(Divergence {
+                        location: location.clone(),
+                        reason: format!(
+                            "VM panic mismatch: legacy={}, fast={}",
+                            execution_attempt_status(&legacy),
+                            execution_attempt_status(&fast)
+                        ),
+                        legacy: None,
+                        fast: None,
+                    });
+                    return Ok(divergence_report(
+                        compared_transactions,
+                        compared_l2_blocks,
+                        divergences,
+                    ));
+                }
+            };
 
             if legacy.used_compression != fast.used_compression {
                 divergences.push(Divergence {
@@ -224,6 +256,41 @@ pub fn compare(
         compared_l2_blocks,
         divergences,
     ))
+}
+
+fn catch_vm_panic(
+    execute: impl FnOnce() -> Result<TxExecutionCapture>,
+) -> Result<TxExecutionAttempt> {
+    let previous_hook = take_hook();
+    set_hook(Box::new(|_| {}));
+    let result = catch_unwind(AssertUnwindSafe(execute));
+    set_hook(previous_hook);
+
+    match result {
+        Ok(result) => result.map(TxExecutionAttempt::Completed),
+        Err(payload) => Ok(TxExecutionAttempt::Panicked(panic_payload_to_string(
+            payload.as_ref(),
+        ))),
+    }
+}
+
+fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else {
+        "unknown panic payload".to_owned()
+    }
+}
+
+fn execution_attempt_status(attempt: &TxExecutionAttempt) -> String {
+    match attempt {
+        TxExecutionAttempt::Completed(capture) => {
+            format!("completed with {:?}", capture.trace.execution_result)
+        }
+        TxExecutionAttempt::Panicked(message) => format!("panicked: {message}"),
+    }
 }
 
 fn divergence_report(

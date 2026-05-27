@@ -6571,6 +6571,8 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
+ "serde",
+ "serde_json",
  "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
