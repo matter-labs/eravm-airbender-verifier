@@ -11,10 +11,11 @@ use tracing::info;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 
-/// Resolves the guest binary inside a dist dir. Only `app.bin` is committed and
-/// consumed at runtime — the verifier, prover, and transpiler are built
-/// directly from it rather than via `Program::load`, which would also require
-/// the (unused) `app.elf` / `app.text` / `manifest.toml` to be present.
+/// Resolves the guest binary inside a dist dir. We build the verifier/prover/
+/// transpiler directly from `app.bin` rather than via `Program::load` (which
+/// also requires the unused `app.elf` / `manifest.toml`). The transpiler
+/// additionally reads the sibling `app.text`; both `app.bin` and `app.text` are
+/// committed under `guest/dist/app/`.
 fn app_bin_path(dist_dir: &Path) -> PathBuf {
     dist_dir.join("app.bin")
 }

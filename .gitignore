@@ -1,11 +1,12 @@
 target/
 SESSION.md
-# Only the reproducible guest binary (guest/dist/app/app.bin) is committed and
-# consumed at runtime (refreshed via /update-vks). app.elf / app.text /
-# manifest.toml are build byproducts we neither commit nor use.
+# The guest binary (app.bin, consumed by the verifier/prover) and its text
+# section (app.text, read by the transpiler) are committed and refreshed via
+# /update-vks. app.elf / manifest.toml are unused build byproducts.
 guest/dist/*
 !guest/dist/app/
 guest/dist/app/*
 !guest/dist/app/app.bin
+!guest/dist/app/app.text
 testdata/era_mainnet_batches/binary/*.bin
 .DS_Store
