@@ -1,14 +1,23 @@
 use airbender_host::{
-    GpuProver, Inputs, Program, Proof, Prover, ProverLevel, RealVerifier, Runner, SecurityLevel,
-    TranspilerRunner, VerificationKey, VerificationRequest, Verifier,
+    GpuProver, GpuProverBuilder, Inputs, Proof, Prover, ProverLevel, RealVerifier,
+    RealVerifierBuilder, Runner, SecurityLevel, TranspilerRunner, TranspilerRunnerBuilder,
+    VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
 use std::io::{BufReader, BufWriter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::info;
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
+
+/// Resolves the guest binary inside a dist dir. Only `app.bin` is committed and
+/// consumed at runtime — the verifier, prover, and transpiler are built
+/// directly from it rather than via `Program::load`, which would also require
+/// the (unused) `app.elf` / `app.text` / `manifest.toml` to be present.
+fn app_bin_path(dist_dir: &Path) -> PathBuf {
+    dist_dir.join("app.bin")
+}
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
 /// We no longer check against a fixed expected output; any non-zero output
@@ -60,11 +69,10 @@ impl FriVerifier {
     /// the server path uses this so a stale or absent VK never silently
     /// triggers an on-the-fly regeneration.
     pub fn load(dist_dir: &Path, vk_path: &Path, security: SecurityLevel) -> Result<Self> {
-        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
-        let verifier = program
-            .real_verifier(ProverLevel::RecursionUnified)
-            .build()
-            .context("while attempting to build real verifier")?;
+        let verifier =
+            RealVerifierBuilder::new(app_bin_path(dist_dir), ProverLevel::RecursionUnified)
+                .build()
+                .context("while attempting to build real verifier")?;
 
         let vk = load_vk_from_disk(vk_path, security)?;
 
@@ -80,11 +88,10 @@ impl FriVerifier {
         vk_path: &Path,
         security: SecurityLevel,
     ) -> Result<Self> {
-        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
-        let verifier = program
-            .real_verifier(ProverLevel::RecursionUnified)
-            .build()
-            .context("while attempting to build real verifier")?;
+        let verifier =
+            RealVerifierBuilder::new(app_bin_path(dist_dir), ProverLevel::RecursionUnified)
+                .build()
+                .context("while attempting to build real verifier")?;
 
         let vk = load_or_generate_vk(&verifier, vk_path, security).with_context(|| {
             format!(
@@ -171,11 +178,7 @@ impl FriPipeline {
         worker_threads: Option<usize>,
         security: SecurityLevel,
     ) -> Result<Self> {
-        // Reload the program for the prover builder. Cheap relative to GPU init.
-        let program = Program::load(dist_dir).context("while attempting to load guest program")?;
-
-        let mut prover = program
-            .gpu_prover()
+        let mut prover = GpuProverBuilder::new(app_bin_path(dist_dir))
             .with_level(ProverLevel::RecursionUnified)
             .with_security(security);
         if let Some(worker_threads) = worker_threads {
@@ -270,8 +273,8 @@ impl FriPipeline {
 }
 
 pub(crate) fn build_runner(dist_dir: &Path, jit: bool) -> Result<TranspilerRunner> {
-    let program = Program::load(dist_dir).context("while attempting to load guest program")?;
-    let mut runner_builder = program.transpiler_runner().with_cycles(usize::MAX);
+    let mut runner_builder =
+        TranspilerRunnerBuilder::new(app_bin_path(dist_dir)).with_cycles(usize::MAX);
 
     if jit {
         runner_builder = runner_builder.with_jit();

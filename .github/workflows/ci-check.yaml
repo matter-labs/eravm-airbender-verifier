@@ -173,16 +173,18 @@ jobs:
 
       # The reproducible toolchain + objcopy live inside the build container,
       # so the host only needs cargo-airbender + a working Docker daemon.
-      - name: Rebuild guest (reproducible) and diff committed dist
+      - name: Rebuild guest (reproducible) and diff committed app.bin
         run: |
           docker info >/dev/null
           cargo airbender build --reproducible --workspace-root . --project guest
-          if ! git diff --exit-code --stat -- guest/dist/app; then
-            echo "::error::Committed guest/dist/app does not match a fresh" \
+          # Only app.bin is committed/consumed; app.elf/app.text/manifest are
+          # gitignored build byproducts, so this diff naturally ignores them.
+          if ! git diff --exit-code --stat -- guest/dist/app/app.bin; then
+            echo "::error::Committed guest/dist/app/app.bin does not match a fresh" \
                  "reproducible build. Run \`cargo airbender build --reproducible" \
                  "--workspace-root . --project guest\`, then \`/update-vks\`, and" \
-                 "commit guest/dist/app + vks/."
-            git diff --stat -- guest/dist/app
+                 "commit guest/dist/app/app.bin + vks/."
+            git diff --stat -- guest/dist/app/app.bin
             exit 1
           fi
 

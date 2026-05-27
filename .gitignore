@@ -1,8 +1,11 @@
 target/
 SESSION.md
-# The reproducible guest dist is committed (refreshed via /update-vks); ignore
-# any other dist output but keep guest/dist/app under version control.
+# Only the reproducible guest binary (guest/dist/app/app.bin) is committed and
+# consumed at runtime (refreshed via /update-vks). app.elf / app.text /
+# manifest.toml are build byproducts we neither commit nor use.
 guest/dist/*
 !guest/dist/app/
+guest/dist/app/*
+!guest/dist/app/app.bin
 testdata/era_mainnet_batches/binary/*.bin
 .DS_Store
