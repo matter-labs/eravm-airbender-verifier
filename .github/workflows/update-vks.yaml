@@ -237,6 +237,16 @@ jobs:
             exit 1
           fi
 
+      # The reproducibly-built guest dist is committed alongside the VKs so the
+      # FRI VK (which embeds sha256(app.bin)) always matches the binary that
+      # ships. Consumers (server, prod image, vast) use the committed dist and
+      # never rebuild the guest.
+      - name: Download regenerated guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: update-vks-guest-dist
+          path: guest/dist/app
+
       - name: Download regenerated VKs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -254,11 +264,11 @@ jobs:
           git config user.name  "$user"
           git config user.email "${user}@users.noreply.github.com"
 
-          git add vks/
+          git add guest/dist/app vks/
           if git diff --staged --quiet; then
-            body=":white_check_mark: \`vks/\` already up to date."
+            body=":white_check_mark: \`guest/dist/app\` + \`vks/\` already up to date."
           else
-            git commit -m "chore(vks): refresh committed verification keys"
+            git commit -m "chore(vks): refresh committed guest dist + verification keys"
             git push
             body=":white_check_mark: Pushed \`$(git rev-parse HEAD)\`."
           fi

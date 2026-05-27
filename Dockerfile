@@ -40,16 +40,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 WORKDIR /workspace
 COPY . .
 
-# Step 1: the guest program is built OUTSIDE this image, reproducibly, via
-# `cargo airbender build --reproducible` (see .github/workflows/docker-build.yaml).
-# `--reproducible` runs a nested `docker run`, which is not possible during
-# `docker build`, so the CI workflow builds the guest on the runner first and
-# leaves the artifacts in the build context for `COPY . .` above to pick up.
-# Guard against an image built from a context that skipped that step.
+# Step 1: the guest dist (guest/dist/app) is committed to the repo and picked
+# up by `COPY . .` above. It is built reproducibly via
+# `cargo airbender build --reproducible` and refreshed through `/update-vks`,
+# not built in this image (a nested `docker run --reproducible` isn't possible
+# during `docker build`). Guard against a context missing the committed dist.
 RUN test -f guest/dist/app/app.bin \
     || (echo "ERROR: guest/dist/app/app.bin missing from build context." \
-             "Build the guest reproducibly before 'docker build' — see" \
-             ".github/workflows/docker-build.yaml." >&2; exit 1)
+             "It is committed to the repo; refresh it with /update-vks." >&2; exit 1)
 
 # CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
 # build host (which CI lacks) and otherwise falls back to an arch < compute_70,

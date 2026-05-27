@@ -1,0 +1,23 @@
+package = "eravm-prover-guest"
+manifest = "v1"
+codec = "v0"
+target = "riscv32im-risc0-zkvm-elf"
+
+[bin]
+path = "app.bin"
+sha256 = "2841a1333f576d1fc4ec8a0e8ca93dd1544338fed66f27006ef42b94dd290fa4"
+
+[elf]
+path = "app.elf"
+sha256 = "58c6b7a33a8a4017fa14c374d044b8ca689ce0658b24190d9527cac270661470"
+
+[text]
+path = "app.text"
+sha256 = "cec2e37fbe3b58d98fce61545297b1b563e0b6c9993e50bbd30215a2e0ed718d"
+
+[build]
+profile = "release"
+git_branch = "dl/reproducible-guest-build"
+git_commit = "a7a5bde0403738a408727b8b1e553e22b7746ab8"
+is_dirty = true
+reproducible = true

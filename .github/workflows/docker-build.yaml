@@ -31,32 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      # The guest must be built reproducibly BEFORE the image build: the prod
-      # Dockerfile no longer builds it (a nested `docker run --reproducible`
-      # isn't possible during `docker build`), and instead COPYs the dist from
-      # the build context. Build it here on the runner so guest/dist/app is in
-      # the context handed to buildx below.
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
-
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
-        with:
-          inherit-toolchain: true
-
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      - name: Build guest (reproducible)
-        run: |
-          docker info >/dev/null
-          cargo airbender build --reproducible --workspace-root . --project guest
-
+      # The guest dist (guest/dist/app) is committed to the repo and picked up
+      # by the Dockerfile's `COPY . .`, so the image build needs no guest build
+      # step here. The committed dist is guarded by ci-check's guest-check job.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 

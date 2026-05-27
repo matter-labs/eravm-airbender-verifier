@@ -103,14 +103,6 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Checkout airbender-platform
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: matter-labs/airbender-platform
-          # Keep the CLI pinned to the same revision as the workspace dependencies in Cargo.lock.
-          ref: b7403c7200e6ad37efa34e66d3fec6fb43c976f2 # v0.2.1
-          path: airbender-platform
-
       - name: Install linux packages
         shell: 'bash -ex {0}'
         env:
@@ -133,18 +125,8 @@ jobs:
         with:
           inherit-toolchain: true
 
-      - name: Install cargo-airbender
-        working-directory: ./airbender-platform
-        run: cargo install --path crates/cargo-airbender --locked --no-default-features --force
-
-      # Reproducible build so this guest matches the canonical app.bin the FRI
-      # VK is derived from. Runs on a bare runner with the host Docker daemon.
-      - name: Build guest (reproducible)
-        working-directory: ./guest
-        run: |
-          docker info >/dev/null
-          cargo airbender build --reproducible --workspace-root ..
-
+      # Uses the committed guest dist (guest/dist/app); the guest is never
+      # rebuilt outside the reproducible guest-check guard / update-vks.
       - name: Run host execution for CI batches
         run: |
           cargo run --release -p eravm-prover-host --locked -- \
@@ -153,19 +135,20 @@ jobs:
             --batch-files "$CI_BATCHES"
 
   # -----------------------------------------------------------------------------
-  # Build the guest reproducibly. `cargo airbender build --reproducible`
-  # compiles inside a pinned Docker container with a fixed mount path, so
-  # `app.bin` (and the FRI VK derived from it) comes out bit-for-bit identical
-  # regardless of build host. This is the single canonical source of the guest
-  # dist: server-integration-build, server-integration-run, and vk-check all
-  # consume this artifact instead of rebuilding.
+  # Guard: the guest dist (guest/dist/app) is committed to the repo, and the FRI
+  # VK embeds sha256(app.bin), so prod/CI/vast all consume the committed binary
+  # without rebuilding. This job rebuilds the guest reproducibly
+  # (`cargo airbender build --reproducible` — pinned Docker container, fixed
+  # mount path → bit-for-bit output) and diffs it against the committed dist, so
+  # a guest source change that wasn't accompanied by a refreshed dist + vks
+  # fails CI.
   #
   # Runs on a bare runner with the host Docker daemon — it CANNOT run inside a
   # `container:` job, since the reproducible build bind-mounts the workspace
   # into a nested `docker run`.
   # -----------------------------------------------------------------------------
-  build-guest:
-    name: build-guest
+  guest-check:
+    name: guest-check
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
     steps:
@@ -190,18 +173,18 @@ jobs:
 
       # The reproducible toolchain + objcopy live inside the build container,
       # so the host only needs cargo-airbender + a working Docker daemon.
-      - name: Build guest (reproducible)
+      - name: Rebuild guest (reproducible) and diff committed dist
         run: |
           docker info >/dev/null
           cargo airbender build --reproducible --workspace-root . --project guest
-
-      - name: Upload guest dist
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
-        with:
-          name: eravm-prover-server-guest-dist
-          path: guest/dist/app
-          if-no-files-found: error
-          retention-days: 1
+          if ! git diff --exit-code --stat -- guest/dist/app; then
+            echo "::error::Committed guest/dist/app does not match a fresh" \
+                 "reproducible build. Run \`cargo airbender build --reproducible" \
+                 "--workspace-root . --project guest\`, then \`/update-vks\`, and" \
+                 "commit guest/dist/app + vks/."
+            git diff --stat -- guest/dist/app
+            exit 1
+          fi
 
   # -----------------------------------------------------------------------------
   # Build the prover-server binary and the integration-test binary on a
@@ -210,8 +193,7 @@ jobs:
   # `bellman-cuda`-using crates) compile — the GPU runner has the driver but no
   # toolkit, so cargo on that runner would either fail or hang.
   #
-  # The guest dist comes from `build-guest` (reproducible); this job never
-  # builds it, so the CUDA toolkit can't perturb the VK-critical app.bin.
+  # The guest dist is committed (guest/dist/app); no job rebuilds it here.
   # The matching run job (`server-integration-run`) downloads these artifacts
   # and executes them on the GPU runner. No `cargo` runs there.
   # -----------------------------------------------------------------------------
@@ -362,7 +344,7 @@ jobs:
   # -----------------------------------------------------------------------------
   server-integration-run:
     name: server-integration-run
-    needs: [build-guest, server-integration-build]
+    needs: server-integration-build
     # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
     # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
     # Same runner used by prove-batch.yaml.
@@ -398,12 +380,6 @@ jobs:
           name: eravm-prover-server-integration-test
           path: stage/bin
 
-      - name: Download guest dist
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: eravm-prover-server-guest-dist
-          path: stage/guest
-
       - name: Download bellman-cuda libraries
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -413,14 +389,15 @@ jobs:
       - name: Make binaries executable
         run: |
           chmod +x stage/bin/eravm-prover-server stage/bin/integration_test
-          ls -lh stage/bin stage/cuda-libs stage/guest
+          ls -lh stage/bin stage/cuda-libs guest/dist/app
 
       - name: Run prover server integration test
         env:
           # The test binary uses the IT_* overrides because its baked-in
           # CARGO_MANIFEST_DIR and CARGO_BIN_EXE_* point to the build runner.
           IT_PROVER_SERVER_BIN: ${{ github.workspace }}/stage/bin/eravm-prover-server
-          IT_GUEST_DIST_DIR: ${{ github.workspace }}/stage/guest
+          # Committed guest dist — no rebuild/download.
+          IT_GUEST_DIST_DIR: ${{ github.workspace }}/guest/dist/app
           IT_BATCHES_DIR: ${{ github.workspace }}/testdata/era_mainnet_batches/binary
           IT_FRI_VK: ${{ github.workspace }}/vks/fri_vk.bin
           IT_SNARK_VK: ${{ github.workspace }}/vks/snark_vk.json
@@ -479,7 +456,7 @@ jobs:
   # -----------------------------------------------------------------------------
   vk-check:
     name: vk-check
-    needs: [build-guest, server-integration-build, vk-check-changes]
+    needs: [server-integration-build, vk-check-changes]
     if: needs.vk-check-changes.outputs.should_run == 'true'
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 30
@@ -497,12 +474,6 @@ jobs:
           name: eravm-prover-host-bin
           path: stage/bin
 
-      - name: Download guest dist
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: eravm-prover-server-guest-dist
-          path: stage/guest
-
       - name: Download bellman-cuda libraries
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -518,11 +489,11 @@ jobs:
           ./stage/bin/eravm-prover-host download-trusted-setup \
               --output stage/setup/setup.key
 
-      - name: Regenerate VKs
+      - name: Regenerate VKs from the committed guest dist
         env:
-          # Point the host at the staged guest dir; the baked-in
-          # CARGO_MANIFEST_DIR points to the build runner.
-          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/stage/guest
+          # Derive VKs from the committed guest/dist/app (the FRI VK embeds
+          # sha256(app.bin)); the baked-in CARGO_MANIFEST_DIR points elsewhere.
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/guest/dist/app
           RUST_BACKTRACE: 1
           RUST_MIN_STACK: "134217728"
         run: |
@@ -537,9 +508,8 @@ jobs:
           if ! git diff --exit-code --stat -- vks/; then
             echo
             echo "::error::Committed verification keys in vks/ do not match" \
-                 "the ones regenerated from the current guest binary." \
-                 "Run \`eravm-prover-host gen-vks --output-dir vks " \
-                 "--trusted-setup <CRS>\` locally and commit the result."
+                 "the ones regenerated from the committed guest binary." \
+                 "Run \`/update-vks\` to refresh guest/dist/app + vks/."
             git diff --stat -- vks/
             exit 1
           fi
@@ -552,7 +522,7 @@ jobs:
       - tests
       - vm-compare-batches
       - host-run-batches
-      - build-guest
+      - guest-check
       - server-integration-build
       - server-integration-run
       - vk-check-changes
