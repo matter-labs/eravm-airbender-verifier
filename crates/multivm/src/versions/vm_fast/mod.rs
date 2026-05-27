@@ -6,7 +6,7 @@ pub use self::{
         CallTracer, FastValidationTracer, FullValidationTracer, StorageInvocationsTracer,
         ValidationTracer,
     },
-    vm::Vm,
+    vm::{Vm, VmCapacityHints},
 };
 
 mod bytecode;

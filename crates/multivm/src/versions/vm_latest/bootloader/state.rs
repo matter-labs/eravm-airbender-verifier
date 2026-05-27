@@ -205,6 +205,11 @@ impl BootloaderState {
         pubdata_builder: &dyn PubdataBuilder,
     ) -> BootloaderMemory {
         let mut initial_memory = self.initial_memory.clone();
+        // Each tx pushes ~64 (offset, U256) entries (5 fixed + encoded payload +
+        // l2_block + compressed bytecodes). Pre-reserve to suppress the
+        // mid-execution Vec doublings observed in the verifier guest probe.
+        let total_txs: usize = self.l2_blocks.iter().map(|b| b.txs.len()).sum();
+        initial_memory.reserve(total_txs.saturating_mul(64));
         let mut offset = 0;
         let mut compressed_bytecodes_offset = 0;
         let mut tx_index = 0;
