@@ -105,6 +105,7 @@ To replay existing fixtures through a single long-lived `snark-only` prover:
 
 ```bash
 IT_FRI_FIXTURES_DIR=/workspace/fri-fixtures \
+IT_RUN_SPLIT_SNARK=1 \
 TEST_FILTER=prover_server_replays_snark_only_fixtures \
 run-pr17-integration
 ```

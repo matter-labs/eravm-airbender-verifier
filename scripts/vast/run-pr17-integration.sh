@@ -376,13 +376,13 @@ run ls -lh "$repo_dir/guest/dist/app"
 log_step "Build prover server binary"
 run cargo build --release --locked --features snark_gpu --package eravm-prover-server
 
-# The split-process SNARK test spawns the host binary directly. Build it
-# alongside the server so `CARGO_BIN_EXE_eravm-prover-server`'s sibling lookup
-# in the test resolves to a real binary instead of an absent target.
-if [ "$run_split_snark" = "1" ] || [ -z "$test_filter" ]; then
-  log_step "Build prover host binary (needed for split-process SNARK test)"
-  run cargo build --release --locked --features snark_gpu --package eravm-prover-host
-fi
+# Always build the host binary too: the split-process SNARK test spawns it
+# as a child, and its `CARGO_BIN_EXE_eravm-prover-server` sibling lookup
+# expects to find `eravm-prover-host` in the same target/release dir. Cheap
+# enough to build unconditionally, and avoids "binary not found" surprises
+# when a future test exercises the host CLI directly.
+log_step "Build prover host binary"
+run cargo build --release --locked --features snark_gpu --package eravm-prover-host
 
 log_step "Build integration test binary"
 run cargo test --release --locked --features snark_gpu \
