@@ -1529,7 +1529,16 @@ fn host_split_compression_then_snark_in_separate_processes() {
 
     let workdir =
         tempfile::tempdir().expect("failed to create tempdir for split-process SNARK test");
-    let fri_proof_json = workdir.path().join("fri_proof.json");
+    // Mirror the `batch-<n>/fri_proof.json` layout that `host prove-fri` writes;
+    // `prove-compression`'s output-dir resolver keys on that exact filename to
+    // emit `batch-<n>/compression_proof.json`. Any other input path makes it
+    // fall through to a file-stem-based directory, which the test doesn't expect.
+    let fri_proof_dir = workdir
+        .path()
+        .join(format!("batch-{}", fixture.batch_number));
+    std::fs::create_dir_all(&fri_proof_dir)
+        .unwrap_or_else(|err| panic!("failed to create {}: {err}", fri_proof_dir.display()));
+    let fri_proof_json = fri_proof_dir.join("fri_proof.json");
     let compression_dir = workdir.path().join("compression");
     let snark_dir = workdir.path().join("snark");
 
