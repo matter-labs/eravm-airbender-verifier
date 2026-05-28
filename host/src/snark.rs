@@ -3,16 +3,17 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::info;
 use zkos_wrapper::{
-    serialize_to_file, SnarkWrapper, SnarkWrapperConfig, SnarkWrapperProof, SnarkWrapperVK,
+    serialize_to_file, CompressionProof, CompressionVK, SnarkWrapper, SnarkWrapperConfig,
+    SnarkWrapperProof, SnarkWrapperVK,
 };
 
 // Mirror `zkos-wrapper`'s artifact names so operators can switch between the
 // standalone wrapper CLI and the integrated host without translating outputs.
 pub(crate) const RISC_WRAPPER_PROOF_FILE_NAME: &str = "risc_wrapper_proof.json";
 pub(crate) const RISC_WRAPPER_VK_FILE_NAME: &str = "risc_wrapper_vk.json";
-pub(crate) const COMPRESSION_PROOF_FILE_NAME: &str = "compression_proof.json";
-pub(crate) const COMPRESSION_VK_FILE_NAME: &str = "compression_vk.json";
-pub(crate) const SNARK_PROOF_FILE_NAME: &str = "snark_proof.json";
+pub const COMPRESSION_PROOF_FILE_NAME: &str = "compression_proof.json";
+pub const COMPRESSION_VK_FILE_NAME: &str = "compression_vk.json";
+pub const SNARK_PROOF_FILE_NAME: &str = "snark_proof.json";
 pub(crate) const SNARK_VK_FILE_NAME: &str = "snark_vk.json";
 
 #[derive(Clone, Debug)]
@@ -106,6 +107,141 @@ impl SnarkPipeline {
             proof_path = %proof_path.display(),
             vk_path = %vk_path.display(),
             "Finished SNARK wrapper pipeline"
+        );
+
+        Ok(())
+    }
+
+    /// Runs only wrapper phases 1 and 2 (risc wrapper + compression) on a raw
+    /// FRI proof and writes `compression_proof.json` + `compression_vk.json`
+    /// into `output_dir`. Phase 3 (PLONK SNARK) is intentionally *not* run —
+    /// the caller is expected to load these artifacts in a separate process
+    /// to start phase 3 with a clean GPU memory state.
+    pub(crate) fn prove_compression_and_save(
+        &mut self,
+        raw_proof: RawFriProof,
+        output_dir: &Path,
+    ) -> Result<()> {
+        std::fs::create_dir_all(output_dir)
+            .with_context(|| format!("while attempting to create {}", output_dir.display()))?;
+
+        info!(
+            output_dir = %output_dir.display(),
+            "Starting SNARK wrapper phases 1+2 (compression-only mode)"
+        );
+
+        let risc_wrapper_proof = self
+            .wrapper
+            .prove_risc_wrapper(raw_proof)
+            .context("while attempting to run wrapper phase 1")?;
+
+        if self.save_intermediates {
+            let risc_wrapper_vk = self
+                .wrapper
+                .risc_wrapper_vk()
+                .context("while attempting to resolve wrapper phase 1 VK")?;
+            save_wrapper_artifact_pair(
+                &risc_wrapper_proof,
+                RISC_WRAPPER_PROOF_FILE_NAME,
+                risc_wrapper_vk,
+                RISC_WRAPPER_VK_FILE_NAME,
+                output_dir,
+                "phase 1",
+            )
+            .context("while attempting to save wrapper phase 1 intermediates")?;
+        }
+
+        let compression_proof = self
+            .wrapper
+            .prove_compression(risc_wrapper_proof)
+            .context("while attempting to run wrapper phase 2")?;
+
+        let compression_vk = self
+            .wrapper
+            .compression_vk()
+            .context("while attempting to resolve wrapper phase 2 VK")?;
+        save_wrapper_artifact_pair(
+            &compression_proof,
+            COMPRESSION_PROOF_FILE_NAME,
+            compression_vk,
+            COMPRESSION_VK_FILE_NAME,
+            output_dir,
+            "phase 2",
+        )
+        .context("while attempting to save wrapper phase 2 outputs")?;
+
+        info!(
+            output_dir = %output_dir.display(),
+            "Finished SNARK wrapper phases 1+2; ready for phase 3 in a fresh process"
+        );
+
+        Ok(())
+    }
+
+    /// Phase-3-only constructor. Both the compression VK and the SNARK VK are
+    /// pre-loaded into the wrapper config, which makes [`SnarkWrapper`] skip
+    /// any phase 1/2 GPU setup work entirely. Pair this with
+    /// [`Self::prove_snark_from_compression_and_save`] in a fresh process to
+    /// start phase 3 with a clean GPU memory state.
+    pub fn new_for_snark_only(
+        options: &SnarkOptions,
+        snark_vk: SnarkWrapperVK,
+        compression_vk: CompressionVK,
+    ) -> Result<Self> {
+        let wrapper = SnarkWrapper::new(SnarkWrapperConfig {
+            bin: None,
+            text: None,
+            trusted_setup: options.trusted_setup.clone(),
+            threads: options.worker_threads,
+            risc_wrapper_vk: None,
+            compression_vk: Some(compression_vk),
+            snark_vk: Some(snark_vk),
+        })
+        .context("while attempting to initialize the SNARK wrapper (phase-3-only mode)")?;
+
+        Ok(Self {
+            wrapper,
+            use_zk: options.use_zk,
+            save_intermediates: options.save_intermediates,
+        })
+    }
+
+    /// Runs only wrapper phase 3 on a pre-computed compression proof and writes
+    /// `snark_proof.json` + `snark_vk.json` into `output_dir`. Must be paired
+    /// with [`Self::new_for_snark_only`] so phases 1/2 are skipped completely.
+    pub(crate) fn prove_snark_from_compression_and_save(
+        &mut self,
+        compression_proof: CompressionProof,
+        output_dir: &Path,
+    ) -> Result<()> {
+        std::fs::create_dir_all(output_dir)
+            .with_context(|| format!("while attempting to create {}", output_dir.display()))?;
+
+        info!(
+            output_dir = %output_dir.display(),
+            "Starting SNARK wrapper phase 3 (snark-from-compression mode)"
+        );
+
+        let snark_proof = self
+            .wrapper
+            .prove_snark(compression_proof, self.use_zk)
+            .context("while attempting to run wrapper phase 3")?;
+
+        let proof_path = output_dir.join(SNARK_PROOF_FILE_NAME);
+        save_wrapper_artifact(&snark_proof, &proof_path)?;
+
+        let vk_path = output_dir.join(SNARK_VK_FILE_NAME);
+        save_wrapper_artifact(
+            self.wrapper
+                .snark_vk()
+                .context("while attempting to resolve wrapper phase 3 VK")?,
+            &vk_path,
+        )?;
+
+        info!(
+            proof_path = %proof_path.display(),
+            vk_path = %vk_path.display(),
+            "Finished SNARK wrapper phase 3"
         );
 
         Ok(())

@@ -17,8 +17,13 @@ pub use crate::setup_download::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present,
 };
-pub use crate::snark::{SnarkOptions, SnarkPipeline};
-pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
+pub use crate::snark::{
+    SnarkOptions, SnarkPipeline, COMPRESSION_PROOF_FILE_NAME, COMPRESSION_VK_FILE_NAME,
+    SNARK_PROOF_FILE_NAME,
+};
+pub use zkos_wrapper::{
+    deserialize_from_file, CompressionProof, CompressionVK, SnarkWrapperProof, SnarkWrapperVK,
+};
 
 use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
 use crate::statistics::StatisticsCollector;
@@ -158,6 +163,90 @@ pub fn wrap_to_snark(
             "Successfully generated SNARK proof"
         );
     }
+
+    Ok(())
+}
+
+/// Runs wrapper phases 1 and 2 (risc wrapper + compression) on each FRI proof
+/// file and writes `compression_proof.json` + `compression_vk.json` per batch.
+/// Phase 3 (PLONK SNARK) is **not** run by this process — the intent is to let
+/// the caller hand the saved artifacts to a separate `prove-snark-from-compression`
+/// process so phase 3 starts on a GPU that no longer holds phase 1/2 buffers.
+pub fn wrap_to_compression(
+    proof_files: &[PathBuf],
+    output_root: &Path,
+    snark_options: &SnarkOptions,
+) -> Result<()> {
+    let mut pipeline = SnarkPipeline::new(snark_options, None)?;
+
+    for (index, proof_file) in proof_files.iter().enumerate() {
+        let raw_proof = load_raw_proof(proof_file)
+            .with_context(|| format!("while attempting to load {}", proof_file.display()))?;
+        let output_dir = proof_file_output_dir(output_root, proof_file)?;
+        pipeline
+            .prove_compression_and_save(raw_proof, &output_dir)
+            .with_context(|| {
+                format!(
+                    "while attempting to compress raw proof {}",
+                    proof_file.display()
+                )
+            })?;
+
+        info!(
+            proof_file = %proof_file.display(),
+            output_dir = %output_dir.display(),
+            completed_proofs = index + 1,
+            total_proofs = proof_files.len(),
+            "Successfully generated compression proof"
+        );
+    }
+
+    Ok(())
+}
+
+/// Runs only wrapper phase 3 against a saved `compression_proof.json` and
+/// `compression_vk.json` and writes the resulting `snark_proof.json` +
+/// `snark_vk.json` into `output_dir`. The pipeline is constructed with both
+/// the compression VK and the SNARK VK pre-loaded, so no phase 1/2 GPU work
+/// happens in this process — that is the entire point of the split.
+pub fn wrap_compression_to_snark(
+    compression_proof_path: &Path,
+    compression_vk_path: &Path,
+    output_dir: &Path,
+    snark_options: &SnarkOptions,
+    snark_vk: SnarkWrapperVK,
+) -> Result<()> {
+    let compression_proof: CompressionProof =
+        deserialize_from_file(&compression_proof_path.to_string_lossy()).with_context(|| {
+            format!(
+                "while attempting to load compression proof {}",
+                compression_proof_path.display()
+            )
+        })?;
+
+    let compression_vk: CompressionVK =
+        deserialize_from_file(&compression_vk_path.to_string_lossy()).with_context(|| {
+            format!(
+                "while attempting to load compression VK {}",
+                compression_vk_path.display()
+            )
+        })?;
+
+    let mut pipeline = SnarkPipeline::new_for_snark_only(snark_options, snark_vk, compression_vk)?;
+    pipeline
+        .prove_snark_from_compression_and_save(compression_proof, output_dir)
+        .with_context(|| {
+            format!(
+                "while attempting to SNARK-wrap compression proof {}",
+                compression_proof_path.display()
+            )
+        })?;
+
+    info!(
+        compression_proof = %compression_proof_path.display(),
+        output_dir = %output_dir.display(),
+        "Successfully generated SNARK proof from compression proof"
+    );
 
     Ok(())
 }

@@ -109,6 +109,23 @@ TEST_FILTER=prover_server_replays_snark_only_fixtures \
 run-pr17-integration
 ```
 
+To split the SNARK wrapper across two processes so phase 3 (PLONK SNARK) runs
+on a GPU that no longer holds the phase 1/2 buffers — useful on cards where
+the resident risc-wrapper pool plus the PLONK setup don't fit together (e.g.
+the 5090 at 32 GB):
+
+```bash
+IT_FRI_FIXTURES_DIR=/workspace/fri-fixtures \
+TEST_FILTER=host_split_compression_then_snark_in_separate_processes \
+run-pr17-integration
+```
+
+The test runs the `eravm-prover-host` binary as two children: process A does
+`prove-compression` (phases 1+2) and exits — exit *is* the GPU memory release
+— and process B does `prove-snark-from-compression` on a clean device. The
+runner builds the host binary alongside the server when this test is
+selected; `--release --features snark_gpu` is required.
+
 Logs are written under `/workspace/artifacts/<timestamp>/run.log`.
 
 `BATCH_FILES` is passed to `scripts/fetch_lfs_batches.sh` and then exposed to
