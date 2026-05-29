@@ -54,8 +54,7 @@ RUN test -f guest/dist/app/app.bin \
 
 # CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
 # build host (which CI lacks) and otherwise falls back to an arch < compute_70,
-# breaking `__grid_constant__`. Mirrors airbender-platform's test-gpu CI.
-ENV CUDAARCHS="80;89;90"
+ENV CUDAARCHS="80;89;90;100;120"
 
 # Step 2: build era-bellman-cuda. `zksync-crypto-gpu`'s `gpu-ffi` build script
 # reads `BELLMAN_CUDA_DIR` from the env when the server is compiled with
