@@ -90,9 +90,12 @@ ark-ff = { version = "0.5", default-features = false }
 ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar_field"] }
 
 # Protocol and VM dependencies
-airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.1" }
-airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.1" }
-airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.1" }
+# TEMP: dl/gpu-batch-id-per-job is v0.2.1 + unique batch_id_base per job, to
+# test whether one long-lived GPU prover can handle multiple FRI jobs without
+# tripping assert_caps_mach. Revert to tag v0.2.1 once the experiment concludes.
+airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", rev = "a93fd7267c86b876541908f0e6bf8614423b014d" }
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", rev = "a93fd7267c86b876541908f0e6bf8614423b014d" }
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", rev = "a93fd7267c86b876541908f0e6bf8614423b014d" }
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 # `default-features = false` drops the wrapper's default `security_80` so it
