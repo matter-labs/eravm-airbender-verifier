@@ -13,7 +13,7 @@ on:
   push:
     # No `paths:` filter here — tag pushes must always trigger a release build,
     # and main pushes are infrequent enough that always building is fine.
-    branches: [main, feat/server-vks-from-disk]
+    branches: [main, dl/integration-and-vast]
     tags: ['v*']
 
 permissions:
