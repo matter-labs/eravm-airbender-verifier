@@ -35,7 +35,8 @@ use airbender_host::{
 };
 use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
-    download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
+    download_trusted_setup_if_not_present, load_vk_from_disk, RawFriProof, SnarkWrapperProof,
+    COMPRESSION_PROOF_FILE_NAME, COMPRESSION_VK_FILE_NAME, SNARK_PROOF_FILE_NAME,
 };
 use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
@@ -1471,5 +1472,206 @@ async fn prover_server_proves_multi_batch_fri_snark() {
     println!(
         "[test] Multi-batch fri-snark run finished in {:.1}s",
         full_run_started_at.elapsed().as_secs_f64()
+    );
+}
+
+/// Splits the SNARK wrapper across two processes so phase 3 (PLONK SNARK) runs
+/// on a GPU that no longer holds phase 1/2 buffers. Process A runs
+/// `prove-compression` and exits — exit *is* the GPU memory release. Process B
+/// then runs `prove-snark-from-compression` from a clean slate.
+///
+/// Required env:
+/// - `IT_RUN_SPLIT_SNARK=1` — opt in
+/// - `IT_FRI_FIXTURES_DIR` (or default temp dir) with manifest.json + fixture
+///   bytes produced by `prover_server_generates_fri_fixtures`
+/// - `IT_PROVER_HOST_BIN` (optional) — path to the built `eravm-prover-host`
+///   binary; defaults to the same target dir as `eravm-prover-server`
+#[ignore = "requires GPU, built host binary, FRI fixtures, and trusted setup"]
+#[test]
+fn host_split_compression_then_snark_in_separate_processes() {
+    if !truthy_env_var("IT_RUN_SPLIT_SNARK") {
+        println!("[test] Skipping split-process SNARK test; set IT_RUN_SPLIT_SNARK=1 to enable");
+        return;
+    }
+
+    let host_bin = prover_host_bin();
+    assert!(
+        host_bin.exists(),
+        "eravm-prover-host binary not found at {}. Build it first with \
+         `cargo build -p eravm-prover-host --features snark_gpu` (or set IT_PROVER_HOST_BIN).",
+        host_bin.display()
+    );
+    println!("[test] Host binary: {}", host_bin.display());
+
+    let trusted_setup = snark_trusted_setup_path();
+    println!("[test] SNARK trusted setup: {}", trusted_setup.display());
+
+    let snark_vk = snark_vk_path();
+    assert!(
+        snark_vk.exists(),
+        "SNARK verification key not found at {}. Run `cargo run -p eravm-prover-host -- gen-vks` first.",
+        snark_vk.display()
+    );
+
+    let fixture_dir = fri_fixtures_dir();
+    println!("[test] FRI fixture dir: {}", fixture_dir.display());
+    let fixtures = load_fri_fixtures(&fixture_dir);
+    let fixture = fixtures
+        .into_iter()
+        .next()
+        .expect("FRI fixture manifest had no batches");
+    println!(
+        "[test] Using FRI fixture batch {} ({}, {} bytes)",
+        fixture.batch_number,
+        fixture.batch_file,
+        fixture.proof_bytes.len()
+    );
+
+    let workdir =
+        tempfile::tempdir().expect("failed to create tempdir for split-process SNARK test");
+    // Mirror the `batch-<n>/fri_proof.json` layout that `host prove-fri` writes;
+    // `prove-compression`'s output-dir resolver keys on that exact filename to
+    // emit `batch-<n>/compression_proof.json`. Any other input path makes it
+    // fall through to a file-stem-based directory, which the test doesn't expect.
+    let fri_proof_dir = workdir
+        .path()
+        .join(format!("batch-{}", fixture.batch_number));
+    std::fs::create_dir_all(&fri_proof_dir)
+        .unwrap_or_else(|err| panic!("failed to create {}: {err}", fri_proof_dir.display()));
+    let fri_proof_json = fri_proof_dir.join("fri_proof.json");
+    let compression_dir = workdir.path().join("compression");
+    let snark_dir = workdir.path().join("snark");
+
+    write_raw_fri_proof_as_json(&fixture.proof_bytes, &fri_proof_json);
+    println!(
+        "[test] Converted fixture to host JSON FRI proof at {}",
+        fri_proof_json.display()
+    );
+
+    // Phase 1+2 — child A. When this process exits the OS reclaims all GPU
+    // memory it allocated, which is exactly what we want phase 3 to see.
+    run_host_subcommand_to_completion(
+        "prove-compression (child A)",
+        &host_bin,
+        &[
+            "prove-compression",
+            "--proof-files",
+            fri_proof_json.to_str().expect("non-UTF8 fri proof path"),
+            "--output-dir",
+            compression_dir
+                .to_str()
+                .expect("non-UTF8 compression output dir"),
+            "--trusted-setup",
+            trusted_setup
+                .to_str()
+                .expect("non-UTF8 SNARK trusted setup path"),
+        ],
+    );
+
+    let compression_outputs = compression_dir.join(format!("batch-{}", fixture.batch_number));
+    let compression_proof_path = compression_outputs.join(COMPRESSION_PROOF_FILE_NAME);
+    let compression_vk_path = compression_outputs.join(COMPRESSION_VK_FILE_NAME);
+    assert!(
+        compression_proof_path.exists(),
+        "child A did not write {}",
+        compression_proof_path.display()
+    );
+    assert!(
+        compression_vk_path.exists(),
+        "child A did not write {}",
+        compression_vk_path.display()
+    );
+
+    // Phase 3 — child B. Fresh process means a fresh CUDA context and a fully
+    // free GPU; whatever happened to phase 1/2 buffers in child A is gone.
+    run_host_subcommand_to_completion(
+        "prove-snark-from-compression (child B)",
+        &host_bin,
+        &[
+            "prove-snark-from-compression",
+            "--compression-proof",
+            compression_proof_path
+                .to_str()
+                .expect("non-UTF8 compression proof path"),
+            "--compression-vk",
+            compression_vk_path
+                .to_str()
+                .expect("non-UTF8 compression vk path"),
+            "--output-dir",
+            snark_dir.to_str().expect("non-UTF8 snark output dir"),
+            "--snark-vk",
+            snark_vk.to_str().expect("non-UTF8 snark vk path"),
+            "--trusted-setup",
+            trusted_setup
+                .to_str()
+                .expect("non-UTF8 SNARK trusted setup path"),
+        ],
+    );
+
+    let snark_proof_path = snark_dir.join(SNARK_PROOF_FILE_NAME);
+    let snark_proof_bytes = std::fs::read(&snark_proof_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", snark_proof_path.display()));
+    let _snark_proof: SnarkWrapperProof = serde_json::from_slice(&snark_proof_bytes)
+        .expect("SNARK proof JSON did not deserialize as SnarkWrapperProof");
+    println!(
+        "[test] Split-process SNARK pipeline produced {} ({} bytes)",
+        snark_proof_path.display(),
+        snark_proof_bytes.len()
+    );
+}
+
+/// Path to the built `eravm-prover-host` binary. Honors `IT_PROVER_HOST_BIN`
+/// for explicit overrides; otherwise resolves alongside the server binary in
+/// the workspace target dir (cargo puts all workspace bins in the same dir).
+fn prover_host_bin() -> PathBuf {
+    if let Some(path) = std::env::var_os("IT_PROVER_HOST_BIN") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(env!("CARGO_BIN_EXE_eravm-prover-server")).with_file_name(if cfg!(windows) {
+        "eravm-prover-host.exe"
+    } else {
+        "eravm-prover-host"
+    })
+}
+
+/// Decodes a bincode-encoded `Proof` fixture from the FRI fixture corpus and
+/// writes it back out as the JSON `UnrolledProgramProof` format that
+/// `host prove-compression`'s `--proof-files` argument consumes.
+fn write_raw_fri_proof_as_json(fixture_bytes: &[u8], output: &std::path::Path) {
+    let (proof, _): (Proof, usize) =
+        bincode::serde::decode_from_slice(fixture_bytes, bincode::config::standard())
+            .expect("failed to decode FRI fixture bytes as airbender_host::Proof");
+    let raw_proof: RawFriProof = match proof {
+        Proof::Real(real) => real.into_inner(),
+        Proof::Dev(_) => panic!("FRI fixture must be a Real proof, got Dev"),
+    };
+    let file = std::fs::File::create(output)
+        .unwrap_or_else(|err| panic!("failed to create {}: {err}", output.display()));
+    serde_json::to_writer(file, &raw_proof)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", output.display()));
+}
+
+/// Spawns `host_bin` with `args`, inheriting stdio so panics from the child
+/// surface in the test log, and asserts a clean exit. The process exiting *is*
+/// the GPU memory release in this test.
+fn run_host_subcommand_to_completion(label: &str, host_bin: &std::path::Path, args: &[&str]) {
+    println!(
+        "[test] Spawning {label}: {} {}",
+        host_bin.display(),
+        args.join(" ")
+    );
+    let started_at = Instant::now();
+    let status = Command::new(host_bin)
+        .args(args)
+        .status()
+        .unwrap_or_else(|err| panic!("failed to spawn {label}: {err}"));
+    println!(
+        "[test] {label} exited with {:?} after {:.1}s",
+        status,
+        started_at.elapsed().as_secs_f64()
+    );
+    assert!(
+        status.success(),
+        "{label} exited with non-zero status: {status:?}"
     );
 }

@@ -27,6 +27,11 @@ Environment variables:
                             Default: inferred as 1 when TEST_FILTER is prover_server_generates_fri_fixtures.
   IT_RUN_SNARK_ONLY_REPLAY  Set to 1 to replay FRI fixtures through snark-only mode.
                             Default: inferred as 1 when TEST_FILTER is prover_server_replays_snark_only_fixtures.
+  IT_RUN_SPLIT_SNARK        Set to 1 to run the split-process SNARK pipeline test
+                            (host prove-compression in process A, host prove-snark-from-compression
+                            in process B, with the OS reclaiming GPU memory between phases).
+                            Default: inferred as 1 when TEST_FILTER is
+                            host_split_compression_then_snark_in_separate_processes.
   IT_FRI_FIXTURES_DIR       Directory for generated or replayed FRI proof fixtures.
                             Default: /workspace/fri-fixtures.
   IT_FRI_PROOF_TIMEOUT_SECS Timeout for each awaited FRI proof submission.
@@ -62,6 +67,7 @@ batch_files="${BATCH_FILES:-506093.bin.gz}"
 run_multi_batch_fri_snark="${IT_RUN_MULTI_BATCH_FRI_SNARK:-}"
 generate_fri_fixtures="${IT_GENERATE_FRI_FIXTURES:-}"
 run_snark_only_replay="${IT_RUN_SNARK_ONLY_REPLAY:-}"
+run_split_snark="${IT_RUN_SPLIT_SNARK:-}"
 fri_fixtures_dir="${IT_FRI_FIXTURES_DIR:-$workspace_dir/fri-fixtures}"
 fri_proof_timeout_secs="${IT_FRI_PROOF_TIMEOUT_SECS:-}"
 snark_proof_timeout_secs="${IT_SNARK_PROOF_TIMEOUT_SECS:-3600}"
@@ -83,6 +89,10 @@ if [ -z "$run_snark_only_replay" ] && [ "$test_filter" = "prover_server_replays_
   run_snark_only_replay="1"
 fi
 run_snark_only_replay="${run_snark_only_replay:-0}"
+if [ -z "$run_split_snark" ] && [ "$test_filter" = "host_split_compression_then_snark_in_separate_processes" ]; then
+  run_split_snark="1"
+fi
+run_split_snark="${run_split_snark:-0}"
 if [ "$test_filter" = "prover_server_generates_fri_fixtures" ] && [ "$generate_fri_fixtures" = "1" ]; then
   needs_snark_setup="0"
 fi
@@ -366,6 +376,14 @@ run ls -lh "$repo_dir/guest/dist/app"
 log_step "Build prover server binary"
 run cargo build --release --locked --features snark_gpu --package eravm-prover-server
 
+# Always build the host binary too: the split-process SNARK test spawns it
+# as a child, and its `CARGO_BIN_EXE_eravm-prover-server` sibling lookup
+# expects to find `eravm-prover-host` in the same target/release dir. Cheap
+# enough to build unconditionally, and avoids "binary not found" surprises
+# when a future test exercises the host CLI directly.
+log_step "Build prover host binary"
+run cargo build --release --locked --features snark_gpu --package eravm-prover-host
+
 log_step "Build integration test binary"
 run cargo test --release --locked --features snark_gpu \
   --package eravm-prover-server \
@@ -392,6 +410,7 @@ echo "IT_BATCH_FILES=$batch_files"
 echo "IT_RUN_MULTI_BATCH_FRI_SNARK=$run_multi_batch_fri_snark"
 echo "IT_GENERATE_FRI_FIXTURES=$generate_fri_fixtures"
 echo "IT_RUN_SNARK_ONLY_REPLAY=$run_snark_only_replay"
+echo "IT_RUN_SPLIT_SNARK=$run_split_snark"
 echo "IT_FRI_FIXTURES_DIR=$fri_fixtures_dir"
 echo "IT_FRI_PROOF_TIMEOUT_SECS=$fri_proof_timeout_secs"
 echo "IT_SNARK_PROOF_TIMEOUT_SECS=$snark_proof_timeout_secs"
@@ -404,6 +423,7 @@ IT_BATCH_FILES="$batch_files" \
 IT_RUN_MULTI_BATCH_FRI_SNARK="$run_multi_batch_fri_snark" \
 IT_GENERATE_FRI_FIXTURES="$generate_fri_fixtures" \
 IT_RUN_SNARK_ONLY_REPLAY="$run_snark_only_replay" \
+IT_RUN_SPLIT_SNARK="$run_split_snark" \
 IT_FRI_FIXTURES_DIR="$fri_fixtures_dir" \
 IT_FRI_PROOF_TIMEOUT_SECS="$fri_proof_timeout_secs" \
 IT_SNARK_PROOF_TIMEOUT_SECS="$snark_proof_timeout_secs" \
