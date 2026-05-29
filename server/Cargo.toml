@@ -26,6 +26,7 @@ zksync_prover_metrics.workspace = true
 [dev-dependencies]
 axum.workspace = true
 hex.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 zksync_cli_utils.workspace = true
 
