@@ -1,13 +1,45 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
-# Prebuilt cargo-airbender CUDA image (v0.2.1, matching the airbender-* crates
-# in Cargo.toml). Ships nightly Rust + clang + cmake + the CUDA 12.9 devel
-# toolchain — enough to compile the GPU prover server. The guest is NOT built
-# here (the committed app.bin is used), so cargo-airbender itself goes unused.
-FROM ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1 AS builder
+# CUDA 12.9 devel toolchain, kept in lockstep with the 12.9.1-runtime base
+# below so the prover server's CUDA runtime requirements match production's
+# driver floor. The guest is NOT built here (committed app.bin is used), so we
+# skip cargo-airbender and its guest-only extras (rust-src, llvm-tools-preview,
+# cargo-binutils) — recipe otherwise mirrors airbender-platform's
+# cargo-airbender-cuda image.
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG RUST_TOOLCHAIN=nightly-2026-02-10
+ARG CMAKE_VERSION=3.30.2
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH} \
+    CARGO_TERM_COLOR=always
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        clang \
+        curl \
+        git \
+        libssl-dev \
+        lld \
+        pkg-config \
+        wget && \
+    rm -rf /var/lib/apt/lists/*
+
+# gpu_prover's CUDA build via the `cmake` crate needs newer CUDA language
+# handling than Ubuntu 22.04's packaged CMake provides.
+RUN curl -LO "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh" && \
+    chmod +x "cmake-${CMAKE_VERSION}-linux-x86_64.sh" && \
+    "./cmake-${CMAKE_VERSION}-linux-x86_64.sh" --skip-license --prefix=/usr/local && \
+    rm "cmake-${CMAKE_VERSION}-linux-x86_64.sh"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}"
 
 WORKDIR /workspace
 COPY . .
