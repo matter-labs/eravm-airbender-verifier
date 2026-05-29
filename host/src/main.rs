@@ -4,8 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use eravm_prover_host::{
     default_fri_vk_path, default_trusted_setup_download_url, default_trusted_setup_path,
     deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
-    generate_snark_vk, prove_batches_fri, run_batches, wrap_compression_to_snark,
-    wrap_to_compression, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
+    generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
 use std::path::PathBuf;
 use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
@@ -60,15 +59,6 @@ enum Command {
     Run(RunArgs),
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
-    /// Run wrapper phases 1+2 (risc wrapper + compression) only and save the
-    /// resulting compression proof + VK to disk. Pair this with
-    /// `prove-snark-from-compression` in a separate process to start phase 3
-    /// on a GPU that no longer holds phase 1/2 buffers.
-    ProveCompression(ProveCompressionArgs),
-    /// Run wrapper phase 3 only against a pre-computed compression proof. The
-    /// compression VK and SNARK VK must already be on disk. This is the
-    /// second half of the split-process SNARK pipeline.
-    ProveSnarkFromCompression(ProveSnarkFromCompressionArgs),
     /// Download the bellman SNARK trusted setup (CRS) so it is on disk before
     /// running `prove-snark`. Skips the download if the file already exists.
     DownloadTrustedSetup(DownloadTrustedSetupArgs),
@@ -182,68 +172,6 @@ struct ProveSnarkArgs {
     save_intermediates: bool,
 }
 
-#[derive(Debug, Args)]
-struct ProveCompressionArgs {
-    /// One or more raw FRI proof files (the JSON format written by
-    /// `prove-fri`). Each input is run through phases 1+2 and produces a
-    /// `compression_proof.json` + `compression_vk.json` pair in its own
-    /// per-batch output directory.
-    #[arg(long, value_delimiter = ',')]
-    proof_files: Vec<PathBuf>,
-
-    #[arg(long)]
-    output_dir: PathBuf,
-
-    #[arg(long)]
-    worker_threads: Option<usize>,
-
-    /// Phase 1+2 do not strictly need the SNARK trusted setup, but the wrapper
-    /// is constructed via the same config used for full SNARK runs, so a CRS
-    /// path is accepted (and ignored) to keep the CLI symmetric with
-    /// `prove-snark`.
-    #[arg(long, env = "SNARK_TRUSTED_SETUP_FILE")]
-    trusted_setup: Option<PathBuf>,
-
-    /// Also write `risc_wrapper_proof.json` + `risc_wrapper_vk.json` alongside
-    /// the compression artifacts. Off by default — only the compression
-    /// outputs are needed to feed `prove-snark-from-compression`.
-    #[arg(long)]
-    save_intermediates: bool,
-}
-
-#[derive(Debug, Args)]
-struct ProveSnarkFromCompressionArgs {
-    /// Path to `compression_proof.json` produced by `prove-compression`.
-    #[arg(long)]
-    compression_proof: PathBuf,
-
-    /// Path to `compression_vk.json` produced by `prove-compression`. The VK
-    /// is deterministic given the recursion verifier, but we read it from
-    /// disk rather than re-deriving it so this process never touches phase
-    /// 1/2 GPU setup.
-    #[arg(long)]
-    compression_vk: PathBuf,
-
-    #[arg(long)]
-    output_dir: PathBuf,
-
-    #[arg(long)]
-    worker_threads: Option<usize>,
-
-    #[arg(long, env = "SNARK_TRUSTED_SETUP_FILE")]
-    trusted_setup: Option<PathBuf>,
-
-    /// Pre-generated SNARK VK JSON. Required: this process must skip the
-    /// `wrapper.snark_vk()` derivation step, otherwise the wrapper rebuilds
-    /// phase 1/2 GPU setup to derive the VK — which defeats the whole point
-    /// of running phase 3 in a fresh process.
-    #[arg(long)]
-    snark_vk: PathBuf,
-
-    #[arg(long)]
-    use_zk: bool,
-}
-
 impl BatchSelectionArgs {
     fn resolve(&self) -> Result<Vec<BatchInputFile>> {
         let batches_dir = self.batches_dir.canonicalize().with_context(|| {
@@ -290,32 +218,6 @@ fn main() -> Result<()> {
             let snark_vk = load_snark_vk(args.snark_vk.as_deref())?;
             wrap_to_snark(
                 &args.proof_files,
-                &args.output_dir,
-                &snark_options,
-                snark_vk,
-            )
-        }
-        Command::ProveCompression(args) => {
-            let snark_options = SnarkOptions {
-                worker_threads: args.worker_threads,
-                trusted_setup: args.trusted_setup,
-                use_zk: false,
-                save_intermediates: args.save_intermediates,
-            };
-            wrap_to_compression(&args.proof_files, &args.output_dir, &snark_options)
-        }
-        Command::ProveSnarkFromCompression(args) => {
-            let snark_options = SnarkOptions {
-                worker_threads: args.worker_threads,
-                trusted_setup: args.trusted_setup,
-                use_zk: args.use_zk,
-                save_intermediates: false,
-            };
-            let snark_vk = load_snark_vk(Some(&args.snark_vk))?
-                .context("--snark-vk is required for prove-snark-from-compression")?;
-            wrap_compression_to_snark(
-                &args.compression_proof,
-                &args.compression_vk,
                 &args.output_dir,
                 &snark_options,
                 snark_vk,
@@ -395,78 +297,5 @@ mod tests {
             }
             _ => panic!("expected prove-snark command"),
         }
-    }
-
-    #[test]
-    fn prove_compression_parses_minimal_args() {
-        let cli = Cli::try_parse_from([
-            "eravm-prover-host",
-            "prove-compression",
-            "--proof-files",
-            "./artifacts/proofs/batch-42/fri_proof.json",
-            "--output-dir",
-            "./artifacts/compression",
-        ])
-        .expect("prove-compression arguments should parse");
-
-        match cli.command {
-            Command::ProveCompression(args) => {
-                assert_eq!(
-                    args.proof_files,
-                    vec![PathBuf::from("./artifacts/proofs/batch-42/fri_proof.json")]
-                );
-                assert_eq!(args.output_dir, PathBuf::from("./artifacts/compression"));
-                assert!(!args.save_intermediates);
-            }
-            _ => panic!("expected prove-compression command"),
-        }
-    }
-
-    #[test]
-    fn prove_snark_from_compression_requires_compression_and_snark_vks() {
-        let cli = Cli::try_parse_from([
-            "eravm-prover-host",
-            "prove-snark-from-compression",
-            "--compression-proof",
-            "./artifacts/compression/batch-42/compression_proof.json",
-            "--compression-vk",
-            "./artifacts/compression/batch-42/compression_vk.json",
-            "--output-dir",
-            "./artifacts/snark",
-            "--snark-vk",
-            "./vks/snark_vk.json",
-        ])
-        .expect("prove-snark-from-compression arguments should parse");
-
-        match cli.command {
-            Command::ProveSnarkFromCompression(args) => {
-                assert_eq!(
-                    args.compression_proof,
-                    PathBuf::from("./artifacts/compression/batch-42/compression_proof.json")
-                );
-                assert_eq!(
-                    args.compression_vk,
-                    PathBuf::from("./artifacts/compression/batch-42/compression_vk.json")
-                );
-                assert_eq!(args.snark_vk, PathBuf::from("./vks/snark_vk.json"));
-                assert_eq!(args.output_dir, PathBuf::from("./artifacts/snark"));
-                assert!(!args.use_zk);
-            }
-            _ => panic!("expected prove-snark-from-compression command"),
-        }
-
-        // Omitting --snark-vk must fail; the whole point of this subcommand is
-        // to skip phase-1/2 GPU setup, which requires a pre-derived SNARK VK.
-        Cli::try_parse_from([
-            "eravm-prover-host",
-            "prove-snark-from-compression",
-            "--compression-proof",
-            "./compression_proof.json",
-            "--compression-vk",
-            "./compression_vk.json",
-            "--output-dir",
-            "./snark",
-        ])
-        .expect_err("prove-snark-from-compression must require --snark-vk");
     }
 }
