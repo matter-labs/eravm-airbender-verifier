@@ -146,12 +146,14 @@ impl FriPipeline {
         vk_path: &Path,
         worker_threads: Option<usize>,
         security: SecurityLevel,
+        max_device_memory_bytes: Option<usize>,
     ) -> Result<Self> {
         Self::with_verifier(
             dist_dir,
             FriVerifier::load(dist_dir, vk_path, security)?,
             worker_threads,
             security,
+            max_device_memory_bytes,
         )
     }
 
@@ -170,6 +172,9 @@ impl FriPipeline {
             FriVerifier::load_or_generate(dist_dir, vk_path, security)?,
             worker_threads,
             security,
+            // The host `prove-fri` CLI never runs the SNARK wrapper in-process,
+            // so it has no reason to leave VRAM headroom.
+            None,
         )
     }
 
@@ -178,12 +183,16 @@ impl FriPipeline {
         verifier: FriVerifier,
         worker_threads: Option<usize>,
         security: SecurityLevel,
+        max_device_memory_bytes: Option<usize>,
     ) -> Result<Self> {
         let mut prover = GpuProverBuilder::new(app_bin_path(dist_dir))
             .with_level(ProverLevel::RecursionUnified)
             .with_security(security);
         if let Some(worker_threads) = worker_threads {
             prover = prover.with_worker_threads(worker_threads);
+        }
+        if let Some(bytes) = max_device_memory_bytes {
+            prover = prover.with_max_device_memory_bytes(bytes);
         }
 
         let prover = prover
