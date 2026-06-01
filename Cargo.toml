@@ -47,7 +47,9 @@ categories = ["cryptography"]
 # External dependencies
 anyhow = "1"
 axum = "0.7"
-ctrlc = "3"
+# `termination` adds SIGTERM/SIGHUP handling on top of SIGINT. Kubernetes sends
+# SIGTERM (not SIGINT) on pod termination, so graceful shutdown depends on it.
+ctrlc = { version = "3", features = ["termination"] }
 assert_matches = "1.5"
 async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }

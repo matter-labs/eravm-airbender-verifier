@@ -143,7 +143,7 @@ fn main() -> Result<()> {
             shutdown.store(true, Ordering::Relaxed);
         }
     })
-    .context("while setting Ctrl-C handler")?;
+    .context("while setting termination signal handler")?;
 
     info!(
         server_url = %cli.server_url,
