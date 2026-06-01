@@ -48,6 +48,13 @@ struct Cli {
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
+    /// Cap (in GiB) on the GPU memory the FRI prover's device allocator claims.
+    /// By default it grabs all free VRAM, leaving no room for the in-process
+    /// SNARK wrapper in `fri-snark` mode. Set this (e.g. 32) so both fit on one
+    /// card. A value at or above free memory is a no-op.
+    #[arg(long, env = "FRI_GPU_MEMORY_GB")]
+    fri_gpu_memory_gb: Option<f64>,
+
     /// Identifier for this prover instance, included in proof submissions.
     /// Defaults to the HOSTNAME environment variable (i.e. the Kubernetes pod name).
     #[arg(long, env = "PROVER_ID", default_value_t = default_prover_id())]
@@ -201,9 +208,18 @@ fn build_prover(
         save_intermediates: false,
     };
 
+    let fri_gpu_memory_bytes = cli
+        .fri_gpu_memory_gb
+        .map(|gb| (gb * (1u64 << 30) as f64) as usize);
     let build_fri = || {
-        FriPipeline::new(dist_dir, &cli.fri_vk, cli.worker_threads, security)
-            .context("while building FRI pipeline")
+        FriPipeline::new(
+            dist_dir,
+            &cli.fri_vk,
+            cli.worker_threads,
+            security,
+            fri_gpu_memory_bytes,
+        )
+        .context("while building FRI pipeline")
     };
     let build_snark = || -> Result<SnarkPipeline> {
         let snark_vk = load_snark_vk(cli.snark_vk.as_deref())?;
