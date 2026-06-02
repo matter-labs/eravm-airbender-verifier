@@ -123,7 +123,7 @@ pub struct VmExecutionState {
     zk_porter_available: bool,
     bootloader_code_hash: H256,
     default_aa_code_hash: H256,
-    evm_emulator_code_hash: H256,
+    evm_emulator_code_hash: Option<H256>,
 }
 
 impl VmExecutionState {
@@ -184,11 +184,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     let base = &input.system_env.base_system_smart_contracts;
     let bootloader_code_hash = base.bootloader.hash;
     let default_aa_code_hash = base.default_aa.hash;
-    let evm_emulator_code_hash = base
-        .evm_emulator
-        .as_ref()
-        .map(|e| e.hash)
-        .unwrap_or_default();
+    let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 
     // Verify the bytecodes the VM consumes match the hashes that flow into
     // metadata_hash (and thus the batch commitment). System contracts are
@@ -200,7 +196,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     verify_bytecode_hash(h256_to_u256(default_aa_code_hash), &base.default_aa.code)
         .context("verifying default_aa bytecode")?;
     if let Some(emu) = &base.evm_emulator {
-        verify_bytecode_hash(h256_to_u256(evm_emulator_code_hash), &emu.code)
+        verify_bytecode_hash(h256_to_u256(emu.hash), &emu.code)
             .context("verifying evm_emulator bytecode")?;
     }
 
@@ -217,11 +213,10 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
 
         let vm_run_evm_emulator = input.vm_run_data.evm_emulator_code_hash.map(u256_to_h256);
-        let env_evm_emulator = base.evm_emulator.as_ref().map(|e| e.hash);
         anyhow::ensure!(
-            vm_run_evm_emulator == env_evm_emulator,
+            vm_run_evm_emulator == evm_emulator_code_hash,
             "vm_run_data.evm_emulator_code_hash {vm_run_evm_emulator:?} does not match \
-             system_env.base_system_smart_contracts.evm_emulator hash {env_evm_emulator:?}",
+             system_env.base_system_smart_contracts.evm_emulator hash {evm_emulator_code_hash:?}",
         );
 
         let vm_run_bootloader_bytes: Vec<u8> = input
@@ -464,7 +459,7 @@ pub fn verify_commitment(
             zkporter_is_available: state.zk_porter_available,
             bootloader_code_hash: state.bootloader_code_hash,
             default_aa_code_hash: state.default_aa_code_hash,
-            evm_emulator_code_hash: Some(state.evm_emulator_code_hash),
+            evm_emulator_code_hash: state.evm_emulator_code_hash,
             protocol_version: Some(state.protocol_version),
         },
         auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
