@@ -557,7 +557,13 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                  leaf_enumeration_index,
                  value_read,
                  leaf_hashed_key: leaf_storage_key,
-                 ..
+                 // `value_written` is consumed only by the Merkle tree's build path
+                 // (`zksync_merkle_tree::domain`), never by the verifier, which derives
+                 // the written value from VM execution. Bind it explicitly (instead of
+                 // `..`) so this match stays exhaustive: a future field added to
+                 // `StorageLogMetadata` won't compile until someone decides whether the
+                 // verifier should consume it, rather than being silently ignored.
+                 value_written: _,
              }| {
                 let root_hash = root_hash.into();
                 let merkle_path = merkle_paths.into_iter().map(|x| x.into()).collect();
