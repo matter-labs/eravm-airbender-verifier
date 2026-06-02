@@ -156,6 +156,26 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
 
+    // `vm_run_data` carries operator-supplied copies of values the verifier also
+    // derives from the canonical batch/system env. Bind the redundant copies that
+    // have an authoritative counterpart so a malicious witness cannot disagree with
+    // the environment the VM actually executes against.
+    anyhow::ensure!(
+        input.vm_run_data.l1_batch_number == batch_number,
+        "vm_run_data.l1_batch_number {:?} does not match l1_batch_env.number {batch_number:?}",
+        input.vm_run_data.l1_batch_number,
+    );
+    anyhow::ensure!(
+        input.vm_run_data.protocol_version == protocol_version,
+        "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
+        input.vm_run_data.protocol_version,
+    );
+    // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
+    // populated by the witness generator for the legacy proving path and are not
+    // consumed here: the verifier recomputes the bootloader heap it commits to from
+    // VM execution and derives refunds/pubdata itself. They are intentionally left
+    // unconstrained — real witnesses carry non-empty values for these fields.
+
     // Source all metadata-bound code hashes from system_env.base_system_smart_contracts.
     // That's what the VM actually loads — verifying any other copy (vm_run_data's
     // bootloader_code, default_account_code_hash, evm_emulator_code_hash) leaves a
