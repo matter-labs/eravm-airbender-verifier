@@ -176,6 +176,18 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     // VM execution and derives refunds/pubdata itself. They are intentionally left
     // unconstrained — real witnesses carry non-empty values for these fields.
 
+    if let Some(first) = input.l2_blocks_execution_data.first() {
+        let canonical = &input.l1_batch_env.first_l2_block;
+        anyhow::ensure!(
+            first.number.0 == canonical.number
+                && first.timestamp == canonical.timestamp
+                && first.prev_block_hash == canonical.prev_block_hash
+                && first.virtual_blocks == canonical.max_virtual_blocks_to_create
+                && first.interop_roots == canonical.interop_roots,
+            "l2_blocks_execution_data[0] metadata must equal l1_batch_env.first_l2_block",
+        );
+    }
+
     // Source all metadata-bound code hashes from system_env.base_system_smart_contracts.
     // That's what the VM actually loads — verifying any other copy (vm_run_data's
     // bootloader_code, default_account_code_hash, evm_emulator_code_hash) leaves a
