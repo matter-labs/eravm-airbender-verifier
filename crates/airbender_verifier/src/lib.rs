@@ -476,6 +476,9 @@ pub fn verify_commitment(
             state_diffs_compressed: vec![],
             state_diffs_hash: state_diff_hash,
             aux_commitments: AuxCommitments {
+                // Post-Boojum commitments do not carry an events queue hash. Events are
+                // recoverable from the bound transaction heap, system logs, state diffs,
+                // and blob hashes, so the legacy slot is intentionally zeroed.
                 events_queue_commitment: H256::zero(),
                 bootloader_initial_content_commitment: bootloader_heap_hash,
             },
