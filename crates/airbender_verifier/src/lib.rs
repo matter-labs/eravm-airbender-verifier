@@ -586,6 +586,13 @@ fn execute_vm<VM>(
 where
     VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
 {
+    anyhow::ensure!(
+        l2_blocks_execution_data
+            .last()
+            .is_none_or(|block| block.txs.is_empty()),
+        "Last L2 block's txs are never executed; populating them is a malformed witness",
+    );
+
     let next_l2_blocks_data = l2_blocks_execution_data.iter().skip(1);
 
     let l2_blocks_data = l2_blocks_execution_data.iter().zip(next_l2_blocks_data);
