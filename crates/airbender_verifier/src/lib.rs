@@ -738,6 +738,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use airbender_codec::{AirbenderCodec, AirbenderCodecV0};
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
     use zksync_types::commitment::BlobHash;
@@ -973,8 +974,8 @@ mod tests {
         };
         let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
-            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
-        let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
+            AirbenderCodecV0::encode(&avi).expect("Failed to serialize AirbenderVerifierInput.");
+        let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
         assert_eq!(avi, deserialized);
