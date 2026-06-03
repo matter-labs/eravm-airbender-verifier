@@ -137,13 +137,16 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
 ///
 /// Thus, if storage is reverted correctly, additional EVM bytecodes occupy the cache, but are unreachable.
 ///
-/// The caches are additionally content-addressed: every key is a versioned
-/// bytecode hash and the stored value is its preimage — dynamically deployed EVM
-/// bytecodes are inserted under a freshly computed hash, and factory deps are
-/// content-verified before they are served. So even a leftover entry from a
-/// reverted transaction attempt can only return the same bytecode the requesting
-/// hash already resolves to. For that reason these caches are intentionally left
-/// out of VM snapshot/rollback — there is nothing to undo.
+/// The cache keys are additionally bound to the cached content at insertion
+/// time: `insert_bytecodes` and `TransactionData::new` compute factory-dep
+/// hashes from the supplied bytecodes, the EVM deploy tracer hashes the
+/// published bytecode before inserting it, and the storage fallback in
+/// `decommit()` caches what storage resolved for the requested hash. No path
+/// re-verifies content when serving a cache hit — reachability is gated by the
+/// storage checks above — but a leftover entry from a reverted transaction
+/// attempt can only return the same bytecode the requesting hash already
+/// resolves to. For that reason these caches are intentionally left out of VM
+/// snapshot/rollback — there is nothing to undo.
 impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
     fn decommit(&mut self, hash: U256) -> Program<T, Self> {
         self.program_cache
