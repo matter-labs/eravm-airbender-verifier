@@ -133,11 +133,11 @@ pub struct SubmitFriProofRequest<'a> {
 
 /// SNARK submission payload. The VK is resolved once at startup and is not
 /// included here; the receiver is expected to know it out of band.
-#[serde_with::serde_as]
+/// `snark_proof` is carried as a nested JSON object (the wrapper PLONK proof),
+/// matching `SubmitAirbenderSnarkProofRequest` in zksync-era.
 #[derive(serde::Serialize)]
-pub struct SubmitSnarkProofRequest<'a> {
+pub struct SubmitSnarkProofRequest {
     pub l1_batch_number: u32,
     pub prover_id: String,
-    #[serde_as(as = "serde_with::hex::Hex")]
-    pub snark_proof: &'a [u8],
+    pub snark_proof: Box<SnarkWrapperProof>,
 }

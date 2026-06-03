@@ -126,20 +126,13 @@ impl JobServerClient {
         })
     }
 
-    pub fn submit_snark(&self, batch_number: u32, proof: &SnarkWrapperProof) -> Result<()> {
-        let proof_bytes = serde_json::to_vec(proof).context("failed to JSON-encode SNARK proof")?;
+    pub fn submit_snark(&self, batch_number: u32, proof: Box<SnarkWrapperProof>) -> Result<()> {
         self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
-            info!(
-                batch_number,
-                snark_proof_bytes = proof_bytes.len(),
-                attempt,
-                attempts,
-                "Submitting SNARK proof"
-            );
+            info!(batch_number, attempt, attempts, "Submitting SNARK proof");
             let payload = SubmitSnarkProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                snark_proof: &proof_bytes,
+                snark_proof: proof.clone(),
             };
             self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
         })

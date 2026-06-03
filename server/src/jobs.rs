@@ -19,7 +19,9 @@ use crate::types::{ProofOutcome, ProverMode, ProverResult, WorkerJob};
 pub struct JobWorker {
     mode: ProverMode,
     client: JobServerClient,
-    job_tx: SyncSender<WorkerJob>,
+    // `Option` so shutdown can drop the sender (telling the prover no more jobs
+    // are coming) while keeping the rest of the worker alive to drain results.
+    job_tx: Option<SyncSender<WorkerJob>>,
     result_rx: Receiver<ProverResult>,
     poll_interval: Duration,
     shutdown: Arc<AtomicBool>,
@@ -39,7 +41,7 @@ impl JobWorker {
         Self {
             mode,
             client,
-            job_tx,
+            job_tx: Some(job_tx),
             result_rx,
             poll_interval,
             shutdown,
@@ -50,27 +52,32 @@ impl JobWorker {
 
     pub fn run(mut self) {
         loop {
-            let shutting_down = self.shutdown.load(Ordering::Relaxed);
+            // Observe shutdown before touching the channels: stop fetching and
+            // dispatching new work, then drain whatever the prover is still
+            // computing so its result is submitted rather than discarded.
+            if self.shutdown.load(Ordering::Relaxed) {
+                self.drain_pending_results();
+                return;
+            }
+
             let mut did_work = false;
 
-            if !shutting_down {
-                // Drain the local SNARK follow-up before the prefetched FRI:
-                // it represents work whose FRI half is already settled, and
-                // keeping the order stable means a fresh prefetched FRI can
-                // sit safely in `pending_job` until the prover is free again.
-                if let Some(job) = self.snark_followup.take() {
-                    match self.job_tx.try_send(job) {
-                        Ok(()) => did_work = true,
-                        Err(TrySendError::Full(job)) => self.snark_followup = Some(job),
-                        Err(TrySendError::Disconnected(_)) => break,
-                    }
+            // Drain the local SNARK follow-up before the prefetched FRI:
+            // it represents work whose FRI half is already settled, and
+            // keeping the order stable means a fresh prefetched FRI can
+            // sit safely in `pending_job` until the prover is free again.
+            if let Some(job) = self.snark_followup.take() {
+                match self.sender().try_send(job) {
+                    Ok(()) => did_work = true,
+                    Err(TrySendError::Full(job)) => self.snark_followup = Some(job),
+                    Err(TrySendError::Disconnected(_)) => break,
                 }
-                if let Some(job) = self.pending_job.take() {
-                    match self.job_tx.try_send(job) {
-                        Ok(()) => did_work = true,
-                        Err(TrySendError::Full(job)) => self.pending_job = Some(job),
-                        Err(TrySendError::Disconnected(_)) => break,
-                    }
+            }
+            if let Some(job) = self.pending_job.take() {
+                match self.sender().try_send(job) {
+                    Ok(()) => did_work = true,
+                    Err(TrySendError::Full(job)) => self.pending_job = Some(job),
+                    Err(TrySendError::Disconnected(_)) => break,
                 }
             }
 
@@ -83,10 +90,6 @@ impl JobWorker {
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => break,
-            }
-
-            if shutting_down {
-                break;
             }
 
             if self.pending_job.is_none() {
@@ -106,6 +109,35 @@ impl JobWorker {
                 std::thread::sleep(self.poll_interval);
             }
         }
+    }
+
+    /// The job sender, present until [`Self::drain_pending_results`] drops it.
+    /// The main loop only dispatches before shutdown, so it is always `Some`
+    /// here.
+    fn sender(&self) -> &SyncSender<WorkerJob> {
+        self.job_tx
+            .as_ref()
+            .expect("job_tx is dropped only during shutdown drain")
+    }
+
+    /// Graceful shutdown: stop dispatching buffered work, drop the job sender
+    /// so the prover sees no more jobs are coming, and block submitting every
+    /// result the prover still produces for in-flight (and already-queued)
+    /// jobs. Without this, returning from `run` immediately would drop
+    /// `result_rx`, so the in-flight proof — potentially minutes of GPU work —
+    /// would be computed and then silently discarded instead of submitted.
+    fn drain_pending_results(&mut self) {
+        info!("Shutting down: draining in-flight prover results before exit...");
+        // Dropping the sender disconnects the channel once the prover drains
+        // it: the prover finishes its current job, picks up any already-queued
+        // job, then exits, which ends the blocking loop below.
+        self.job_tx = None;
+        while let Ok(outcome) = self.result_rx.recv() {
+            if let Err(err) = self.handle_prover_result(outcome) {
+                error!(?err, "Failed to handle prover outcome during shutdown");
+            }
+        }
+        info!("All in-flight results submitted; prover stopped");
     }
 
     fn fetch_job(&self) -> Result<Option<WorkerJob>> {
@@ -143,7 +175,7 @@ impl JobWorker {
                 batch_number,
                 proof,
             }) => {
-                self.client.submit_snark(batch_number, proof.as_ref())?;
+                self.client.submit_snark(batch_number, proof)?;
                 batch_number
             }
             Err(failure) => {
