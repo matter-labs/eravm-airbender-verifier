@@ -310,10 +310,9 @@ async fn handle_multi_batch_submit_snark_proofs(
     State(state): State<MultiBatchTestServerState>,
     Json(body): Json<SubmitSnarkProofBody>,
 ) -> StatusCode {
-    let proof_bytes = match hex::decode(&body.snark_proof) {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::BAD_REQUEST,
-    };
+    // Re-encode to bytes for the proof channel.
+    let proof_bytes =
+        serde_json::to_vec(&body.snark_proof).expect("failed to re-encode SNARK proof");
     println!(
         "[test-server] Received SNARK proof for batch {} ({} bytes)",
         body.l1_batch_number,
@@ -365,10 +364,9 @@ async fn handle_fixture_submit_snark_proofs(
     State(state): State<SnarkFixtureReplayState>,
     Json(body): Json<SubmitSnarkProofBody>,
 ) -> StatusCode {
-    let proof_bytes = match hex::decode(&body.snark_proof) {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::BAD_REQUEST,
-    };
+    // Re-encode to bytes for the proof channel.
+    let proof_bytes =
+        serde_json::to_vec(&body.snark_proof).expect("failed to re-encode SNARK proof");
     println!(
         "[test-server] Received SNARK fixture proof for batch {} ({} bytes)",
         body.l1_batch_number,
@@ -393,19 +391,18 @@ struct SubmitSnarkProofBody {
     l1_batch_number: u32,
     #[allow(dead_code)]
     prover_id: String,
-    /// Hex-encoded JSON-serialized `SnarkWrapperProof`, matching `SubmitSnarkProofRequest`
-    /// in the server crate.
-    snark_proof: String,
+    /// The wrapper PLONK proof, matching `SubmitSnarkProofRequest` in the server
+    /// crate (and zksync-era's `SubmitAirbenderSnarkProofRequest`).
+    snark_proof: SnarkWrapperProof,
 }
 
 async fn handle_submit_snark_proofs(
     State(state): State<TestServerState>,
     Json(body): Json<SubmitSnarkProofBody>,
 ) -> StatusCode {
-    let proof_bytes = match hex::decode(&body.snark_proof) {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::BAD_REQUEST,
-    };
+    // Re-encode to bytes for the proof channel.
+    let proof_bytes =
+        serde_json::to_vec(&body.snark_proof).expect("failed to re-encode SNARK proof");
     println!(
         "[test-server] Received SNARK proof for batch {} ({} bytes)",
         body.l1_batch_number,
@@ -943,9 +940,7 @@ async fn prover_server_proves_fri_then_snark() {
     // --- 4. Verify the FRI proof cryptographically and round-trip the SNARK payload. ---
     verify_fri_proof(&fri_bytes, &expected_public_input, &dist_dir, &fri_vk);
 
-    // The server JSON-encodes `SnarkWrapperProof` before hex-encoding into the
-    // request body. Deserializing it back is the strongest payload-shape check
-    // we can do here without linking a SNARK verifier into the test binary.
+    // Round-trip the SNARK payload as a shape check.
     let _snark_proof: SnarkWrapperProof = serde_json::from_slice(&snark_bytes)
         .expect("SNARK proof body did not deserialize as SnarkWrapperProof JSON");
     println!("[test] SNARK proof payload deserialized successfully!");
