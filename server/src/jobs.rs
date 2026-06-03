@@ -175,7 +175,7 @@ impl JobWorker {
                 batch_number,
                 proof,
             }) => {
-                self.client.submit_snark(batch_number, proof.as_ref())?;
+                self.client.submit_snark(batch_number, proof)?;
                 batch_number
             }
             Err(failure) => {
