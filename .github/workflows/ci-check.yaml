@@ -98,10 +98,10 @@ jobs:
     name: host-run-batches
     runs-on: matterlabs-ci-runner-high-performance
     # Prebuilt cargo-airbender image (CPU) published by airbender-platform's
-    # ci-release pipeline, pinned to the same v0.2.1 as the airbender-* crates
+    # ci-release pipeline, pinned to the same v0.2.2 as the airbender-* crates
     # in Cargo.toml. Ships nightly Rust + cargo-binutils + cargo-airbender.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.2
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -149,7 +149,7 @@ jobs:
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
     container:
-      image: ghcr.io/matter-labs/cargo-airbender:v0.2.1
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.2
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -189,10 +189,10 @@ jobs:
     name: server-integration-build
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
-    # Prebuilt cargo-airbender CUDA image (v0.2.1) — ships nightly Rust +
+    # Prebuilt cargo-airbender CUDA image (v0.2.2) — ships nightly Rust +
     # clang + cmake + the CUDA 12.9 devel toolchain, so no per-step installs.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.1
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.2
     env:
       # The runtime runner is an RTX 6000 Ada (sm_89). Match prove-batch.yaml.
       CUDA_ARCH: "89"
