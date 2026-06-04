@@ -273,7 +273,14 @@ fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK
 /// program's lifetime — its `Drop` flushes buffered events. Initializing Sentry
 /// also installs a panic handler, so panics on any thread are reported.
 fn init_sentry(cli: &Cli) -> Option<sentry::ClientInitGuard> {
-    let dsn = cli.sentry_url.as_deref()?;
+    // Treat an unset *or* empty `SENTRY_URL` as "Sentry disabled". An empty
+    // value is common when a deployment templates the var but leaves it blank,
+    // and we don't want that to look like a misconfigured DSN.
+    let dsn = cli
+        .sentry_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
     let guard = sentry::init((
         dsn,
         sentry::ClientOptions {
