@@ -123,7 +123,7 @@ pub struct VmExecutionState {
     zk_porter_available: bool,
     bootloader_code_hash: H256,
     default_aa_code_hash: H256,
-    evm_emulator_code_hash: H256,
+    evm_emulator_code_hash: Option<H256>,
 }
 
 impl VmExecutionState {
@@ -156,6 +156,38 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
 
+    // `vm_run_data` carries operator-supplied copies of values the verifier also
+    // derives from the canonical batch/system env. Bind the redundant copies that
+    // have an authoritative counterpart so a malicious witness cannot disagree with
+    // the environment the VM actually executes against.
+    anyhow::ensure!(
+        input.vm_run_data.l1_batch_number == batch_number,
+        "vm_run_data.l1_batch_number {:?} does not match l1_batch_env.number {batch_number:?}",
+        input.vm_run_data.l1_batch_number,
+    );
+    anyhow::ensure!(
+        input.vm_run_data.protocol_version == protocol_version,
+        "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
+        input.vm_run_data.protocol_version,
+    );
+    // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
+    // populated by the witness generator for the legacy proving path and are not
+    // consumed here: the verifier recomputes the bootloader heap it commits to from
+    // VM execution and derives refunds/pubdata itself. They are intentionally left
+    // unconstrained — real witnesses carry non-empty values for these fields.
+
+    if let Some(first) = input.l2_blocks_execution_data.first() {
+        let canonical = &input.l1_batch_env.first_l2_block;
+        anyhow::ensure!(
+            first.number.0 == canonical.number
+                && first.timestamp == canonical.timestamp
+                && first.prev_block_hash == canonical.prev_block_hash
+                && first.virtual_blocks == canonical.max_virtual_blocks_to_create
+                && first.interop_roots == canonical.interop_roots,
+            "l2_blocks_execution_data[0] metadata must equal l1_batch_env.first_l2_block",
+        );
+    }
+
     // Source all metadata-bound code hashes from system_env.base_system_smart_contracts.
     // That's what the VM actually loads — verifying any other copy (vm_run_data's
     // bootloader_code, default_account_code_hash, evm_emulator_code_hash) leaves a
@@ -164,11 +196,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     let base = &input.system_env.base_system_smart_contracts;
     let bootloader_code_hash = base.bootloader.hash;
     let default_aa_code_hash = base.default_aa.hash;
-    let evm_emulator_code_hash = base
-        .evm_emulator
-        .as_ref()
-        .map(|e| e.hash)
-        .unwrap_or_default();
+    let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 
     // Verify the bytecodes the VM consumes match the hashes that flow into
     // metadata_hash (and thus the batch commitment). System contracts are
@@ -180,7 +208,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     verify_bytecode_hash(h256_to_u256(default_aa_code_hash), &base.default_aa.code)
         .context("verifying default_aa bytecode")?;
     if let Some(emu) = &base.evm_emulator {
-        verify_bytecode_hash(h256_to_u256(evm_emulator_code_hash), &emu.code)
+        verify_bytecode_hash(h256_to_u256(emu.hash), &emu.code)
             .context("verifying evm_emulator bytecode")?;
     }
 
@@ -197,11 +225,10 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
 
         let vm_run_evm_emulator = input.vm_run_data.evm_emulator_code_hash.map(u256_to_h256);
-        let env_evm_emulator = base.evm_emulator.as_ref().map(|e| e.hash);
         anyhow::ensure!(
-            vm_run_evm_emulator == env_evm_emulator,
+            vm_run_evm_emulator == evm_emulator_code_hash,
             "vm_run_data.evm_emulator_code_hash {vm_run_evm_emulator:?} does not match \
-             system_env.base_system_smart_contracts.evm_emulator hash {env_evm_emulator:?}",
+             system_env.base_system_smart_contracts.evm_emulator hash {evm_emulator_code_hash:?}",
         );
 
         let vm_run_bootloader_bytes: Vec<u8> = input
@@ -444,7 +471,7 @@ pub fn verify_commitment(
             zkporter_is_available: state.zk_porter_available,
             bootloader_code_hash: state.bootloader_code_hash,
             default_aa_code_hash: state.default_aa_code_hash,
-            evm_emulator_code_hash: Some(state.evm_emulator_code_hash),
+            evm_emulator_code_hash: state.evm_emulator_code_hash,
             protocol_version: Some(state.protocol_version),
         },
         auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
@@ -456,6 +483,11 @@ pub fn verify_commitment(
             state_diffs_compressed: vec![],
             state_diffs_hash: state_diff_hash,
             aux_commitments: AuxCommitments {
+                // Post-Boojum commitments do not compute an events queue hash: the slot
+                // is still serialized into the auxiliary output hash, but this pipeline
+                // pins it to zero. Events are recoverable from the bound transaction
+                // heap, system logs, state diffs, and blob hashes, so the legacy
+                // commitment is left unused.
                 events_queue_commitment: H256::zero(),
                 bootloader_initial_content_commitment: bootloader_heap_hash,
             },
@@ -527,7 +559,13 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                  leaf_enumeration_index,
                  value_read,
                  leaf_hashed_key: leaf_storage_key,
-                 ..
+                 // `value_written` is consumed only by the Merkle tree's build path
+                 // (`zksync_merkle_tree::domain`), never by the verifier, which derives
+                 // the written value from VM execution. Bind it explicitly (instead of
+                 // `..`) so this match stays exhaustive: a future field added to
+                 // `StorageLogMetadata` won't compile until someone decides whether the
+                 // verifier should consume it, rather than being silently ignored.
+                 value_written: _,
              }| {
                 let root_hash = root_hash.into();
                 let merkle_path = merkle_paths.into_iter().map(|x| x.into()).collect();
@@ -586,6 +624,13 @@ fn execute_vm<VM>(
 where
     VM: VmInterfaceHistoryEnabled + VmInterfaceExt,
 {
+    anyhow::ensure!(
+        l2_blocks_execution_data
+            .last()
+            .is_none_or(|block| block.txs.is_empty()),
+        "Last L2 block's txs are never executed; populating them is a malformed witness",
+    );
+
     let next_l2_blocks_data = l2_blocks_execution_data.iter().skip(1);
 
     let l2_blocks_data = l2_blocks_execution_data.iter().zip(next_l2_blocks_data);
@@ -713,6 +758,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use airbender_codec::{AirbenderCodec, AirbenderCodecV0};
     use zksync_contracts::{BaseSystemContracts, SystemContractCode};
     use zksync_multivm::interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
     use zksync_types::commitment::BlobHash;
@@ -948,8 +994,8 @@ mod tests {
         };
         let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
-            bincode_v1::serialize(&avi).expect("Failed to serialize AirbenderVerifierInput.");
-        let deserialized: AirbenderVerifierInput = bincode_v1::deserialize(&serialized)
+            AirbenderCodecV0::encode(&avi).expect("Failed to serialize AirbenderVerifierInput.");
+        let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
         assert_eq!(avi, deserialized);

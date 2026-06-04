@@ -91,6 +91,7 @@ ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar
 
 # Protocol and VM dependencies
 airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
+airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
 airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
 airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
