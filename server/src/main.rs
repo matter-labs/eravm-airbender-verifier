@@ -17,6 +17,7 @@ use eravm_prover_host::{
     SnarkPipeline, SnarkWrapperVK,
 };
 use tracing::info;
+use zksync_cli_utils::init_tracing;
 
 use client::JobServerClient;
 use jobs::JobWorker;
@@ -118,11 +119,26 @@ struct Cli {
         required_if_eq_any = [("mode", "fri-snark"), ("mode", "snark-only")],
     )]
     snark_vk: Option<PathBuf>,
+
+    /// Sentry DSN for error reporting. When unset, Sentry is disabled and the
+    /// server logs to stdout only.
+    #[arg(long, env = "SENTRY_URL")]
+    sentry_url: Option<String>,
+
+    /// Deployment environment reported to Sentry (e.g. `era-stage-proofs`).
+    #[arg(long, env = "SENTRY_ENVIRONMENT")]
+    sentry_environment: Option<String>,
 }
 
 fn main() -> Result<()> {
-    init_tracing()?;
     let cli = Cli::parse();
+
+    // Initialize Sentry before anything else so early failures are captured.
+    // The returned guard must live for the whole program; dropping it flushes
+    // any buffered events.
+    let _sentry_guard = init_sentry(&cli);
+
+    init_tracing()?;
 
     if let Some(port) = cli.metrics_port {
         zksync_prover_metrics::start_metrics_server(port)
@@ -252,16 +268,35 @@ fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK
     Ok(Some(vk))
 }
 
-fn init_tracing() -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .try_init()
-        // `try_init` returns a `SetGlobalDefaultError` which does not implement
-        // `std::error::Error`, so `.context()` is unavailable here.
-        .map_err(|err| anyhow::anyhow!("failed to initialize tracing: {err}"))
+/// Initialize Sentry error reporting. Returns `None` (Sentry disabled) when no
+/// DSN is configured. The caller must keep the returned guard alive for the
+/// program's lifetime — its `Drop` flushes buffered events. Initializing Sentry
+/// also installs a panic handler, so panics on any thread are reported.
+fn init_sentry(cli: &Cli) -> Option<sentry::ClientInitGuard> {
+    // Treat an unset *or* empty `SENTRY_URL` as "Sentry disabled". An empty
+    // value is common when a deployment templates the var but leaves it blank,
+    // and we don't want that to look like a misconfigured DSN.
+    let dsn = cli
+        .sentry_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: Some(env!("CARGO_PKG_VERSION").into()),
+            environment: cli.sentry_environment.clone().map(Into::into),
+            ..Default::default()
+        },
+    ));
+    if guard.is_enabled() {
+        Some(guard)
+    } else {
+        // An invalid DSN leaves the client disabled; keeping the guard would be
+        // misleading. Tracing isn't up yet, so report on stderr directly.
+        eprintln!("Sentry DSN provided but client is disabled; error reporting is off");
+        None
+    }
 }
 
 fn default_prover_id() -> String {

@@ -16,7 +16,6 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zksync_cli_utils.workspace = true
 zksync_crypto_primitives.workspace = true
 zksync_multivm.workspace = true

@@ -7,7 +7,7 @@ use eravm_prover_host::{
     generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
 use std::path::PathBuf;
-use zksync_cli_utils::{resolve_batch_inputs, BatchInputFile};
+use zksync_cli_utils::{init_tracing, resolve_batch_inputs, BatchInputFile};
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 enum SecurityLevelArg {
@@ -255,16 +255,6 @@ fn load_snark_vk(path: Option<&std::path::Path>) -> Result<Option<SnarkWrapperVK
     let vk: SnarkWrapperVK = deserialize_from_file(&path_string)
         .with_context(|| format!("while loading SNARK VK from {}", path.display()))?;
     Ok(Some(vk))
-}
-
-fn init_tracing() -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .try_init()
-        .map_err(|err| anyhow::anyhow!("while attempting to initialize tracing subscriber: {err}"))
 }
 
 #[cfg(test)]

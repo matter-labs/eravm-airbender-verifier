@@ -15,19 +15,21 @@ bincode.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 eravm-prover-host.workspace = true
 reqwest.workspace = true
+sentry.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_with = {workspace = true, features = ["hex"]}
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zksync_airbender_verifier.workspace = true
+# `sentry` feature pulls the Sentry tracing layer into the shared `init_tracing`
+# so the server reports errors/panics; host and the verifier libs omit it.
+zksync_cli_utils = { workspace = true, features = ["sentry"] }
 zksync_prover_metrics.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
-zksync_cli_utils.workspace = true
 
 [features]
 # Compile the SNARK wrapper in GPU mode. Requires `bellman-cuda` (see README).
