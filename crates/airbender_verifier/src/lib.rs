@@ -247,33 +247,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
     }
 
-    // Map hashed storage key → enumeration index, sourced from the Merkle witness.
-    // Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
-    // state-diff hash. A key that appears in multiple merkle-path entries (read+write
-    // in the same batch) must agree on its enum index — disagreement means a malformed
-    // witness.
-    let mut enum_index_map: std::collections::BTreeMap<H256, u64> =
-        std::collections::BTreeMap::new();
-    for log in input
-        .merkle_paths
-        .merkle_paths
-        .iter()
-        .filter(|log| log.leaf_enumeration_index > 0)
-    {
-        let mut key_bytes = [0u8; 32];
-        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
-        let hashed = H256(key_bytes);
-        if let Some(&existing) = enum_index_map.get(&hashed) {
-            anyhow::ensure!(
-                existing == log.leaf_enumeration_index,
-                "merkle_paths witness has inconsistent enumeration indices for \
-                 leaf_hashed_key {hashed:?}: {existing} vs {}",
-                log.leaf_enumeration_index,
-            );
-        } else {
-            enum_index_map.insert(hashed, log.leaf_enumeration_index);
-        }
-    }
+    let enum_index_map = build_enum_index_map(&input.merkle_paths.merkle_paths)?;
 
     let read_storage_ops = input
         .vm_run_data
@@ -587,6 +561,15 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                         bail!("get_bowp is_write = false, first_write = true");
                     }
                     (true, true, _) => TreeLogEntry::Inserted,
+                    (true, false, 0) => {
+                        // A repeated write must reference an existing leaf. Index 0
+                        // produces an `Updated{leaf_index:0}` that folds identically to
+                        // an empty leaf, committing a ghost leaf at index 0.
+                        bail!(
+                            "get_bowp repeated write to leaf {leaf_storage_key:x} has \
+                             enumeration index 0"
+                        );
+                    }
                     (true, false, _) => {
                         tracing::trace!(
                             "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
@@ -665,6 +648,40 @@ where
 /// The pre-state value the Merkle witness proves for a single accessed slot.
 /// Empty slots (`ReadMissingKey`, `Inserted`) prove a zero pre-value; existing
 /// slots (`Read`, `Updated`) prove `value_read`.
+/// Map hashed storage key → enumeration index, sourced from the Merkle witness.
+///
+/// Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
+/// state-diff hash. Only entries that reference an *existing* leaf contribute:
+/// reads and repeated writes with `leaf_enumeration_index > 0`. `first_write`
+/// (Inserted) entries carry the newly assigned index for a slot that is empty
+/// in the old tree; exposing it to the VM would make a fresh slot look
+/// pre-existing and perturb `StateDiffRecord.enumeration_index`.
+///
+/// A key appearing in multiple entries (e.g. read + write in the same batch)
+/// must agree on its index — disagreement means a malformed witness.
+fn build_enum_index_map(
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<std::collections::BTreeMap<H256, u64>> {
+    let mut enum_index_map = std::collections::BTreeMap::new();
+    for log in merkle_paths
+        .iter()
+        .filter(|log| log.leaf_enumeration_index > 0 && !log.first_write)
+    {
+        let hashed = H256(log.leaf_hashed_key_array());
+        if let Some(&existing) = enum_index_map.get(&hashed) {
+            anyhow::ensure!(
+                existing == log.leaf_enumeration_index,
+                "merkle_paths witness has inconsistent enumeration indices for \
+                 leaf_hashed_key {hashed:?}: {existing} vs {}",
+                log.leaf_enumeration_index,
+            );
+        } else {
+            enum_index_map.insert(hashed, log.leaf_enumeration_index);
+        }
+    }
+    Ok(enum_index_map)
+}
+
 fn witness_prestate_value(log: &StorageLogMetadata) -> H256 {
     let proves_empty = if log.is_write {
         log.first_write
@@ -906,6 +923,40 @@ mod tests {
         let storage = std::collections::BTreeMap::new();
         let paths = vec![meta(k, false, false, 0, H256::zero())];
         assert!(bind_observed_reads_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn get_bowp_rejects_repeated_write_with_zero_index() {
+        // Ghost leaf: a repeated write (first_write=false) must reference an
+        // existing leaf (index > 0).
+        let mut paths = WitnessInputMerklePaths::new(1);
+        paths.push_merkle_path(meta(key(0x3001), true, false, 0, H256::zero()));
+        assert!(get_bowp(paths).is_err());
+    }
+
+    #[test]
+    fn enum_index_map_excludes_inserted_leaves() {
+        // Inserted entries carry the *newly* assigned index; it must not be
+        // exposed to the VM as a pre-existing enumeration index.
+        let inserted = key(0x4001);
+        let existing = key(0x4002);
+        let paths = vec![
+            meta(inserted, true, true, 5, H256::zero()),
+            meta(existing, false, false, 7, H256::from_low_u64_be(0x9)),
+        ];
+        let map = build_enum_index_map(&paths).unwrap();
+        assert_eq!(map.get(&inserted.hashed_key()), None);
+        assert_eq!(map.get(&existing.hashed_key()), Some(&7));
+    }
+
+    #[test]
+    fn enum_index_map_rejects_inconsistent_indices() {
+        let k = key(0x4003);
+        let paths = vec![
+            meta(k, false, false, 7, H256::zero()),
+            meta(k, false, false, 8, H256::zero()),
+        ];
+        assert!(build_enum_index_map(&paths).is_err());
     }
 
     #[test]
