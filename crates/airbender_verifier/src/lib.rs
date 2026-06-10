@@ -247,57 +247,13 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
     }
 
-    // Map hashed storage key → enumeration index, sourced from the Merkle witness.
-    // Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
-    // state-diff hash. A key that appears in multiple merkle-path entries (read+write
-    // in the same batch) must agree on its enum index — disagreement means a malformed
-    // witness.
-    let mut enum_index_map: std::collections::BTreeMap<H256, u64> =
-        std::collections::BTreeMap::new();
-    for log in input
-        .merkle_paths
-        .merkle_paths
-        .iter()
-        .filter(|log| log.leaf_enumeration_index > 0)
-    {
-        let mut key_bytes = [0u8; 32];
-        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
-        let hashed = H256(key_bytes);
-        if let Some(&existing) = enum_index_map.get(&hashed) {
-            anyhow::ensure!(
-                existing == log.leaf_enumeration_index,
-                "merkle_paths witness has inconsistent enumeration indices for \
-                 leaf_hashed_key {hashed:?}: {existing} vs {}",
-                log.leaf_enumeration_index,
-            );
-        } else {
-            enum_index_map.insert(hashed, log.leaf_enumeration_index);
-        }
-    }
-
-    let read_storage_ops = input
-        .vm_run_data
-        .witness_block_state
-        .read_storage_key
-        .into_iter();
-
-    let initial_writes_ops = input
-        .vm_run_data
-        .witness_block_state
-        .is_write_initial
-        .into_iter();
-
-    let storage =
-        read_storage_ops
-            .map(|(key, value)| {
-                let hashed = key.hashed_key();
-                let enum_idx = enum_index_map.get(&hashed).copied();
-                (hashed, compress_value_and_index(value, enum_idx))
-            })
-            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-                initial_write.then_some((key.hashed_key(), None))
-            }))
-            .collect();
+    // Build the VM's storage view directly from the Merkle witness — the only
+    // pre-state data bound to `old_root_hash` by `verify_proofs`. The operator's
+    // `vm_run_data.witness_block_state` (`read_storage_key` / `is_write_initial`)
+    // is intentionally NOT consulted: it has no anchor to the trusted root, so
+    // trusting it would let a malicious operator feed the VM a forged value or
+    // initialness for any slot.
+    let storage = build_storage_view_from_witness(&input.merkle_paths.merkle_paths)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -586,6 +542,15 @@ fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<Block
                         bail!("get_bowp is_write = false, first_write = true");
                     }
                     (true, true, _) => TreeLogEntry::Inserted,
+                    (true, false, 0) => {
+                        // A repeated write must reference an existing leaf. Index 0
+                        // produces an `Updated{leaf_index:0}` that folds identically to
+                        // an empty leaf, committing a ghost leaf at index 0.
+                        bail!(
+                            "get_bowp repeated write to leaf {leaf_storage_key:x} has \
+                             enumeration index 0"
+                        );
+                    }
                     (true, false, _) => {
                         tracing::trace!(
                             "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
@@ -659,6 +624,50 @@ where
     tracing::trace!("about to vm.finish_batch()");
 
     Ok(vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version)))
+}
+
+/// Build the VM's storage view (hashed key → `Some((value, enum_index))` /
+/// `None`) entirely from the Merkle witness, which `verify_proofs` binds to
+/// `old_root_hash`. This is the single source of truth for every slot's
+/// pre-state: value, enumeration index, and initialness all follow from the
+/// witness, so a malicious operator cannot disagree with the proven root.
+///
+/// Per entry, the proven pre-state is:
+/// - empty slot (`ReadMissingKey`: read with index 0; `Inserted`: first write)
+///   → zero value, no enumeration index (`None`);
+/// - existing slot (`Read` / `Updated`) → `value_read` at `leaf_enumeration_index`.
+///
+/// A key may appear in several entries (e.g. read + write in one batch); they
+/// must agree on the pre-state, otherwise the witness is malformed.
+fn build_storage_view_from_witness(
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
+    use std::collections::btree_map::Entry;
+
+    let mut storage = std::collections::BTreeMap::new();
+    for log in merkle_paths {
+        let hashed = H256(log.leaf_hashed_key_array());
+        let proves_empty = if log.is_write {
+            log.first_write
+        } else {
+            log.leaf_enumeration_index == 0
+        };
+        let slot = if proves_empty {
+            compress_value_and_index(H256::zero(), None)
+        } else {
+            compress_value_and_index(H256(log.value_read), Some(log.leaf_enumeration_index))
+        };
+        match storage.entry(hashed) {
+            Entry::Vacant(v) => {
+                v.insert(slot);
+            }
+            Entry::Occupied(existing) => anyhow::ensure!(
+                *existing.get() == slot,
+                "merkle_paths witness proves inconsistent pre-state for leaf {hashed:?}",
+            ),
+        }
+    }
+    Ok(storage)
 }
 
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
@@ -766,6 +775,95 @@ mod tests {
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
     use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+    use zksync_types::{AccountTreeId, Address, StorageKey};
+
+    /// A storage key in a distinct contract address, so tests pick unique
+    /// hashed keys without collisions.
+    fn key(n: u64) -> StorageKey {
+        StorageKey::new(
+            AccountTreeId::new(Address::from_low_u64_be(n)),
+            H256::zero(),
+        )
+    }
+
+    /// Build a `StorageLogMetadata` witness entry for `key`. `merkle_paths` is
+    /// left empty — the derivation under test reads only the flags, enumeration
+    /// index, and `value_read`.
+    fn meta(
+        key: StorageKey,
+        is_write: bool,
+        first_write: bool,
+        leaf_enumeration_index: u64,
+        value_read: H256,
+    ) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: [0u8; 32],
+            is_write,
+            first_write,
+            merkle_paths: vec![],
+            leaf_hashed_key: key.hashed_key_u256(),
+            leaf_enumeration_index,
+            value_written: [0u8; 32],
+            value_read: value_read.0,
+        }
+    }
+
+    #[test]
+    fn derives_empty_slot_for_read_missing_key() {
+        // ReadMissingKey (read, index 0) ⇒ empty slot, value 0, no enum index —
+        // regardless of anything the operator might have claimed. This is what
+        // makes a forged `read_storage_key[K]` impossible to honor.
+        let k = key(0x1001);
+        let storage =
+            build_storage_view_from_witness(&[meta(k, false, false, 0, H256::zero())]).unwrap();
+        assert_eq!(storage.get(&k.hashed_key()), Some(&None));
+    }
+
+    #[test]
+    fn derives_existing_slot_for_read() {
+        let k = key(0x1002);
+        let v = H256::from_low_u64_be(0x11);
+        let storage = build_storage_view_from_witness(&[meta(k, false, false, 7, v)]).unwrap();
+        assert_eq!(storage.get(&k.hashed_key()), Some(&Some((v, 7))));
+    }
+
+    #[test]
+    fn derives_empty_slot_for_inserted_write() {
+        // Inserted (first write): empty in the old tree, so value 0 / no index —
+        // the new enumeration index is *not* exposed as a pre-existing one.
+        let k = key(0x1003);
+        let storage =
+            build_storage_view_from_witness(&[meta(k, true, true, 5, H256::zero())]).unwrap();
+        assert_eq!(storage.get(&k.hashed_key()), Some(&None));
+    }
+
+    #[test]
+    fn derives_existing_slot_for_updated_write() {
+        let k = key(0x1004);
+        let v_real = H256::from_low_u64_be(0x22);
+        let storage = build_storage_view_from_witness(&[meta(k, true, false, 9, v_real)]).unwrap();
+        assert_eq!(storage.get(&k.hashed_key()), Some(&Some((v_real, 9))));
+    }
+
+    #[test]
+    fn rejects_inconsistent_witness_for_same_key() {
+        let k = key(0x1005);
+        let paths = vec![
+            meta(k, false, false, 7, H256::from_low_u64_be(0x1)),
+            meta(k, false, false, 7, H256::from_low_u64_be(0x2)),
+        ];
+        assert!(build_storage_view_from_witness(&paths).is_err());
+    }
+
+    #[test]
+    fn get_bowp_rejects_repeated_write_with_zero_index() {
+        // Ghost leaf: a repeated write (first_write=false) must reference an
+        // existing leaf (index > 0). Not subsumed by the storage-view derivation
+        // because it corrupts the proof fold, not the VM's view.
+        let mut paths = WitnessInputMerklePaths::new(1);
+        paths.push_merkle_path(meta(key(0x3001), true, false, 0, H256::zero()));
+        assert!(get_bowp(paths).is_err());
+    }
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
