@@ -247,15 +247,27 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
     }
 
-    // The operator supplies the VM's storage view via `witness_block_state`. We
-    // need it for completeness — it covers every slot the VM reads, including
-    // reverted / deduplicated reads that never reach the committed `merkle_paths`
-    // — but it is not anchored to `old_root_hash` on its own. Enumeration indices
-    // come from the Merkle witness (`build_enum_index_map`), and every slot the
-    // witness proves is then bound to that view by `bind_storage_view_to_witness`,
-    // so a malicious operator cannot disagree with the proven root on any proven
-    // slot's value, index, or initialness.
+    // The operator supplies the VM's storage view via `witness_block_state`,
+    // which has no anchor to `old_root_hash` on its own. We bind it to the
+    // Merkle witness in two steps so a malicious operator cannot feed the VM a
+    // forged value/index/initialness for any slot the VM reads:
+    //   1. `bind_storage_view_to_witness` — every slot the witness proves must
+    //      match the operator's view (value, enumeration index, initialness).
+    //   2. `require_reads_proven` — every slot the VM reads (`read_storage_key`)
+    //      must itself be proven against `old_root_hash`, i.e. present in
+    //      `merkle_paths`. Without this, a slot read only inside a reverted frame
+    //      (dropped from the committed/deduplicated `merkle_paths`, but still in
+    //      `read_storage_key` because the VM read it) would never be bound to the
+    //      root, and its value could be forged and leaked into committed state
+    //      via the reverted frame. Enumeration indices come from the witness.
     let enum_index_map = build_enum_index_map(&input.merkle_paths.merkle_paths)?;
+    let read_keys: Vec<H256> = input
+        .vm_run_data
+        .witness_block_state
+        .read_storage_key
+        .keys()
+        .map(|key| key.hashed_key())
+        .collect();
     let read_storage_ops = input
         .vm_run_data
         .witness_block_state
@@ -278,6 +290,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
             }))
             .collect();
     bind_storage_view_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
+    require_reads_proven(&read_keys, &input.merkle_paths.merkle_paths)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -736,6 +749,34 @@ fn bind_storage_view_to_witness(
     Ok(())
 }
 
+/// Require that every slot the VM reads is proven against `old_root_hash`, i.e.
+/// appears in the Merkle witness. `read_keys` is the complete set of slots the
+/// VM read (the operator's flat storage-view cache, including reads inside
+/// reverted frames); `merkle_paths` is the proof-bearing, root-anchored set. A
+/// read present in the former but absent from the latter is unbound — its value
+/// is operator-controlled and could be forged (and leaked into committed state
+/// via a reverted frame), so it is rejected.
+///
+/// (Boojum bound such reads in-circuit over the full storage log; airbender has
+/// no in-circuit storage argument, so this re-execution verifier must require
+/// the witness to prove every read.)
+fn require_reads_proven(
+    read_keys: &[H256],
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<()> {
+    let proven: std::collections::BTreeSet<H256> = merkle_paths
+        .iter()
+        .map(|log| H256(log.leaf_hashed_key_array()))
+        .collect();
+    if let Some(unproven) = read_keys.iter().find(|hashed| !proven.contains(hashed)) {
+        anyhow::bail!(
+            "VM-read slot {unproven:?} is not proven against old_root_hash; the witness must \
+             include a Merkle path for every slot the VM reads, including reverted-frame reads",
+        );
+    }
+    Ok(())
+}
+
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
 fn map_log_tree(
     storage_log: &StorageLog,
@@ -1010,6 +1051,29 @@ mod tests {
         let mut paths = WitnessInputMerklePaths::new(1);
         paths.push_merkle_path(meta(key(0x3002), false, true, 0, H256::zero()));
         assert!(get_bowp(paths).is_err());
+    }
+
+    #[test]
+    fn require_reads_proven_accepts_when_all_reads_have_paths() {
+        let a = key(0x6001);
+        let b = key(0x6002);
+        let paths = vec![
+            meta(a, false, false, 4, H256::from_low_u64_be(0x1)),
+            meta(b, true, true, 0, H256::zero()),
+        ];
+        let read_keys = vec![a.hashed_key(), b.hashed_key()];
+        assert!(require_reads_proven(&read_keys, &paths).is_ok());
+    }
+
+    #[test]
+    fn require_reads_proven_rejects_read_without_path() {
+        // A slot the VM read (e.g. inside a reverted frame) that has no Merkle
+        // path is unbound to old_root_hash and must be rejected.
+        let proven = key(0x6003);
+        let reverted_read = key(0x6004);
+        let paths = vec![meta(proven, false, false, 7, H256::zero())];
+        let read_keys = vec![proven.hashed_key(), reverted_read.hashed_key()];
+        assert!(require_reads_proven(&read_keys, &paths).is_err());
     }
 
     #[test]
