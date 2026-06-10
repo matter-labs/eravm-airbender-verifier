@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use airbender_host::SecurityLevel;
+use airbender_host::{HostBufferPoolConfig, SecurityLevel};
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
@@ -55,6 +55,20 @@ struct Cli {
     /// card. A value at or above free memory is a no-op.
     #[arg(long, env = "FRI_GPU_MEMORY_GB")]
     fri_gpu_memory_gb: Option<f64>,
+
+    /// Pinned host transfer buffers the FRI prover pre-allocates per concurrent
+    /// job, each a 64 MiB page-locked (committed) allocation. The pool is
+    /// `per-job + per-device` buffers total; on a single-GPU box that is
+    /// `this + --fri-host-buffers-per-device`. Upstream default is 256; lowered
+    /// to reclaim committed RAM (the pool is mostly prefetch headroom). Raise
+    /// back toward 256 if FRI proving throughput regresses.
+    #[arg(long, env = "FRI_HOST_BUFFERS_PER_JOB", default_value = "224")]
+    fri_host_buffers_per_job: usize,
+
+    /// Pinned host transfer buffers the FRI prover pre-allocates per GPU device,
+    /// each 64 MiB. Upstream default is 128; lowered to reclaim committed RAM.
+    #[arg(long, env = "FRI_HOST_BUFFERS_PER_DEVICE", default_value = "64")]
+    fri_host_buffers_per_device: usize,
 
     /// Identifier for this prover instance, included in proof submissions.
     /// Defaults to the HOSTNAME environment variable (i.e. the Kubernetes pod name).
@@ -227,6 +241,10 @@ fn build_prover(
     let fri_gpu_memory_bytes = cli
         .fri_gpu_memory_gb
         .map(|gb| (gb * (1u64 << 30) as f64) as usize);
+    let host_pool = HostBufferPoolConfig {
+        allocators_per_job: Some(cli.fri_host_buffers_per_job),
+        allocators_per_device: Some(cli.fri_host_buffers_per_device),
+    };
     let build_fri = || {
         FriPipeline::new(
             dist_dir,
@@ -234,6 +252,7 @@ fn build_prover(
             cli.worker_threads,
             security,
             fri_gpu_memory_bytes,
+            host_pool,
         )
         .context("while building FRI pipeline")
     };

@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "airbender-codec"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -91,7 +91,7 @@ dependencies = [
 [[package]]
 name = "airbender-core"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -101,7 +101,7 @@ dependencies = [
 [[package]]
 name = "airbender-crypto"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "airbender-guest"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "airbender-codec",
  "airbender-core",
@@ -142,7 +142,7 @@ dependencies = [
 [[package]]
 name = "airbender-host"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "airbender-codec",
  "airbender-core",
@@ -161,7 +161,7 @@ dependencies = [
 [[package]]
 name = "airbender-macros"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.44",
@@ -171,7 +171,7 @@ dependencies = [
 [[package]]
 name = "airbender-rt"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "getrandom 0.2.17",
  "riscv_common",
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "airbender-sdk"
 version = "0.2.2"
-source = "git+https://github.com/matter-labs/airbender-platform?rev=049e7ee793569a7fa1dac978305b43c7fdf67090#049e7ee793569a7fa1dac978305b43c7fdf67090"
+source = "git+https://github.com/matter-labs/airbender-platform?rev=a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9#a8937cf1ec0ccf6a43ff1b1fa6c86fede4aca0a9"
 dependencies = [
  "airbender-codec",
  "airbender-guest",
@@ -1946,7 +1946,7 @@ dependencies = [
  "serde",
  "serde_json",
  "setups",
- "sha3 0.9.1",
+ "sha3 0.10.8",
  "trace_and_split",
  "verifier_common",
 ]
@@ -4796,7 +4796,7 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_json",
- "sha3 0.9.1",
+ "sha3 0.10.8",
  "shift_binary_csr",
  "syn 2.0.114",
  "unified_reduced_machine",
@@ -6595,7 +6595,7 @@ dependencies = [
  "serde",
  "serde_json",
  "setups",
- "sha3 0.9.1",
+ "sha3 0.10.8",
  "shivini",
  "snark_wrapper",
  "tracing",
