@@ -287,7 +287,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         .is_write_initial
         .into_iter();
 
-    let storage =
+    let storage: std::collections::BTreeMap<H256, Option<(H256, u64)>> =
         read_storage_ops
             .map(|(key, value)| {
                 let hashed = key.hashed_key();
@@ -298,6 +298,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
                 initial_write.then_some((key.hashed_key(), None))
             }))
             .collect();
+    bind_observed_reads_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -661,6 +662,53 @@ where
     Ok(vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version)))
 }
 
+/// The pre-state value the Merkle witness proves for a single accessed slot.
+/// Empty slots (`ReadMissingKey`, `Inserted`) prove a zero pre-value; existing
+/// slots (`Read`, `Updated`) prove `value_read`.
+fn witness_prestate_value(log: &StorageLogMetadata) -> H256 {
+    let proves_empty = if log.is_write {
+        log.first_write
+    } else {
+        log.leaf_enumeration_index == 0
+    };
+    if proves_empty {
+        H256::zero()
+    } else {
+        H256(log.value_read)
+    }
+}
+
+/// Bind the value the VM observes for every accessed slot to the pre-state
+/// value the Merkle witness proves.
+///
+/// Without this, the operator can hand the VM an arbitrary value for a slot
+/// whose proof certifies a different (or zero) pre-state — forging balances,
+/// access-control bits, or nonces from empty slots. `map_log_tree` cannot catch
+/// this on its own: it discards `value_read` for writes and skips the value
+/// check entirely for `ReadMissingKey`.
+fn bind_observed_reads_to_witness(
+    storage: &std::collections::BTreeMap<H256, Option<(H256, u64)>>,
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<()> {
+    for log in merkle_paths {
+        let hashed = H256(log.leaf_hashed_key_array());
+        // A present `None` is a legitimate empty slot (observed value 0); a key
+        // absent from the snapshot is a malformed witness — the VM would later
+        // panic reading it, so reject it here with a clear error instead.
+        let slot = storage.get(&hashed).with_context(|| {
+            format!("Merkle witness references slot {hashed:?} absent from the storage view")
+        })?;
+        let observed = slot.map(|(value, _)| value).unwrap_or_default();
+        let proven = witness_prestate_value(log);
+        anyhow::ensure!(
+            observed == proven,
+            "VM observed value {observed:?} for slot {hashed:?}, but the Merkle witness proves \
+             pre-state value {proven:?}",
+        );
+    }
+    Ok(())
+}
+
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
 fn map_log_tree(
     storage_log: &StorageLog,
@@ -766,6 +814,99 @@ mod tests {
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
     use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+    use zksync_types::{AccountTreeId, Address, StorageKey};
+
+    /// A storage key in a distinct contract address, so tests pick unique
+    /// hashed keys without collisions.
+    fn key(n: u64) -> StorageKey {
+        StorageKey::new(
+            AccountTreeId::new(Address::from_low_u64_be(n)),
+            H256::zero(),
+        )
+    }
+
+    /// Build a `StorageLogMetadata` witness entry for `key`. `merkle_paths` is
+    /// left empty — the witness-binding checks under test read only the flags,
+    /// enumeration index, and `value_read`.
+    fn meta(
+        key: StorageKey,
+        is_write: bool,
+        first_write: bool,
+        leaf_enumeration_index: u64,
+        value_read: H256,
+    ) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: [0u8; 32],
+            is_write,
+            first_write,
+            merkle_paths: vec![],
+            leaf_hashed_key: key.hashed_key_u256(),
+            leaf_enumeration_index,
+            value_written: [0u8; 32],
+            value_read: value_read.0,
+        }
+    }
+
+    #[test]
+    fn bind_reads_rejects_nonzero_value_on_missing_key() {
+        // F-08: ReadMissingKey (is_write=false, idx=0) must observe 0.
+        let k = key(0x1001);
+        let storage = std::collections::BTreeMap::from([(
+            k.hashed_key(),
+            Some((H256::from_low_u64_be(0xdead), 0)),
+        )]);
+        let paths = vec![meta(k, false, false, 0, H256::zero())];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_reads_rejects_value_mismatch_on_updated_write() {
+        // F-24 Updated: witness proves V_real, VM observes V_evil.
+        let k = key(0x1002);
+        let v_real = H256::from_low_u64_be(0x11);
+        let v_evil = H256::from_low_u64_be(0x22);
+        let storage = std::collections::BTreeMap::from([(k.hashed_key(), Some((v_evil, 7)))]);
+        let paths = vec![meta(k, true, false, 7, v_real)];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_reads_rejects_nonzero_value_on_inserted_write() {
+        // F-24 Inserted: witness proves empty (0), VM observes V_evil.
+        let k = key(0x1003);
+        let storage = std::collections::BTreeMap::from([(
+            k.hashed_key(),
+            Some((H256::from_low_u64_be(0xbeef), 0)),
+        )]);
+        let paths = vec![meta(k, true, true, 0, H256::zero())];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_reads_accepts_consistent_witness() {
+        let read = key(0x2001);
+        let v = H256::from_low_u64_be(0x33);
+        let missing = key(0x2002);
+        let storage = std::collections::BTreeMap::from([
+            (read.hashed_key(), Some((v, 5))),
+            (missing.hashed_key(), None),
+        ]);
+        let paths = vec![
+            meta(read, false, false, 5, v),
+            meta(missing, false, false, 0, H256::zero()),
+        ];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_ok());
+    }
+
+    #[test]
+    fn bind_reads_rejects_slot_absent_from_storage() {
+        // A witness entry for a key the snapshot never seeds would later panic
+        // the VM; fail fast here instead of letting a zero proven value slip by.
+        let k = key(0x2003);
+        let storage = std::collections::BTreeMap::new();
+        let paths = vec![meta(k, false, false, 0, H256::zero())];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_err());
+    }
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
