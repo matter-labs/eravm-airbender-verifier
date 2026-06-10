@@ -19,7 +19,6 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
-        utils::compress_value_and_index,
         FinishedL1Batch, L2BlockEnv, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
@@ -38,7 +37,7 @@ use zksync_types::{
     u256_to_h256,
     web3::keccak256,
     writes::StateDiffRecord,
-    L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue, Transaction, H256, U256,
+    L1BatchNumber, ProtocolVersionId, StorageLog, Transaction, H256, U256,
 };
 
 use crate::commitment::expand_bootloader_heap;
@@ -506,69 +505,39 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
 fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<BlockOutputWithProofs> {
     let logs_result: Result<_, _> = witness_input_merkle_paths
         .into_merkle_paths()
-        .map(
-            |StorageLogMetadata {
-                 root_hash,
-                 merkle_paths,
-                 is_write,
-                 first_write,
-                 leaf_enumeration_index,
-                 value_read,
-                 leaf_hashed_key: leaf_storage_key,
-                 // `value_written` is consumed only by the Merkle tree's build path
-                 // (`zksync_merkle_tree::domain`), never by the verifier, which derives
-                 // the written value from VM execution. Bind it explicitly (instead of
-                 // `..`) so this match stays exhaustive: a future field added to
-                 // `StorageLogMetadata` won't compile until someone decides whether the
-                 // verifier should consume it, rather than being silently ignored.
-                 value_written: _,
-             }| {
-                let root_hash = root_hash.into();
-                let merkle_path = merkle_paths.into_iter().map(|x| x.into()).collect();
-                let base: TreeLogEntry = match (is_write, first_write, leaf_enumeration_index) {
-                    (false, _, 0) => TreeLogEntry::ReadMissingKey,
-                    (false, false, _) => {
-                        tracing::trace!(
-                            "TreeLogEntry::Read {leaf_storage_key:x} = {:x}",
-                            StorageValue::from(value_read)
-                        );
-                        TreeLogEntry::Read {
-                            leaf_index: leaf_enumeration_index,
-                            value: value_read.into(),
-                        }
-                    }
-                    (false, true, _) => {
-                        tracing::error!("get_bowp is_write = false, first_write = true");
-                        bail!("get_bowp is_write = false, first_write = true");
-                    }
-                    (true, true, _) => TreeLogEntry::Inserted,
-                    (true, false, 0) => {
-                        // A repeated write must reference an existing leaf. Index 0
-                        // produces an `Updated{leaf_index:0}` that folds identically to
-                        // an empty leaf, committing a ghost leaf at index 0.
-                        bail!(
-                            "get_bowp repeated write to leaf {leaf_storage_key:x} has \
-                             enumeration index 0"
-                        );
-                    }
-                    (true, false, _) => {
-                        tracing::trace!(
-                            "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
-                            StorageValue::from(value_read)
-                        );
-                        TreeLogEntry::Updated {
-                            leaf_index: leaf_enumeration_index,
-                            previous_value: value_read.into(),
-                        }
-                    }
-                };
-                Ok(TreeLogEntryWithProof {
-                    base,
-                    merkle_path,
-                    root_hash,
-                })
-            },
-        )
+        .map(|log| -> anyhow::Result<TreeLogEntryWithProof> {
+            let root_hash = log.root_hash.into();
+            // Same classifier as the storage-view derivation, so the two can
+            // never disagree on which witness shapes are valid. `value_written`
+            // is intentionally unused: the verifier derives the written value
+            // from VM execution, not from the witness.
+            let base = match classify_witness_leaf(&log)? {
+                WitnessLeaf::Empty { is_write: false } => TreeLogEntry::ReadMissingKey,
+                WitnessLeaf::Empty { is_write: true } => TreeLogEntry::Inserted,
+                WitnessLeaf::Existing {
+                    is_write: false,
+                    index,
+                    value,
+                } => TreeLogEntry::Read {
+                    leaf_index: index,
+                    value: value.0.into(),
+                },
+                WitnessLeaf::Existing {
+                    is_write: true,
+                    index,
+                    value,
+                } => TreeLogEntry::Updated {
+                    leaf_index: index,
+                    previous_value: value.0.into(),
+                },
+            };
+            let merkle_path = log.merkle_paths.into_iter().map(|x| x.into()).collect();
+            Ok(TreeLogEntryWithProof {
+                base,
+                merkle_path,
+                root_hash,
+            })
+        })
         .collect();
 
     let logs: Vec<TreeLogEntryWithProof> = logs_result?;
@@ -626,20 +595,62 @@ where
     Ok(vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version)))
 }
 
+/// The pre-state a single Merkle-witness entry proves about its leaf, derived
+/// from the `(is_write, first_write, leaf_enumeration_index)` shape. This is the
+/// one place that decides which shapes are valid; both the storage-view
+/// derivation and the tree-log classifier (`get_bowp`) go through it, so they
+/// can never disagree about what a well-formed witness looks like.
+enum WitnessLeaf {
+    /// Empty in the old tree: a read of a missing key, or a first write.
+    Empty { is_write: bool },
+    /// An existing leaf at `index` (> 0) holding `value`: a read or a repeated write.
+    Existing {
+        is_write: bool,
+        index: u64,
+        value: H256,
+    },
+}
+
+/// Classify a witness entry, rejecting shapes the Merkle tree never emits.
+///
+/// Rejected shapes (each would otherwise reach the VM or `verify_proofs` as an
+/// impossible state): a read marked `first_write`, and a repeated write
+/// (`first_write=false`) with `leaf_enumeration_index=0` (which would fold like
+/// an empty leaf and commit a ghost leaf at index 0).
+fn classify_witness_leaf(log: &StorageLogMetadata) -> anyhow::Result<WitnessLeaf> {
+    let key = log.leaf_hashed_key;
+    match (log.is_write, log.first_write, log.leaf_enumeration_index) {
+        (false, true, _) => bail!("witness read entry for leaf {key:x} is marked first_write"),
+        (false, _, 0) => Ok(WitnessLeaf::Empty { is_write: false }),
+        (false, false, index) => Ok(WitnessLeaf::Existing {
+            is_write: false,
+            index,
+            value: H256(log.value_read),
+        }),
+        (true, true, _) => Ok(WitnessLeaf::Empty { is_write: true }),
+        (true, false, 0) => {
+            bail!("witness repeated write to leaf {key:x} has enumeration index 0")
+        }
+        (true, false, index) => Ok(WitnessLeaf::Existing {
+            is_write: true,
+            index,
+            value: H256(log.value_read),
+        }),
+    }
+}
+
 /// Build the VM's storage view (hashed key → `Some((value, enum_index))` /
 /// `None`) entirely from the Merkle witness, which `verify_proofs` binds to
 /// `old_root_hash`. This is the single source of truth for every slot's
 /// pre-state: value, enumeration index, and initialness all follow from the
 /// witness, so a malicious operator cannot disagree with the proven root.
 ///
-/// Per entry, the proven pre-state is:
-/// - empty slot (`ReadMissingKey`: read with index 0; `Inserted`: first write)
-///   → zero value, no enumeration index (`None`);
-/// - existing slot (`Read` / `Updated`) → `value_read` at `leaf_enumeration_index`.
+/// Malformed witness shapes are rejected here, before VM execution, rather than
+/// running the VM against an impossible state and only failing later.
 ///
 /// A key may appear in several entries (e.g. read + write in one batch); they
 /// must agree on the pre-state, otherwise the witness is malformed.
-fn build_storage_view_from_witness(
+pub fn build_storage_view_from_witness(
     merkle_paths: &[StorageLogMetadata],
 ) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
     use std::collections::btree_map::Entry;
@@ -647,15 +658,11 @@ fn build_storage_view_from_witness(
     let mut storage = std::collections::BTreeMap::new();
     for log in merkle_paths {
         let hashed = H256(log.leaf_hashed_key_array());
-        let proves_empty = if log.is_write {
-            log.first_write
-        } else {
-            log.leaf_enumeration_index == 0
-        };
-        let slot = if proves_empty {
-            compress_value_and_index(H256::zero(), None)
-        } else {
-            compress_value_and_index(H256(log.value_read), Some(log.leaf_enumeration_index))
+        // Empty slots have no pre-existing leaf (zero value, no enum index);
+        // existing slots carry their proven `value_read` at `index`.
+        let slot = match classify_witness_leaf(log)? {
+            WitnessLeaf::Empty { .. } => None,
+            WitnessLeaf::Existing { index, value, .. } => Some((value, index)),
         };
         match storage.entry(hashed) {
             Entry::Vacant(v) => {
@@ -856,12 +863,36 @@ mod tests {
     }
 
     #[test]
+    fn derivation_rejects_repeated_write_with_zero_index() {
+        // Ghost-leaf shape rejected up front, before VM execution — not just
+        // later in get_bowp.
+        let paths = vec![meta(key(0x1006), true, false, 0, H256::zero())];
+        assert!(build_storage_view_from_witness(&paths).is_err());
+    }
+
+    #[test]
+    fn derivation_rejects_read_marked_first_write() {
+        // `(is_write=false, first_write=true)` is a shape the tree never emits;
+        // reject it consistently instead of silently treating index 0 as a
+        // missing-key read.
+        let paths = vec![meta(key(0x1007), false, true, 0, H256::zero())];
+        assert!(build_storage_view_from_witness(&paths).is_err());
+    }
+
+    #[test]
     fn get_bowp_rejects_repeated_write_with_zero_index() {
         // Ghost leaf: a repeated write (first_write=false) must reference an
         // existing leaf (index > 0). Not subsumed by the storage-view derivation
         // because it corrupts the proof fold, not the VM's view.
         let mut paths = WitnessInputMerklePaths::new(1);
         paths.push_merkle_path(meta(key(0x3001), true, false, 0, H256::zero()));
+        assert!(get_bowp(paths).is_err());
+    }
+
+    #[test]
+    fn get_bowp_rejects_read_marked_first_write() {
+        let mut paths = WitnessInputMerklePaths::new(1);
+        paths.push_merkle_path(meta(key(0x3002), false, true, 0, H256::zero()));
         assert!(get_bowp(paths).is_err());
     }
 
