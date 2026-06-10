@@ -273,6 +273,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
             }))
             .collect();
     bind_observed_reads_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
+    bind_observed_initialness_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -726,6 +727,40 @@ fn bind_observed_reads_to_witness(
     Ok(())
 }
 
+/// Bind the initialness (empty-in-old-tree) the VM observes for every accessed
+/// slot to what the Merkle witness proves.
+///
+/// The VM reads initialness from its storage view (`None` or enumeration index
+/// 0 ⇒ initial); the witness proves it via `first_write` (writes) or a zero
+/// enumeration index (reads). `is_write_initial` is operator-supplied and, left
+/// unchecked, lets an operator mark a populated slot initial — collapsing it to
+/// `None` so the VM treats real state as an empty initial write.
+fn bind_observed_initialness_to_witness(
+    storage: &std::collections::BTreeMap<H256, Option<(H256, u64)>>,
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<()> {
+    for log in merkle_paths {
+        let hashed = H256(log.leaf_hashed_key_array());
+        // As in `bind_observed_reads_to_witness`: a present `None` is a real
+        // empty slot (initial); an absent key is a malformed witness.
+        let slot = storage.get(&hashed).with_context(|| {
+            format!("Merkle witness references slot {hashed:?} absent from the storage view")
+        })?;
+        let observed_initial = slot.is_none_or(|(_, idx)| idx == 0);
+        let proven_initial = if log.is_write {
+            log.first_write
+        } else {
+            log.leaf_enumeration_index == 0
+        };
+        anyhow::ensure!(
+            observed_initial == proven_initial,
+            "VM observed initial={observed_initial} for slot {hashed:?}, but the Merkle witness \
+             proves initial={proven_initial}",
+        );
+    }
+    Ok(())
+}
+
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
 fn map_log_tree(
     storage_log: &StorageLog,
@@ -957,6 +992,35 @@ mod tests {
             meta(k, false, false, 8, H256::zero()),
         ];
         assert!(build_enum_index_map(&paths).is_err());
+    }
+
+    #[test]
+    fn bind_initialness_rejects_existing_zero_slot_marked_initial() {
+        // F-09, isolated from the value bind: the witness proves an existing
+        // leaf (idx=9) that happens to hold value 0, but the VM is told the slot
+        // is empty (None) via a forged is_write_initial. The value `0` is chosen
+        // deliberately so `bind_observed_reads_to_witness` (0 == 0) does *not*
+        // mask this — only the initialness bind catches it.
+        let k = key(0x5001);
+        let storage = std::collections::BTreeMap::from([(k.hashed_key(), None)]);
+        let paths = vec![meta(k, true, false, 9, H256::zero())];
+        assert!(bind_observed_reads_to_witness(&storage, &paths).is_ok());
+        assert!(bind_observed_initialness_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_initialness_accepts_consistent_witness() {
+        let existing = key(0x5002);
+        let fresh = key(0x5003);
+        let storage = std::collections::BTreeMap::from([
+            (existing.hashed_key(), Some((H256::from_low_u64_be(0x1), 4))),
+            (fresh.hashed_key(), None),
+        ]);
+        let paths = vec![
+            meta(existing, false, false, 4, H256::from_low_u64_be(0x1)),
+            meta(fresh, true, true, 0, H256::zero()),
+        ];
+        assert!(bind_observed_initialness_to_witness(&storage, &paths).is_ok());
     }
 
     #[test]
