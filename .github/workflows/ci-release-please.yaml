@@ -28,6 +28,18 @@ jobs:
       config: '.github/release-please/config.json'
       manifest: '.github/release-please/manifest.json'
       upgrade-dependencies: false
-      update-cargo-lock: true
+      # Cargo crate versions are intentionally DECOUPLED from the release
+      # version. The release lives only in the git tag / changelog / docker
+      # image; no Cargo.toml carries it (config.json has no extra-files).
+      #
+      # `update-cargo-lock: true` runs `cargo workspaces version custom <ver>
+      # --force "*"` in the shared workflow, forcing every member crate to the
+      # release version. That rewrites the versions of the guest's compile
+      # closure, which feeds rustc's -Cmetadata / StableCrateId and so rebuilds
+      # guest/dist/app/app.bin — rotating the FRI VK (which embeds
+      # sha256(app.bin)) — on every release, even with zero guest source
+      # changes. Keeping this false freezes the versions so a release never
+      # perturbs the guest binary or the VKs.
+      update-cargo-lock: false
       publish-to-crates-io: false
       notify-slack: true

@@ -6,14 +6,7 @@
   "group-pull-request-title-pattern": "chore: release ${component} ${version}",
   "packages": {
     ".": {
-      "component": "eravm-airbender-verifier",
-      "extra-files": [
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.package.version"
-        }
-      ]
+      "component": "eravm-airbender-verifier"
     }
   }
 }
