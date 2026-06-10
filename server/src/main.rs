@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use airbender_host::{HostBufferPoolConfig, SecurityLevel};
+use airbender_host::{ExecutionProverConfiguration, SecurityLevel};
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
@@ -241,10 +241,12 @@ fn build_prover(
     let fri_gpu_memory_bytes = cli
         .fri_gpu_memory_gb
         .map(|gb| (gb * (1u64 << 30) as f64) as usize);
-    let host_pool = HostBufferPoolConfig {
-        allocators_per_job: Some(cli.fri_host_buffers_per_job),
-        allocators_per_device: Some(cli.fri_host_buffers_per_device),
-    };
+    // Start from the upstream prover defaults and apply the server's overrides.
+    // The host transfer-buffer pool is trimmed below the upstream 256/128 to
+    // reclaim committed pinned RAM; raise it back if FRI throughput regresses.
+    let mut execution_config = ExecutionProverConfiguration::default();
+    execution_config.host_allocators_per_job_count = cli.fri_host_buffers_per_job;
+    execution_config.host_allocators_per_device_count = cli.fri_host_buffers_per_device;
     let build_fri = || {
         FriPipeline::new(
             dist_dir,
@@ -252,7 +254,7 @@ fn build_prover(
             cli.worker_threads,
             security,
             fri_gpu_memory_bytes,
-            host_pool,
+            execution_config,
         )
         .context("while building FRI pipeline")
     };

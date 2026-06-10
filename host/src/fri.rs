@@ -1,5 +1,5 @@
 use airbender_host::{
-    GpuProver, GpuProverBuilder, HostBufferPoolConfig, Inputs, Proof, Prover, ProverLevel,
+    ExecutionProverConfiguration, GpuProver, GpuProverBuilder, Inputs, Proof, Prover, ProverLevel,
     RealVerifier, RealVerifierBuilder, Runner, SecurityLevel, TranspilerRunner,
     TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
 };
@@ -147,7 +147,7 @@ impl FriPipeline {
         worker_threads: Option<usize>,
         security: SecurityLevel,
         max_device_memory_bytes: Option<usize>,
-        host_pool: HostBufferPoolConfig,
+        execution_config: ExecutionProverConfiguration,
     ) -> Result<Self> {
         Self::with_verifier(
             dist_dir,
@@ -155,7 +155,7 @@ impl FriPipeline {
             worker_threads,
             security,
             max_device_memory_bytes,
-            host_pool,
+            execution_config,
         )
     }
 
@@ -177,8 +177,8 @@ impl FriPipeline {
             // The host `prove-fri` CLI never runs the SNARK wrapper in-process,
             // so it has no reason to leave VRAM headroom.
             None,
-            // Dev CLI keeps the upstream host buffer pool (no RAM tuning).
-            HostBufferPoolConfig::default(),
+            // Dev CLI keeps the upstream prover config (no RAM tuning).
+            ExecutionProverConfiguration::default(),
         )
     }
 
@@ -188,12 +188,12 @@ impl FriPipeline {
         worker_threads: Option<usize>,
         security: SecurityLevel,
         max_device_memory_bytes: Option<usize>,
-        host_pool: HostBufferPoolConfig,
+        execution_config: ExecutionProverConfiguration,
     ) -> Result<Self> {
         let mut prover = GpuProverBuilder::new(app_bin_path(dist_dir))
             .with_level(ProverLevel::RecursionUnified)
             .with_security(security)
-            .with_host_buffer_pool(host_pool);
+            .with_execution_config(execution_config);
         if let Some(worker_threads) = worker_threads {
             prover = prover.with_worker_threads(worker_threads);
         }
