@@ -19,6 +19,7 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
+        utils::compress_value_and_index,
         FinishedL1Batch, L2BlockEnv, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
@@ -246,13 +247,37 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
     }
 
-    // Build the VM's storage view directly from the Merkle witness — the only
-    // pre-state data bound to `old_root_hash` by `verify_proofs`. The operator's
-    // `vm_run_data.witness_block_state` (`read_storage_key` / `is_write_initial`)
-    // is intentionally NOT consulted: it has no anchor to the trusted root, so
-    // trusting it would let a malicious operator feed the VM a forged value or
-    // initialness for any slot.
-    let storage = build_storage_view_from_witness(&input.merkle_paths.merkle_paths)?;
+    // The operator supplies the VM's storage view via `witness_block_state`. We
+    // need it for completeness — it covers every slot the VM reads, including
+    // reverted / deduplicated reads that never reach the committed `merkle_paths`
+    // — but it is not anchored to `old_root_hash` on its own. Enumeration indices
+    // come from the Merkle witness (`build_enum_index_map`), and every slot the
+    // witness proves is then bound to that view by `bind_storage_view_to_witness`,
+    // so a malicious operator cannot disagree with the proven root on any proven
+    // slot's value, index, or initialness.
+    let enum_index_map = build_enum_index_map(&input.merkle_paths.merkle_paths)?;
+    let read_storage_ops = input
+        .vm_run_data
+        .witness_block_state
+        .read_storage_key
+        .into_iter();
+    let initial_writes_ops = input
+        .vm_run_data
+        .witness_block_state
+        .is_write_initial
+        .into_iter();
+    let storage: std::collections::BTreeMap<H256, Option<(H256, u64)>> =
+        read_storage_ops
+            .map(|(key, value)| {
+                let hashed = key.hashed_key();
+                let enum_idx = enum_index_map.get(&hashed).copied();
+                (hashed, compress_value_and_index(value, enum_idx))
+            })
+            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
+                initial_write.then_some((key.hashed_key(), None))
+            }))
+            .collect();
+    bind_storage_view_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -639,42 +664,76 @@ fn classify_witness_leaf(log: &StorageLogMetadata) -> anyhow::Result<WitnessLeaf
     }
 }
 
-/// Build the VM's storage view (hashed key → `Some((value, enum_index))` /
-/// `None`) entirely from the Merkle witness, which `verify_proofs` binds to
-/// `old_root_hash`. This is the single source of truth for every slot's
-/// pre-state: value, enumeration index, and initialness all follow from the
-/// witness, so a malicious operator cannot disagree with the proven root.
+/// Map hashed storage key → enumeration index, sourced from the Merkle witness.
 ///
-/// Malformed witness shapes are rejected here, before VM execution, rather than
-/// running the VM against an impossible state and only failing later.
+/// Only entries that reference an *existing* leaf contribute: reads and repeated
+/// writes with `leaf_enumeration_index > 0`. `first_write` (Inserted) entries
+/// carry the newly assigned index for a slot that is empty in the old tree;
+/// exposing it to the VM would make a fresh slot look pre-existing and perturb
+/// `StateDiffRecord.enumeration_index`.
 ///
-/// A key may appear in several entries (e.g. read + write in one batch); they
-/// must agree on the pre-state, otherwise the witness is malformed.
-pub fn build_storage_view_from_witness(
+/// A key appearing in multiple entries must agree on its index.
+fn build_enum_index_map(
     merkle_paths: &[StorageLogMetadata],
-) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
-    use std::collections::btree_map::Entry;
-
-    let mut storage = std::collections::BTreeMap::new();
-    for log in merkle_paths {
+) -> anyhow::Result<std::collections::BTreeMap<H256, u64>> {
+    let mut enum_index_map = std::collections::BTreeMap::new();
+    for log in merkle_paths
+        .iter()
+        .filter(|log| log.leaf_enumeration_index > 0 && !log.first_write)
+    {
         let hashed = H256(log.leaf_hashed_key_array());
-        // Empty slots have no pre-existing leaf (zero value, no enum index);
-        // existing slots carry their proven `value_read` at `index`.
-        let slot = match classify_witness_leaf(log)? {
-            WitnessLeaf::Empty { .. } => None,
-            WitnessLeaf::Existing { index, value, .. } => Some((value, index)),
-        };
-        match storage.entry(hashed) {
-            Entry::Vacant(v) => {
-                v.insert(slot);
-            }
-            Entry::Occupied(existing) => anyhow::ensure!(
-                *existing.get() == slot,
-                "merkle_paths witness proves inconsistent pre-state for leaf {hashed:?}",
-            ),
+        if let Some(&existing) = enum_index_map.get(&hashed) {
+            anyhow::ensure!(
+                existing == log.leaf_enumeration_index,
+                "merkle_paths witness has inconsistent enumeration indices for \
+                 leaf_hashed_key {hashed:?}: {existing} vs {}",
+                log.leaf_enumeration_index,
+            );
+        } else {
+            enum_index_map.insert(hashed, log.leaf_enumeration_index);
         }
     }
-    Ok(storage)
+    Ok(enum_index_map)
+}
+
+/// The pre-state a slot's storage-view entry encodes (value + enumeration
+/// index), as `StorageSnapshot` interprets it: `None`/index 0 ⇒ empty & initial.
+fn storage_slot_prestate(slot: &Option<(H256, u64)>) -> (H256, u64) {
+    slot.map_or((H256::zero(), 0), |(value, index)| (value, index))
+}
+
+/// Bind every slot the Merkle witness proves to the storage view the VM
+/// executes against. The view itself is operator-supplied (and may legitimately
+/// hold extra slots — reverted/deduplicated reads — that the witness never
+/// proves), but for each proven slot the VM-observed pre-state must match the
+/// witness exactly: value (F-08/F-24), enumeration index, and initialness
+/// (F-09) in one structural comparison. Malformed witness shapes are rejected
+/// here, before the binding, via the shared classifier.
+fn bind_storage_view_to_witness(
+    storage: &std::collections::BTreeMap<H256, Option<(H256, u64)>>,
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<()> {
+    for log in merkle_paths {
+        let hashed = H256(log.leaf_hashed_key_array());
+        // The witness's proven pre-state, in the same `(value, index)` shape the
+        // storage view encodes (empty ⇒ zero value, index 0).
+        let proven = match classify_witness_leaf(log)? {
+            WitnessLeaf::Empty { .. } => (H256::zero(), 0),
+            WitnessLeaf::Existing { index, value, .. } => (value, index),
+        };
+        // A present `None` is a legitimate empty slot; a key absent from the
+        // view is a malformed witness — the VM would later panic reading it.
+        let slot = storage.get(&hashed).with_context(|| {
+            format!("Merkle witness references slot {hashed:?} absent from the storage view")
+        })?;
+        let observed = storage_slot_prestate(slot);
+        anyhow::ensure!(
+            observed == proven,
+            "VM storage view for slot {hashed:?} is {observed:?}, but the Merkle witness proves \
+             {proven:?}",
+        );
+    }
+    Ok(())
 }
 
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
@@ -794,7 +853,7 @@ mod tests {
     }
 
     /// Build a `StorageLogMetadata` witness entry for `key`. `merkle_paths` is
-    /// left empty — the derivation under test reads only the flags, enumeration
+    /// left empty — the checks under test read only the flags, enumeration
     /// index, and `value_read`.
     fn meta(
         key: StorageKey,
@@ -815,68 +874,125 @@ mod tests {
         }
     }
 
-    #[test]
-    fn derives_empty_slot_for_read_missing_key() {
-        // ReadMissingKey (read, index 0) ⇒ empty slot, value 0, no enum index —
-        // regardless of anything the operator might have claimed. This is what
-        // makes a forged `read_storage_key[K]` impossible to honor.
-        let k = key(0x1001);
-        let storage =
-            build_storage_view_from_witness(&[meta(k, false, false, 0, H256::zero())]).unwrap();
-        assert_eq!(storage.get(&k.hashed_key()), Some(&None));
+    /// A storage view holding a single slot, keyed by hashed key.
+    fn view(
+        k: StorageKey,
+        slot: Option<(H256, u64)>,
+    ) -> std::collections::BTreeMap<H256, Option<(H256, u64)>> {
+        std::collections::BTreeMap::from([(k.hashed_key(), slot)])
     }
 
     #[test]
-    fn derives_existing_slot_for_read() {
-        let k = key(0x1002);
+    fn bind_accepts_consistent_view() {
+        let missing = key(0x1001);
+        let read = key(0x1002);
+        let updated = key(0x1003);
+        let inserted = key(0x1004);
         let v = H256::from_low_u64_be(0x11);
-        let storage = build_storage_view_from_witness(&[meta(k, false, false, 7, v)]).unwrap();
-        assert_eq!(storage.get(&k.hashed_key()), Some(&Some((v, 7))));
-    }
-
-    #[test]
-    fn derives_empty_slot_for_inserted_write() {
-        // Inserted (first write): empty in the old tree, so value 0 / no index —
-        // the new enumeration index is *not* exposed as a pre-existing one.
-        let k = key(0x1003);
-        let storage =
-            build_storage_view_from_witness(&[meta(k, true, true, 5, H256::zero())]).unwrap();
-        assert_eq!(storage.get(&k.hashed_key()), Some(&None));
-    }
-
-    #[test]
-    fn derives_existing_slot_for_updated_write() {
-        let k = key(0x1004);
-        let v_real = H256::from_low_u64_be(0x22);
-        let storage = build_storage_view_from_witness(&[meta(k, true, false, 9, v_real)]).unwrap();
-        assert_eq!(storage.get(&k.hashed_key()), Some(&Some((v_real, 9))));
-    }
-
-    #[test]
-    fn rejects_inconsistent_witness_for_same_key() {
-        let k = key(0x1005);
+        let v2 = H256::from_low_u64_be(0x22);
+        let storage = std::collections::BTreeMap::from([
+            (missing.hashed_key(), None),
+            (read.hashed_key(), Some((v, 7))),
+            (updated.hashed_key(), Some((v2, 9))),
+            (inserted.hashed_key(), None),
+        ]);
         let paths = vec![
-            meta(k, false, false, 7, H256::from_low_u64_be(0x1)),
-            meta(k, false, false, 7, H256::from_low_u64_be(0x2)),
+            meta(missing, false, false, 0, H256::zero()),
+            meta(read, false, false, 7, v),
+            meta(updated, true, false, 9, v2),
+            meta(inserted, true, true, 5, H256::zero()),
         ];
-        assert!(build_storage_view_from_witness(&paths).is_err());
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_ok());
     }
 
     #[test]
-    fn derivation_rejects_repeated_write_with_zero_index() {
-        // Ghost-leaf shape rejected up front, before VM execution — not just
-        // later in get_bowp.
-        let paths = vec![meta(key(0x1006), true, false, 0, H256::zero())];
-        assert!(build_storage_view_from_witness(&paths).is_err());
+    fn bind_rejects_forged_value_on_missing_key() {
+        // F-08: witness proves the slot empty (0); operator fed the VM V_evil.
+        let k = key(0x2001);
+        let storage = view(k, Some((H256::from_low_u64_be(0xdead), 0)));
+        let paths = vec![meta(k, false, false, 0, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
     }
 
     #[test]
-    fn derivation_rejects_read_marked_first_write() {
-        // `(is_write=false, first_write=true)` is a shape the tree never emits;
-        // reject it consistently instead of silently treating index 0 as a
-        // missing-key read.
-        let paths = vec![meta(key(0x1007), false, true, 0, H256::zero())];
-        assert!(build_storage_view_from_witness(&paths).is_err());
+    fn bind_rejects_forged_value_on_updated_write() {
+        // F-24: witness proves V_real at index 9; operator fed V_evil.
+        let k = key(0x2002);
+        let storage = view(k, Some((H256::from_low_u64_be(0x22), 9)));
+        let paths = vec![meta(k, true, false, 9, H256::from_low_u64_be(0x11))];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_rejects_forged_value_on_inserted_write() {
+        // F-24 Inserted: witness proves the slot empty; operator fed V_evil.
+        let k = key(0x2003);
+        let storage = view(k, Some((H256::from_low_u64_be(0xbeef), 0)));
+        let paths = vec![meta(k, true, true, 0, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_rejects_existing_slot_collapsed_to_initial() {
+        // F-09: witness proves an existing leaf at index 9 (value 0 chosen so
+        // the value matches and only the index/initialness differs), but the
+        // operator marked it initial — collapsing it to `None`.
+        let k = key(0x2004);
+        let storage = view(k, None);
+        let paths = vec![meta(k, true, false, 9, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_rejects_slot_absent_from_view() {
+        // A proven slot missing from the view would later panic the VM; fail fast.
+        let k = key(0x2005);
+        let storage = std::collections::BTreeMap::new();
+        let paths = vec![meta(k, false, false, 0, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_rejects_repeated_write_with_zero_index() {
+        // Ghost-leaf shape rejected up front (shared classifier), before binding.
+        let k = key(0x2006);
+        let storage = view(k, Some((H256::zero(), 0)));
+        let paths = vec![meta(k, true, false, 0, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn bind_rejects_read_marked_first_write() {
+        // `(is_write=false, first_write=true)` is a shape the tree never emits.
+        let k = key(0x2007);
+        let storage = view(k, None);
+        let paths = vec![meta(k, false, true, 0, H256::zero())];
+        assert!(bind_storage_view_to_witness(&storage, &paths).is_err());
+    }
+
+    #[test]
+    fn enum_index_map_excludes_inserted_leaves() {
+        // Inserted entries carry the newly assigned index; it must not surface as
+        // a pre-existing enumeration index.
+        let inserted = key(0x4001);
+        let existing = key(0x4002);
+        let paths = vec![
+            meta(inserted, true, true, 5, H256::zero()),
+            meta(existing, false, false, 7, H256::from_low_u64_be(0x9)),
+        ];
+        let map = build_enum_index_map(&paths).unwrap();
+        assert_eq!(map.get(&inserted.hashed_key()), None);
+        assert_eq!(map.get(&existing.hashed_key()), Some(&7));
+    }
+
+    #[test]
+    fn enum_index_map_rejects_inconsistent_indices() {
+        let k = key(0x4003);
+        let paths = vec![
+            meta(k, false, false, 7, H256::zero()),
+            meta(k, false, false, 8, H256::zero()),
+        ];
+        assert!(build_enum_index_map(&paths).is_err());
     }
 
     #[test]

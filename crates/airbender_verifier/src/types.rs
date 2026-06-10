@@ -43,11 +43,13 @@ pub struct VMRunWitnessInputData {
     pub evm_emulator_code_hash: Option<U256>,
     pub storage_refunds: Vec<u32>,
     pub pubdata_costs: Vec<i32>,
-    /// Operator-supplied storage reads / initial-write flags. **Not trusted by
-    /// the verifier:** the VM's storage view is derived entirely from the Merkle
-    /// witness (`build_storage_view_from_witness`), which is bound to
-    /// `old_root_hash`. Retained only for wire-format compatibility with
-    /// existing dumps and the sequencer's witness generator.
+    /// Operator-supplied storage reads / initial-write flags. Used to seed the
+    /// VM's storage view (it covers every accessed slot, including reverted /
+    /// deduplicated reads the committed `merkle_paths` omits), but **not trusted
+    /// on its own**: every slot the Merkle witness proves is cross-checked
+    /// against this view by `bind_storage_view_to_witness`, and enumeration
+    /// indices come from the witness, so the operator cannot lie about any
+    /// proven slot's value, index, or initialness.
     pub witness_block_state: WitnessStorageState,
 }
 

@@ -8,7 +8,6 @@ use anyhow::{bail, Result};
 use fast::FastTraceTracer;
 use legacy::LegacyTraceTracer;
 pub use types::{CompareOptions, ComparisonOutcome, ComparisonReport, Divergence, TxLocation};
-use zksync_airbender_verifier::build_storage_view_from_witness;
 use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
 use zksync_multivm::{
     interface::{
@@ -40,7 +39,7 @@ pub fn compare(
     input: V1AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<ComparisonReport> {
-    let storage_snapshot = create_storage_snapshot(&input)?;
+    let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
     let fast_storage = StorageView::new(storage_snapshot).to_rc_ptr();
 
@@ -251,11 +250,25 @@ fn default_location(input: &V1AirbenderVerifierInput) -> TxLocation {
     }
 }
 
-fn create_storage_snapshot(input: &V1AirbenderVerifierInput) -> Result<StorageSnapshot> {
-    // Derive the storage view from the Merkle witness, the same source of truth
-    // the verifier uses (`zksync_airbender_verifier::build_storage_view_from_witness`),
-    // so the VMs compared here run against exactly what the verifier executes.
-    let storage = build_storage_view_from_witness(&input.merkle_paths.merkle_paths)?;
+fn create_storage_snapshot(input: &V1AirbenderVerifierInput) -> StorageSnapshot {
+    let storage = input
+        .vm_run_data
+        .witness_block_state
+        .read_storage_key
+        .iter()
+        .enumerate()
+        .map(|(i, (hash, bytes))| (hash.hashed_key(), Some((*bytes, i as u64 + 1u64))))
+        .chain(
+            input
+                .vm_run_data
+                .witness_block_state
+                .is_write_initial
+                .iter()
+                .filter_map(|(key, initial_write)| {
+                    initial_write.then_some((key.hashed_key(), None))
+                }),
+        )
+        .collect();
 
     let factory_deps = input
         .vm_run_data
@@ -264,7 +277,7 @@ fn create_storage_snapshot(input: &V1AirbenderVerifierInput) -> Result<StorageSn
         .map(|(hash, bytes)| (u256_to_h256(*hash), bytes.clone().into_flattened()))
         .collect();
 
-    Ok(StorageSnapshot::new(storage, factory_deps))
+    StorageSnapshot::new(storage, factory_deps)
 }
 
 fn execute_tx_legacy(
