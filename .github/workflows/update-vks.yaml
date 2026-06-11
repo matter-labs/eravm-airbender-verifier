@@ -43,7 +43,7 @@ jobs:
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 60
     container:
-      image: ghcr.io/matter-labs/cargo-airbender:v0.2.2
+      image: ghcr.io/matter-labs/cargo-airbender:v0.2.3
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -76,11 +76,11 @@ jobs:
       contents: read
     runs-on: matterlabs-ci-runner-high-performance
     timeout-minutes: 90
-    # Prebuilt cargo-airbender CUDA image (v0.2.2) — nightly Rust + clang +
+    # Prebuilt cargo-airbender CUDA image (v0.2.3) — nightly Rust + clang +
     # cmake + CUDA 12.9 devel. The guest is built separately (build-guest), so
     # this GPU build never touches the reproducibility-critical app.bin.
     container:
-      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.2
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.3
     env:
       CUDA_ARCH: "89"
       CUDAARCHS: "89"

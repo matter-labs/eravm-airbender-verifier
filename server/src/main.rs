@@ -305,6 +305,10 @@ fn init_sentry(cli: &Cli) -> Option<sentry::ClientInitGuard> {
         },
     ));
     if guard.is_enabled() {
+        eprintln!(
+            "Sentry initialized with DSN {}, environment {:?}",
+            dsn, cli.sentry_environment
+        );
         Some(guard)
     } else {
         // An invalid DSN leaves the client disabled; keeping the guard would be
