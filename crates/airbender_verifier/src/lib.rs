@@ -14,7 +14,8 @@ use anyhow::{bail, Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
 use zksync_merkle_tree::{
-    BlockOutputWithProofs, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof, ValueHash,
+    BlockOutputWithProofs, TreeEntry, TreeEntryWithProof, TreeInstruction, TreeLogEntry,
+    TreeLogEntryWithProof, ValueHash,
 };
 use zksync_multivm::{
     interface::{
@@ -44,7 +45,7 @@ use zksync_types::{
 use crate::commitment::expand_bootloader_heap;
 use crate::types::{
     AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
-    WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
+    V2AirbenderVerifierInput, WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
 /// A structure to hold the result of verification.
@@ -82,26 +83,45 @@ pub trait Verify {
 }
 
 impl Verify for AirbenderVerifierInput {
-    /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
-    /// payload, so it produces an error.
+    /// Verify the payload. `V0` is a reserved marker with no payload; `V1` has
+    /// no `read_only_proofs`; `V2` carries them.
     fn verify(self) -> anyhow::Result<VerificationResult> {
-        self.into_v1()?.verify()
+        match self {
+            AirbenderVerifierInput::V0 => {
+                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1/V2")
+            }
+            AirbenderVerifierInput::V1(v1) => v1.verify(),
+            AirbenderVerifierInput::V2(v2) => v2.verify(),
+        }
     }
 }
 
 impl Verify for V1AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
-    /// Requires `commitment_input` to be `Some`.
-    fn verify(mut self) -> anyhow::Result<VerificationResult> {
-        // `execute` ignores `commitment_input`, so move it out first to avoid
-        // cloning the blob hash vectors.
-        let commitment_input = self.commitment_input.take().context(
-            "V1AirbenderVerifierInput::verify requires `commitment_input`; \
-             use `execute(...)` directly for VM-only flows",
-        )?;
-        let state = execute(self)?;
-        verify_commitment(state, commitment_input)
+    /// No `read_only_proofs`, so every VM read must be proven by `merkle_paths`.
+    fn verify(self) -> anyhow::Result<VerificationResult> {
+        verify_with_read_only_proofs(self, &[])
     }
+}
+
+impl Verify for V2AirbenderVerifierInput {
+    fn verify(self) -> anyhow::Result<VerificationResult> {
+        verify_with_read_only_proofs(self.base, &self.read_only_proofs)
+    }
+}
+
+/// Shared verification entry for V1 (`read_only_proofs` empty) and V2.
+fn verify_with_read_only_proofs(
+    mut input: V1AirbenderVerifierInput,
+    read_only_proofs: &[StorageLogMetadata],
+) -> anyhow::Result<VerificationResult> {
+    // `execute` ignores `commitment_input`, so move it out first to avoid
+    // cloning the blob hash vectors.
+    let commitment_input = input.commitment_input.take().context(
+        "verify requires `commitment_input`; use `execute(...)` directly for VM-only flows",
+    )?;
+    let state = execute(input, read_only_proofs)?;
+    verify_commitment(state, commitment_input)
 }
 
 type VerifierStorage = StorageSnapshot;
@@ -140,7 +160,10 @@ impl VmExecutionState {
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(
+    input: V1AirbenderVerifierInput,
+    read_only_proofs: &[StorageLogMetadata],
+) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -290,7 +313,18 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
             }))
             .collect();
     bind_storage_view_to_witness(&storage, &input.merkle_paths.merkle_paths)?;
-    require_reads_proven(&read_keys, &input.merkle_paths.merkle_paths)?;
+    // Slots proven against `old_root_hash`: the committed `merkle_paths`, plus
+    // the read-only proofs for slots the VM read but the committed witness omits
+    // (reverted-frame reads). Each read-only proof is folded against the root and
+    // its value cross-checked against the VM's storage view here.
+    let mut proven_reads: std::collections::BTreeSet<H256> = input
+        .merkle_paths
+        .merkle_paths
+        .iter()
+        .map(|log| H256(log.leaf_hashed_key_array()))
+        .collect();
+    bind_read_only_proofs(old_root_hash, read_only_proofs, &storage, &mut proven_reads)?;
+    require_reads_proven(&read_keys, &proven_reads)?;
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -749,26 +783,85 @@ fn bind_storage_view_to_witness(
     Ok(())
 }
 
-/// Require that every slot the VM reads is proven against `old_root_hash`, i.e.
-/// appears in the Merkle witness. `read_keys` is the complete set of slots the
-/// VM read (the operator's flat storage-view cache, including reads inside
-/// reverted frames); `merkle_paths` is the proof-bearing, root-anchored set. A
-/// read present in the former but absent from the latter is unbound — its value
-/// is operator-controlled and could be forged (and leaked into committed state
-/// via a reverted frame), so it is rejected.
+/// Fold each read-only proof against `old_root_hash`, cross-check its value
+/// against the VM's storage view, and record the proven key.
+///
+/// `read_only_proofs` carry slots the VM read that the committed `merkle_paths`
+/// omits (reverted-frame reads). Each is a read-only `StorageLogMetadata` whose
+/// Merkle path must fold to `old_root_hash` for the pre-state it claims; that
+/// pre-state must equal what the VM observed for the slot. This binds those
+/// reads to the trusted root without taking part in the root transition.
+fn bind_read_only_proofs(
+    old_root_hash: H256,
+    read_only_proofs: &[StorageLogMetadata],
+    storage: &std::collections::BTreeMap<H256, Option<(H256, u64)>>,
+    proven_reads: &mut std::collections::BTreeSet<H256>,
+) -> anyhow::Result<()> {
+    for log in read_only_proofs {
+        // A read-only proof must describe a read, never a write — it carries no
+        // state change and must not affect the root transition.
+        let (value, index) = match classify_witness_leaf(log)? {
+            WitnessLeaf::Empty { is_write: false } => (H256::zero(), 0),
+            WitnessLeaf::Existing {
+                is_write: false,
+                index,
+                value,
+            } => (value, index),
+            WitnessLeaf::Empty { is_write: true }
+            | WitnessLeaf::Existing { is_write: true, .. } => {
+                anyhow::bail!(
+                    "read_only_proofs entry for leaf {:x} is a write",
+                    log.leaf_hashed_key
+                )
+            }
+        };
+        let hashed = H256(log.leaf_hashed_key_array());
+        // The proof must verify against the trusted root for the pre-state it
+        // claims. Short paths are extended with empty-subtree hashes internally.
+        let merkle_path: Vec<ValueHash> = log.merkle_paths.iter().map(|h| H256(*h)).collect();
+        let proof = TreeEntryWithProof {
+            base: TreeEntry::new(log.leaf_hashed_key, index, value),
+            merkle_path,
+        };
+        proof
+            .verify(&Blake2Hasher, old_root_hash)
+            .with_context(|| {
+                format!("read_only proof for slot {hashed:?} does not verify against old_root_hash")
+            })?;
+        // The proven pre-state must match what the VM actually observed.
+        let slot = storage.get(&hashed).with_context(|| {
+            format!("read_only proof references slot {hashed:?} absent from the storage view")
+        })?;
+        let observed = storage_slot_prestate(slot);
+        anyhow::ensure!(
+            observed == (value, index),
+            "read_only proof for slot {hashed:?} proves {:?} but the VM observed {observed:?}",
+            (value, index),
+        );
+        proven_reads.insert(hashed);
+    }
+    Ok(())
+}
+
+/// Require that every slot the VM reads is proven against `old_root_hash`.
+/// `read_keys` is the complete set of slots the VM read (the operator's flat
+/// storage-view cache, including reads inside reverted frames); `proven_reads`
+/// is the set proven against the root (committed `merkle_paths` plus the
+/// read-only proofs). A read outside `proven_reads` is unbound — its value is
+/// operator-controlled and could be forged (and leaked into committed state via
+/// a reverted frame), so it is rejected.
 ///
 /// (Boojum bound such reads in-circuit over the full storage log; airbender has
 /// no in-circuit storage argument, so this re-execution verifier must require
 /// the witness to prove every read.)
 fn require_reads_proven(
     read_keys: &[H256],
-    merkle_paths: &[StorageLogMetadata],
+    proven_reads: &std::collections::BTreeSet<H256>,
 ) -> anyhow::Result<()> {
-    let proven: std::collections::BTreeSet<H256> = merkle_paths
+    if let Some(unproven) = read_keys
         .iter()
-        .map(|log| H256(log.leaf_hashed_key_array()))
-        .collect();
-    if let Some(unproven) = read_keys.iter().find(|hashed| !proven.contains(hashed)) {
+        .find(|hashed| !proven_reads.contains(hashed))
+    {
         anyhow::bail!(
             "VM-read slot {unproven:?} is not proven against old_root_hash; the witness must \
              include a Merkle path for every slot the VM reads, including reverted-frame reads",
@@ -1054,26 +1147,97 @@ mod tests {
     }
 
     #[test]
-    fn require_reads_proven_accepts_when_all_reads_have_paths() {
+    fn require_reads_proven_accepts_when_all_reads_proven() {
         let a = key(0x6001);
         let b = key(0x6002);
-        let paths = vec![
-            meta(a, false, false, 4, H256::from_low_u64_be(0x1)),
-            meta(b, true, true, 0, H256::zero()),
-        ];
+        let proven = std::collections::BTreeSet::from([a.hashed_key(), b.hashed_key()]);
         let read_keys = vec![a.hashed_key(), b.hashed_key()];
-        assert!(require_reads_proven(&read_keys, &paths).is_ok());
+        assert!(require_reads_proven(&read_keys, &proven).is_ok());
     }
 
     #[test]
-    fn require_reads_proven_rejects_read_without_path() {
-        // A slot the VM read (e.g. inside a reverted frame) that has no Merkle
-        // path is unbound to old_root_hash and must be rejected.
-        let proven = key(0x6003);
+    fn require_reads_proven_rejects_unproven_read() {
+        // A slot the VM read (e.g. inside a reverted frame) that is proven by
+        // neither merkle_paths nor a read-only proof is unbound and rejected.
+        let proven_key = key(0x6003);
         let reverted_read = key(0x6004);
-        let paths = vec![meta(proven, false, false, 7, H256::zero())];
-        let read_keys = vec![proven.hashed_key(), reverted_read.hashed_key()];
-        assert!(require_reads_proven(&read_keys, &paths).is_err());
+        let proven = std::collections::BTreeSet::from([proven_key.hashed_key()]);
+        let read_keys = vec![proven_key.hashed_key(), reverted_read.hashed_key()];
+        assert!(require_reads_proven(&read_keys, &proven).is_err());
+    }
+
+    /// Convert a tree proof into a read-only `StorageLogMetadata` (as the
+    /// producer would emit), for `key`.
+    fn proof_to_meta(key: StorageKey, proof: &TreeEntryWithProof) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: [0u8; 32],
+            is_write: false,
+            first_write: false,
+            merkle_paths: proof.merkle_path.iter().map(|h| h.0).collect(),
+            leaf_hashed_key: key.hashed_key_u256(),
+            leaf_enumeration_index: proof.base.leaf_index,
+            value_written: [0u8; 32],
+            value_read: proof.base.value.0,
+        }
+    }
+
+    #[test]
+    fn bind_read_only_proofs_against_real_tree() {
+        use zksync_merkle_tree::{MerkleTree, PatchSet};
+
+        let present = key(0x7001);
+        let absent = key(0x7002);
+        let v = H256::from_low_u64_be(0x42);
+
+        // Build a one-leaf tree; capture its root and real proofs for a present
+        // and an absent key (the shape read_only_proofs must verify against).
+        let mut tree = MerkleTree::new(PatchSet::default()).unwrap();
+        let root = tree
+            .extend(vec![TreeEntry::new(present.hashed_key_u256(), 1, v)])
+            .unwrap()
+            .root_hash;
+        let entries = tree
+            .entries_with_proofs(0, &[present.hashed_key_u256(), absent.hashed_key_u256()])
+            .unwrap();
+        let proofs = vec![
+            proof_to_meta(present, &entries[0]),
+            proof_to_meta(absent, &entries[1]),
+        ];
+
+        let storage = std::collections::BTreeMap::from([
+            (present.hashed_key(), Some((v, 1))),
+            (absent.hashed_key(), None),
+        ]);
+
+        // Accept: proofs fold to the real root and match the observed values.
+        let mut proven = std::collections::BTreeSet::new();
+        bind_read_only_proofs(root, &proofs, &storage, &mut proven).unwrap();
+        assert!(proven.contains(&present.hashed_key()));
+        assert!(proven.contains(&absent.hashed_key()));
+
+        // Reject: wrong root.
+        let mut p = std::collections::BTreeSet::new();
+        assert!(
+            bind_read_only_proofs(H256::from_low_u64_be(0xbad), &proofs, &storage, &mut p).is_err()
+        );
+
+        // Reject: the VM observed a value the proof doesn't cover (forged read).
+        let forged = std::collections::BTreeMap::from([
+            (present.hashed_key(), Some((H256::from_low_u64_be(0x99), 1))),
+            (absent.hashed_key(), None),
+        ]);
+        let mut p = std::collections::BTreeSet::new();
+        assert!(bind_read_only_proofs(root, &proofs, &forged, &mut p).is_err());
+    }
+
+    #[test]
+    fn bind_read_only_proofs_rejects_write_entry() {
+        // read_only_proofs must describe reads, not writes.
+        let k = key(0x7005);
+        let storage = std::collections::BTreeMap::from([(k.hashed_key(), None)]);
+        let mut proven = std::collections::BTreeSet::new();
+        let write = meta(k, true, true, 0, H256::zero());
+        assert!(bind_read_only_proofs(H256::zero(), &[write], &storage, &mut proven).is_err());
     }
 
     #[test]

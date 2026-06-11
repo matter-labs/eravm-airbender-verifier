@@ -106,18 +106,42 @@ impl Default for CommitmentInput {
 pub enum AirbenderVerifierInput {
     V0,
     V1(V1AirbenderVerifierInput),
+    /// V1 plus `read_only_proofs`: Merkle proofs (against `old_root_hash`) for
+    /// slots the VM reads that are absent from `merkle_paths` — reads inside
+    /// reverted frames, which never reach the committed/deduplicated tree
+    /// witness. They bind those reads to the trusted root without taking part in
+    /// the root transition. See [`V2AirbenderVerifierInput`].
+    V2(V2AirbenderVerifierInput),
 }
 
 impl AirbenderVerifierInput {
-    /// Extract the V1 payload, erroring on the reserved `V0` marker.
+    /// Extract the V1 payload. `V2` is reduced to its V1 base (dropping
+    /// `read_only_proofs`), so use [`Verify::verify`] on the enum for full V2
+    /// verification rather than this helper.
     pub fn into_v1(self) -> anyhow::Result<V1AirbenderVerifierInput> {
         match self {
             AirbenderVerifierInput::V1(v1) => Ok(v1),
+            AirbenderVerifierInput::V2(v2) => Ok(v2.base),
             AirbenderVerifierInput::V0 => {
-                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1")
+                anyhow::bail!("AirbenderVerifierInput::V0 has no payload — expected V1/V2")
             }
         }
     }
+}
+
+/// Verifier input payload (V2): a [`V1AirbenderVerifierInput`] plus Merkle
+/// proofs for the VM's reads that the committed `merkle_paths` omits.
+///
+/// `read_only_proofs` carries one entry per slot the VM reads that is not in
+/// `base.merkle_paths` (i.e. read only inside a reverted frame). Each is a
+/// read-only `StorageLogMetadata` whose Merkle path folds to `old_root_hash`,
+/// proving the slot's pre-state value the VM observed. They are *not* part of
+/// the root transition; they exist solely so the verifier can bind every read
+/// to the trusted root (see `require_reads_proven`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct V2AirbenderVerifierInput {
+    pub base: V1AirbenderVerifierInput,
+    pub read_only_proofs: Vec<StorageLogMetadata>,
 }
 
 /// Verifier input payload (V1).

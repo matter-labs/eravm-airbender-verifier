@@ -49,7 +49,7 @@ pub fn augment_with_synthetic_commitment(
     // We need the VM's pubdata to derive synthetic blob hashes. The rest of
     // the execution state is discarded; the caller's `verify()` re-runs
     // `execute` end-to-end on the augmented input.
-    let preliminary = crate::execute(input.clone())?;
+    let preliminary = crate::execute(input.clone(), &[])?;
     let pubdata = preliminary.pubdata();
     let (blob_versioned_hashes, blob_hashes) = compute_blob_opening_data(pubdata);
 
