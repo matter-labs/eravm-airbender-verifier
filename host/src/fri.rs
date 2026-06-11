@@ -1,7 +1,7 @@
 use airbender_host::{
-    ExecutionProverConfiguration, GpuProver, GpuProverBuilder, Inputs, Proof, Prover, ProverLevel,
-    RealVerifier, RealVerifierBuilder, Runner, SecurityLevel, TranspilerRunner,
-    TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
+    GpuProver, GpuProverBuilder, GpuProverConfig, Inputs, Proof, Prover, ProverLevel, RealVerifier,
+    RealVerifierBuilder, Runner, SecurityLevel, TranspilerRunner, TranspilerRunnerBuilder,
+    VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
 use std::io::{BufReader, BufWriter};
@@ -144,18 +144,14 @@ impl FriPipeline {
     pub fn new(
         dist_dir: &Path,
         vk_path: &Path,
-        worker_threads: Option<usize>,
         security: SecurityLevel,
-        max_device_memory_bytes: Option<usize>,
-        execution_config: ExecutionProverConfiguration,
+        config: GpuProverConfig,
     ) -> Result<Self> {
         Self::with_verifier(
             dist_dir,
             FriVerifier::load(dist_dir, vk_path, security)?,
-            worker_threads,
             security,
-            max_device_memory_bytes,
-            execution_config,
+            config,
         )
     }
 
@@ -172,36 +168,23 @@ impl FriPipeline {
         Self::with_verifier(
             dist_dir,
             FriVerifier::load_or_generate(dist_dir, vk_path, security)?,
-            worker_threads,
             security,
-            // The host `prove-fri` CLI never runs the SNARK wrapper in-process,
-            // so it has no reason to leave VRAM headroom.
-            None,
-            // Dev CLI keeps the upstream prover config (no RAM tuning).
-            ExecutionProverConfiguration::default(),
+            // Dev CLI only sets worker threads; it never runs the SNARK wrapper
+            // in-process, so it has no reason to cap VRAM or tune the host pool.
+            GpuProverConfig::default().maybe_worker_threads(worker_threads),
         )
     }
 
     fn with_verifier(
         dist_dir: &Path,
         verifier: FriVerifier,
-        worker_threads: Option<usize>,
         security: SecurityLevel,
-        max_device_memory_bytes: Option<usize>,
-        execution_config: ExecutionProverConfiguration,
+        config: GpuProverConfig,
     ) -> Result<Self> {
-        let mut prover = GpuProverBuilder::new(app_bin_path(dist_dir))
+        let prover = GpuProverBuilder::new(app_bin_path(dist_dir))
             .with_level(ProverLevel::RecursionUnified)
             .with_security(security)
-            .with_execution_config(execution_config);
-        if let Some(worker_threads) = worker_threads {
-            prover = prover.with_worker_threads(worker_threads);
-        }
-        if let Some(bytes) = max_device_memory_bytes {
-            prover = prover.with_max_device_memory_bytes(bytes);
-        }
-
-        let prover = prover
+            .with_config(config)
             .build()
             .context("while attempting to build GPU prover")?;
 

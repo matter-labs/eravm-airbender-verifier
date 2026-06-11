@@ -99,10 +99,10 @@ ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar
 # --fri-host-buffers-per-{job,device} flags). This rev is v0.2.2 + 2 minor
 # crypto commits (#74, #76) + #77; the committed guest app.bin is unchanged so
 # the VK does not rotate. Re-pin to a tagged release once #77 lands on a tag.
-airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", rev = "38f384bc1a4ae19c64be4a54ea1507b2a5de58ac" }
-airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", rev = "38f384bc1a4ae19c64be4a54ea1507b2a5de58ac" }
-airbender-host = { git = "https://github.com/matter-labs/airbender-platform", rev = "38f384bc1a4ae19c64be4a54ea1507b2a5de58ac" }
-airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", rev = "38f384bc1a4ae19c64be4a54ea1507b2a5de58ac" }
+airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", rev = "e54fcef06a140c2bceb29af4f6f02977e55d51df" }
+airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", rev = "e54fcef06a140c2bceb29af4f6f02977e55d51df" }
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", rev = "e54fcef06a140c2bceb29af4f6f02977e55d51df" }
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", rev = "e54fcef06a140c2bceb29af4f6f02977e55d51df" }
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 # `default-features = false` drops the wrapper's default `security_80` so it

@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use airbender_host::{ExecutionProverConfiguration, SecurityLevel};
+use airbender_host::{GpuProverConfig, SecurityLevel};
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
@@ -238,25 +238,19 @@ fn build_prover(
         save_intermediates: false,
     };
 
-    let fri_gpu_memory_bytes = cli
-        .fri_gpu_memory_gb
-        .map(|gb| (gb * (1u64 << 30) as f64) as usize);
-    // Start from the upstream prover defaults and apply the server's overrides.
-    // The host transfer-buffer pool is trimmed below the upstream 256/128 to
-    // reclaim committed pinned RAM; raise it back if FRI throughput regresses.
-    let mut execution_config = ExecutionProverConfiguration::default();
-    execution_config.host_allocators_per_job_count = cli.fri_host_buffers_per_job;
-    execution_config.host_allocators_per_device_count = cli.fri_host_buffers_per_device;
+    // Assemble the prover config from the server's flags. The host
+    // transfer-buffer pool defaults below the upstream 256/128 to reclaim
+    // committed pinned RAM; raise it back if FRI throughput regresses.
+    let mut fri_config = GpuProverConfig::default()
+        .maybe_worker_threads(cli.worker_threads)
+        .with_host_allocators_per_job(cli.fri_host_buffers_per_job)
+        .with_host_allocators_per_device(cli.fri_host_buffers_per_device);
+    if let Some(gb) = cli.fri_gpu_memory_gb {
+        fri_config = fri_config.with_max_device_memory_bytes((gb * (1u64 << 30) as f64) as usize);
+    }
     let build_fri = || {
-        FriPipeline::new(
-            dist_dir,
-            &cli.fri_vk,
-            cli.worker_threads,
-            security,
-            fri_gpu_memory_bytes,
-            execution_config,
-        )
-        .context("while building FRI pipeline")
+        FriPipeline::new(dist_dir, &cli.fri_vk, security, fri_config)
+            .context("while building FRI pipeline")
     };
     let build_snark = || -> Result<SnarkPipeline> {
         let snark_vk = load_snark_vk(cli.snark_vk.as_deref())?;
