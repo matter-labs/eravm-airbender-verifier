@@ -193,6 +193,25 @@ cargo run --release -p eravm-prover-host --features snark_gpu -- gen-vks \
 
 The server accepts the VK paths via `--fri-vk` / `FRI_VK` and `--snark-vk` / `SNARK_VK`; the Dockerfile ships `vks/` into the image and sets both env vars by default.
 
+### CPU-only SNARK prover
+
+The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the default build links CUDA. A SNARK-only prover, however, needs no GPU at all: it verifies incoming FRI proofs and wraps them into SNARKs on CPU. The default-on `gpu_fri` cargo feature gates the CUDA dependency, so a `--no-default-features` build is completely CUDA-free and supports only `--mode snark-only`:
+
+```bash
+cargo build --release --no-default-features -p eravm-prover-server
+```
+
+[`Dockerfile.cpu`](Dockerfile.cpu) packages exactly this — a plain Ubuntu image (no CUDA runtime) that fetches the CPU CRS (`setup_2^24.key`) and runs the server in `snark-only` mode:
+
+```bash
+docker build -f Dockerfile.cpu -t eravm-prover-cpu .
+docker run --rm --ulimit stack=-1 \
+    -e PROVER_SERVER_URL=http://job-server:8080 \
+    eravm-prover-cpu
+```
+
+The GPU image ([`Dockerfile`](Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features snark_gpu` builds still enable it.
+
 ## Policies
 
 - [Security policy](SECURITY.md)

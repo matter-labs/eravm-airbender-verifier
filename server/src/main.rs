@@ -12,9 +12,11 @@ use std::time::Duration;
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
+#[cfg(feature = "gpu_fri")]
+use eravm_prover_host::FriPipeline;
 use eravm_prover_host::{
-    default_fri_vk_path, deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions,
-    SnarkPipeline, SnarkWrapperVK,
+    default_fri_vk_path, deserialize_from_file, FriVerifier, SnarkOptions, SnarkPipeline,
+    SnarkWrapperVK,
 };
 use tracing::info;
 use zksync_cli_utils::init_tracing;
@@ -46,6 +48,7 @@ struct Cli {
     poll_interval_ms: u64,
 
     /// Number of worker threads for the GPU FRI prover
+    #[cfg(feature = "gpu_fri")]
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
@@ -53,6 +56,7 @@ struct Cli {
     /// By default it grabs all free VRAM, leaving no room for the in-process
     /// SNARK wrapper in `fri-snark` mode. Set this (e.g. 32) so both fit on one
     /// card. A value at or above free memory is a no-op.
+    #[cfg(feature = "gpu_fri")]
     #[arg(long, env = "FRI_GPU_MEMORY_GB")]
     fri_gpu_memory_gb: Option<f64>,
 
@@ -224,10 +228,11 @@ fn build_prover(
         save_intermediates: false,
     };
 
-    let fri_gpu_memory_bytes = cli
-        .fri_gpu_memory_gb
-        .map(|gb| (gb * (1u64 << 30) as f64) as usize);
+    #[cfg(feature = "gpu_fri")]
     let build_fri = || {
+        let fri_gpu_memory_bytes = cli
+            .fri_gpu_memory_gb
+            .map(|gb| (gb * (1u64 << 30) as f64) as usize);
         FriPipeline::new(
             dist_dir,
             &cli.fri_vk,
@@ -244,8 +249,17 @@ fn build_prover(
 
     let builder = ProverWorker::builder();
     Ok(match cli.mode {
+        #[cfg(feature = "gpu_fri")]
         ProverMode::FriOnly => builder.with_fri(build_fri()?),
+        #[cfg(feature = "gpu_fri")]
         ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
+        // FRI proving needs the CUDA `gpu_prover`, which a `--no-default-features`
+        // build omits. Only `snark-only` is supported there.
+        #[cfg(not(feature = "gpu_fri"))]
+        ProverMode::FriOnly | ProverMode::FriSnark => anyhow::bail!(
+            "this build was compiled without the `gpu_fri` feature; \
+             only `--mode snark-only` is supported"
+        ),
         ProverMode::SnarkOnly => {
             // The worker doesn't run the GPU FRI prover here, but the FRI
             // proofs we receive from the job server still have to be verified

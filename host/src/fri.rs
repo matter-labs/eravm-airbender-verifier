@@ -1,13 +1,20 @@
+#[cfg(feature = "gpu_fri")]
+use airbender_host::{GpuProver, GpuProverBuilder, Prover};
 use airbender_host::{
-    GpuProver, GpuProverBuilder, Inputs, Proof, Prover, ProverLevel, RealVerifier,
-    RealVerifierBuilder, Runner, SecurityLevel, TranspilerRunner, TranspilerRunnerBuilder,
-    VerificationKey, VerificationRequest, Verifier,
+    Inputs, Proof, ProverLevel, RealVerifier, RealVerifierBuilder, Runner, SecurityLevel,
+    TranspilerRunner, TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
-use std::io::{BufReader, BufWriter};
+use std::io::BufReader;
+#[cfg(feature = "gpu_fri")]
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+#[cfg(feature = "gpu_fri")]
+use std::time::Duration;
+#[cfg(feature = "gpu_fri")]
+use std::time::Instant;
 use tracing::info;
+#[cfg(feature = "gpu_fri")]
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 
@@ -28,6 +35,7 @@ pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
 pub type RawFriProof = airbender_host::raw::UnrolledProgramProof;
 
+#[cfg(feature = "gpu_fri")]
 pub(crate) struct FriProofArtifact {
     pub(crate) proof: RawFriProof,
     pub(crate) proving_time: Duration,
@@ -39,6 +47,7 @@ pub(crate) struct FriProofArtifact {
 /// `proof` is the full `Proof` envelope (real or dev variant) so callers can
 /// either serialize it directly (server flow) or strip it to the raw inner
 /// proof for on-disk storage (host flow).
+#[cfg(feature = "gpu_fri")]
 pub struct ProveOutput {
     pub proof: Proof,
     pub cycles: u64,
@@ -133,11 +142,13 @@ impl FriVerifier {
     }
 }
 
+#[cfg(feature = "gpu_fri")]
 pub struct FriPipeline {
     prover: GpuProver,
     verifier: FriVerifier,
 }
 
+#[cfg(feature = "gpu_fri")]
 impl FriPipeline {
     /// Strict constructor: hard-fails if `vk_path` is missing. Used by the
     /// server, where a stale or absent VK must never silently regenerate.
@@ -376,6 +387,7 @@ pub(crate) fn load_verifier_input(
     zksync_cli_utils::load_batch(&batch_input)
 }
 
+#[cfg(feature = "gpu_fri")]
 pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {
     let parent = path
         .parent()

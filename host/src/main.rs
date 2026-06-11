@@ -1,10 +1,12 @@
 use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+#[cfg(feature = "gpu_fri")]
+use eravm_prover_host::{default_fri_vk_path, prove_batches_fri};
 use eravm_prover_host::{
-    default_fri_vk_path, default_trusted_setup_download_url, default_trusted_setup_path,
-    deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
-    generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
+    default_trusted_setup_download_url, default_trusted_setup_path, deserialize_from_file,
+    download_trusted_setup_if_not_present, generate_fri_vk, generate_snark_vk, run_batches,
+    wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
 use std::path::PathBuf;
 use zksync_cli_utils::{init_tracing, resolve_batch_inputs, BatchInputFile};
@@ -57,6 +59,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Run(RunArgs),
+    #[cfg(feature = "gpu_fri")]
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
     /// Download the bellman SNARK trusted setup (CRS) so it is on disk before
@@ -91,6 +94,7 @@ struct RunArgs {
     jit: bool,
 }
 
+#[cfg(feature = "gpu_fri")]
 #[derive(Debug, Args)]
 struct ProveFriArgs {
     #[command(flatten)]
@@ -194,6 +198,7 @@ fn main() -> Result<()> {
             let batch_inputs = args.batch_selection.resolve()?;
             run_batches(&batch_inputs, args.jit)
         }
+        #[cfg(feature = "gpu_fri")]
         Command::ProveFri(args) => {
             let batch_inputs = args.batch_selection.resolve()?;
             prove_batches_fri(

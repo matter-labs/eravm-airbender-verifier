@@ -8,6 +8,9 @@ use zksync_prover_metrics::ProofType;
 pub enum WorkerJob {
     Fri {
         batch_number: u32,
+        // Read only by the GPU FRI prover; a CUDA-free `snark-only` build never
+        // receives FRI jobs, so the field is intentionally unused there.
+        #[cfg_attr(not(feature = "gpu_fri"), allow(dead_code))]
         input_words: Vec<u32>,
     },
     Snark {
@@ -77,6 +80,9 @@ impl From<ProofKind> for ProofType {
 /// fetched job emits two results (FRI then SNARK); each settles its own
 /// `pending_jobs` bucket (FRI then SNARK) as it lands.
 pub enum ProofOutcome {
+    // Only produced by the GPU FRI prover; never constructed in a CUDA-free
+    // `snark-only` build.
+    #[cfg_attr(not(feature = "gpu_fri"), allow(dead_code))]
     Fri {
         batch_number: u32,
         proof: Box<Proof>,

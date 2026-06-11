@@ -3,13 +3,16 @@ use std::time::{Duration, Instant};
 
 use airbender_host::Proof;
 use anyhow::{Context, Result};
-use eravm_prover_host::{FriPipeline, FriVerifier, RawFriProof, SnarkPipeline};
+#[cfg(feature = "gpu_fri")]
+use eravm_prover_host::FriPipeline;
+use eravm_prover_host::{FriVerifier, RawFriProof, SnarkPipeline};
 use tracing::info;
 use zksync_prover_metrics::{ProofLabels, ProofStatus, ProofType, METRICS};
 
 use crate::types::{FailedProof, ProofKind, ProofOutcome, ProverResult, WorkerJob};
 
 pub struct ProverWorker {
+    #[cfg(feature = "gpu_fri")]
     fri: Option<FriPipeline>,
     fri_verifier: Option<FriVerifier>,
     snark: Option<SnarkPipeline>,
@@ -21,12 +24,14 @@ pub struct ProverWorker {
 /// combination is validated by [`Self::build`] against the supported modes.
 #[derive(Default)]
 pub struct ProverWorkerBuilder {
+    #[cfg(feature = "gpu_fri")]
     fri: Option<FriPipeline>,
     fri_verifier: Option<FriVerifier>,
     snark: Option<SnarkPipeline>,
 }
 
 impl ProverWorkerBuilder {
+    #[cfg(feature = "gpu_fri")]
     pub fn with_fri(mut self, fri: FriPipeline) -> Self {
         self.fri = Some(fri);
         self
@@ -51,10 +56,15 @@ impl ProverWorkerBuilder {
         job_rx: Receiver<WorkerJob>,
         result_tx: SyncSender<ProverResult>,
     ) -> Result<ProverWorker> {
-        if self.fri.is_none() && self.snark.is_none() {
+        #[cfg(feature = "gpu_fri")]
+        let has_fri = self.fri.is_some();
+        #[cfg(not(feature = "gpu_fri"))]
+        let has_fri = false;
+
+        if !has_fri && self.snark.is_none() {
             anyhow::bail!("ProverWorker builder: must set at least one of `fri` or `snark`");
         }
-        if self.fri.is_some() && self.fri_verifier.is_some() {
+        if has_fri && self.fri_verifier.is_some() {
             anyhow::bail!(
                 "ProverWorker builder: `fri_verifier` is redundant when `fri` is set — \
                  the FRI pipeline verifies the proofs it produces"
@@ -64,6 +74,7 @@ impl ProverWorkerBuilder {
             anyhow::bail!("ProverWorker builder: `fri_verifier` requires `snark`");
         }
         Ok(ProverWorker {
+            #[cfg(feature = "gpu_fri")]
             fri: self.fri,
             fri_verifier: self.fri_verifier,
             snark: self.snark,
@@ -89,6 +100,7 @@ impl ProverWorker {
 
     fn process(&mut self, job: WorkerJob) -> Result<(), SendError<ProverResult>> {
         let result = match job {
+            #[cfg(feature = "gpu_fri")]
             WorkerJob::Fri {
                 batch_number,
                 input_words,
@@ -113,6 +125,18 @@ impl ProverWorker {
                     })
                     .map_err(|err| FailedProof::new(batch_number, ProofKind::Fri, err))
             }
+            // A CUDA-free (`--no-default-features`) build runs `snark-only`,
+            // where the job worker never enqueues FRI jobs. Keep the match
+            // exhaustive and fail loudly if one ever arrives.
+            #[cfg(not(feature = "gpu_fri"))]
+            WorkerJob::Fri { batch_number, .. } => Err(FailedProof::new(
+                batch_number,
+                ProofKind::Fri,
+                anyhow::anyhow!(
+                    "received a FRI job but this build has no FRI prover \
+                     (compiled without the `gpu_fri` feature)"
+                ),
+            )),
             WorkerJob::Snark {
                 batch_number,
                 proof,

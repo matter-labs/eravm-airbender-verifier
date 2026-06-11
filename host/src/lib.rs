@@ -1,6 +1,7 @@
 mod fri;
 mod setup_download;
 mod snark;
+#[cfg(feature = "gpu_fri")]
 mod statistics;
 
 use airbender_host::SecurityLevel;
@@ -9,10 +10,9 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
-pub use crate::fri::{
-    default_fri_vk_path, dist_dir, load_vk_from_disk, FriPipeline, FriVerifier, ProveOutput,
-    RawFriProof,
-};
+pub use crate::fri::{default_fri_vk_path, dist_dir, load_vk_from_disk, FriVerifier, RawFriProof};
+#[cfg(feature = "gpu_fri")]
+pub use crate::fri::{FriPipeline, ProveOutput};
 pub use crate::setup_download::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present,
@@ -20,7 +20,10 @@ pub use crate::setup_download::{
 pub use crate::snark::{SnarkOptions, SnarkPipeline};
 pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 
-use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
+#[cfg(feature = "gpu_fri")]
+use crate::fri::save_raw_proof;
+use crate::fri::{build_runner, load_raw_proof, run_batch, FRI_PROOF_FILE_NAME};
+#[cfg(feature = "gpu_fri")]
 use crate::statistics::StatisticsCollector;
 
 // ==============================================================================
@@ -48,6 +51,7 @@ pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "gpu_fri")]
 pub fn prove_batches_fri(
     batch_inputs: &[BatchInputFile],
     worker_threads: Option<usize>,
