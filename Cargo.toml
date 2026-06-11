@@ -93,10 +93,10 @@ ark-ff = { version = "0.5", default-features = false }
 ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar_field"] }
 
 # Protocol and VM dependencies
-airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
-airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
-airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
-airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.2" }
+airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
+airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 # `default-features = false` drops the wrapper's default `security_80` so it
