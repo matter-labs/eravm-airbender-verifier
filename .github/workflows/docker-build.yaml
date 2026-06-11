@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - Dockerfile
+      - Dockerfile.cpu
       - 'server/**'
+      - 'host/**'
       - 'guest/**'
       - 'crates/**'
       - 'Cargo.toml'
@@ -26,8 +28,22 @@ concurrency:
 
 jobs:
   build:
-    name: build
+    # Two images from one workflow:
+    #   gpu — the default CUDA build (Dockerfile), tags unchanged.
+    #   cpu — the CUDA-free snark-only build (Dockerfile.cpu), `-cpu`-suffixed
+    #         tags (e.g. `<sha>-<ts>-cpu`, `latest-cpu`).
+    name: build (${{ matrix.variant }})
     runs-on: matterlabs-ci-runner-high-performance
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: gpu
+            dockerfile: Dockerfile
+            suffix: ''
+          - variant: cpu
+            dockerfile: Dockerfile.cpu
+            suffix: '-cpu'
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -64,6 +80,10 @@ jobs:
           images: |
             ghcr.io/${{ github.repository }}
             us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
+          # `onlatest=true` so the suffix reaches `latest` too (-> `latest-cpu`);
+          # an empty suffix (gpu variant) is a no-op, keeping the GPU tags as-is.
+          flavor: |
+            suffix=${{ matrix.suffix }},onlatest=true
           tags: |
             type=raw,value=${{ steps.tag.outputs.image_tag }}
             type=semver,pattern={{version}}
@@ -74,6 +94,7 @@ jobs:
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
