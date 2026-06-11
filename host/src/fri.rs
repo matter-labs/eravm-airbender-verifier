@@ -5,9 +5,7 @@ use airbender_host::{
     TranspilerRunner, TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
-use std::io::BufReader;
-#[cfg(feature = "gpu_fri")]
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "gpu_fri")]
 use std::time::Duration;
@@ -387,7 +385,6 @@ pub(crate) fn load_verifier_input(
     zksync_cli_utils::load_batch(&batch_input)
 }
 
-#[cfg(feature = "gpu_fri")]
 pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {
     let parent = path
         .parent()
