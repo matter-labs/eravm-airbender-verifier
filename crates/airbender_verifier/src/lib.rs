@@ -171,18 +171,20 @@ pub fn execute(input: V2AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
         input.vm_run_data.protocol_version,
     );
-    // Pre-medium-interop bootloader encoding reads the validator back as an
-    // address (`l2_da_validator().expect(...)` in multivm); reject the
-    // mismatch here so a hostile payload yields an error, not a panic deep
-    // inside bootloader memory construction.
+    // Bootloader memory encoding reads the validator back by shape —
+    // `l2_da_validator().expect(...)` pre-medium-interop,
+    // `l2_da_commitment_scheme().expect(...)` after — so either mismatched
+    // combination panics deep inside multivm. Reject both directions here so
+    // a hostile payload yields an error instead.
     anyhow::ensure!(
-        !protocol_version.is_pre_medium_interop()
-            || matches!(
+        protocol_version.is_pre_medium_interop()
+            == matches!(
                 input.pubdata_params.pubdata_validator(),
                 L2PubdataValidator::Address(_)
             ),
-        "pre-medium-interop protocol {protocol_version:?} requires an address-shaped \
-         L2 pubdata validator, got {:?}",
+        "protocol {protocol_version:?} is incompatible with L2 pubdata validator {:?}: \
+         pre-medium-interop requires the address shape, post-medium-interop the \
+         commitment scheme",
         input.pubdata_params.pubdata_validator(),
     );
     // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
@@ -1173,6 +1175,24 @@ mod tests {
         );
     }
 
+    /// A corrupt sender cannot dodge the legacy-shape version check by
+    /// claiming pre-v31 in `system_env` while `vm_run_data` says post-v31:
+    /// both copies must agree at decode time.
+    #[test]
+    fn test_flat_wire_rejects_legacy_shape_with_disagreeing_versions() {
+        let mut payload = sample_v1();
+        payload.vm_run_data.protocol_version = ProtocolVersionId::Version31;
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(payload)))
+            .expect("serialize legacy flat payload");
+        let decoded: FlatAirbenderVerifierInput =
+            serde_json::from_value(json).expect("legacy shape itself decodes");
+        let err = decoded.into_v2().expect_err("disagreeing versions");
+        assert!(
+            err.to_string().contains("pre-v31 wire shape"),
+            "unexpected: {err}"
+        );
+    }
+
     /// Pre-medium-interop bootloader encoding requires an address-shaped
     /// validator; `execute` must reject the mismatch instead of panicking in
     /// bootloader memory construction.
@@ -1187,7 +1207,29 @@ mod tests {
             Err(err) => err,
         };
         assert!(
-            err.to_string().contains("address-shaped"),
+            err.to_string()
+                .contains("incompatible with L2 pubdata validator"),
+            "unexpected: {err}"
+        );
+    }
+
+    /// The opposite mismatch panics too (`l2_da_commitment_scheme().expect`
+    /// in the post-interop bootloader branch) and is reachable through the
+    /// legacy-field JSON leniency on `PubdataParams`; `execute` must reject
+    /// it the same way.
+    #[test]
+    fn test_execute_rejects_address_validator_post_medium_interop() {
+        let payload = sample_payload(
+            ProtocolVersionId::Version31,
+            L2PubdataValidator::Address(Address::zero()),
+        );
+        let err = match execute(payload) {
+            Ok(_) => panic!("execute accepted a post-medium-interop Address validator"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("incompatible with L2 pubdata validator"),
             "unexpected: {err}"
         );
     }

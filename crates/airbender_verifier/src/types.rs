@@ -142,11 +142,16 @@ impl FlatAirbenderVerifierInput {
         match self {
             Self::V2(payload) => Ok(*payload),
             Self::Legacy(payload) => {
+                // Both version copies must agree the payload is pre-v31;
+                // `execute()` re-checks they are equal, but failing here keeps
+                // the "legacy shape claiming v31" error at decode time.
                 let version = payload.system_env.version;
+                let witness_version = payload.vm_run_data.protocol_version;
                 anyhow::ensure!(
-                    version.is_pre_medium_interop(),
-                    "flat payload has the pre-v31 wire shape (no `settlement_layer`) \
-                     but claims post-v31 protocol version {version:?}"
+                    version.is_pre_medium_interop() && witness_version.is_pre_medium_interop(),
+                    "flat payload has the pre-v31 wire shape (no `settlement_layer`) but \
+                     claims a post-v31 protocol version (system_env: {version:?}, \
+                     vm_run_data: {witness_version:?})"
                 );
                 Ok(*payload)
             }
