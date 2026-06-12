@@ -27,10 +27,11 @@ concurrency:
 
 jobs:
   build:
-    # Two images from one workflow:
-    #   gpu — the default CUDA build (docker/Dockerfile), tags unchanged.
-    #   cpu — the CUDA-free snark-only build (docker/Dockerfile.cpu),
-    #         `-cpu`-suffixed tags (e.g. `<sha>-<ts>-cpu`, `latest-cpu`).
+    # Two images from one workflow, published as separate repositories:
+    #   gpu — the default CUDA build (docker/Dockerfile), repo `…-verifier`.
+    #   cpu — the CUDA-free snark-only build (docker/Dockerfile.cpu), repo
+    #         `…-verifier-cpu`. Both share the same tag set (`<sha>-<ts>`,
+    #         `latest`, semver); the variant lives in the image name, not the tag.
     name: build (${{ matrix.variant }})
     runs-on: matterlabs-ci-runner-high-performance
     strategy:
@@ -39,10 +40,10 @@ jobs:
         include:
           - variant: gpu
             dockerfile: docker/Dockerfile
-            suffix: ''
+            name_suffix: ''
           - variant: cpu
             dockerfile: docker/Dockerfile.cpu
-            suffix: '-cpu'
+            name_suffix: 'snark-cpu'
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -76,13 +77,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
+          # The variant suffix is appended to the image NAME (repo), not the
+          # tag, so the CPU build publishes as `…-verifier-cpu`. The GPU
+          # variant's empty suffix leaves the name unchanged.
           images: |
-            ghcr.io/${{ github.repository }}
-            us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
-          # `onlatest=true` so the suffix reaches `latest` too (-> `latest-cpu`);
-          # an empty suffix (gpu variant) is a no-op, keeping the GPU tags as-is.
-          flavor: |
-            suffix=${{ matrix.suffix }},onlatest=true
+            ghcr.io/${{ github.repository }}${{ matrix.name_suffix }}
+            us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}${{ matrix.name_suffix }}
           tags: |
             type=raw,value=${{ steps.tag.outputs.image_tag }}
             type=semver,pattern={{version}}
