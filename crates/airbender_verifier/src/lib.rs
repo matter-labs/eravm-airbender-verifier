@@ -34,7 +34,7 @@ use zksync_types::{
     commitment::{
         serialize_commitments, AuxCommitments, L1BatchAuxiliaryCommonOutput,
         L1BatchAuxiliaryOutput, L1BatchCommitment, L1BatchMetaParameters, L1BatchPassThroughData,
-        PubdataParams, RootState,
+        L2PubdataValidator, PubdataParams, RootState,
     },
     u256_to_h256,
     web3::keccak256,
@@ -170,6 +170,20 @@ pub fn execute(input: V2AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         input.vm_run_data.protocol_version == protocol_version,
         "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
         input.vm_run_data.protocol_version,
+    );
+    // Pre-medium-interop bootloader encoding reads the validator back as an
+    // address (`l2_da_validator().expect(...)` in multivm); reject the
+    // mismatch here so a hostile payload yields an error, not a panic deep
+    // inside bootloader memory construction.
+    anyhow::ensure!(
+        !protocol_version.is_pre_medium_interop()
+            || matches!(
+                input.pubdata_params.pubdata_validator(),
+                L2PubdataValidator::Address(_)
+            ),
+        "pre-medium-interop protocol {protocol_version:?} requires an address-shaped \
+         L2 pubdata validator, got {:?}",
+        input.pubdata_params.pubdata_validator(),
     );
     // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
     // populated by the witness generator for the legacy proving path and are not
@@ -1151,6 +1165,24 @@ mod tests {
         );
     }
 
+    /// Pre-medium-interop bootloader encoding requires an address-shaped
+    /// validator; `execute` must reject the mismatch instead of panicking in
+    /// bootloader memory construction.
+    #[test]
+    fn test_execute_rejects_commitment_scheme_pre_medium_interop() {
+        let payload = sample_payload(
+            ProtocolVersionId::Version29,
+            L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
+        );
+        let err = match execute(payload) {
+            Ok(_) => panic!("execute accepted a pre-medium-interop CommitmentScheme validator"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("address-shaped"),
+            "unexpected: {err}"
+        );
+    }
 
     /// V1 wire is lossy in one direction: post-v31-only state on a V2 payload
     /// (non-default `interop_fee` / `settlement_layer`, `CommitmentScheme`
