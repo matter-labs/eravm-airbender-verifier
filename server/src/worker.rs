@@ -98,7 +98,7 @@ impl ProverWorker {
                 input_words,
             } => match self.fri.as_mut() {
                 Some(fri) => {
-                    info!(batch_number, kind = %ProofKind::Fri, "Started proving batch");
+                    info!(kind = %ProofKind::Fri, "Started proving batch {batch_number}");
                     let started = Instant::now();
                     let result = catch_prover_panic("FRI prover", || {
                         fri.prove_input(batch_number as u64, &input_words)
@@ -131,7 +131,7 @@ impl ProverWorker {
                 proof,
             } => match self.prepare_snark_input(batch_number, *proof) {
                 Ok(raw_proof) => {
-                    info!(batch_number, kind = %ProofKind::Snark, "Started proving batch");
+                    info!(kind = %ProofKind::Snark, "Started proving batch {batch_number}");
                     let started = Instant::now();
                     let snark = self.snark.as_mut().unwrap();
                     let result = catch_prover_panic("SNARK prover", || snark.prove(raw_proof));
