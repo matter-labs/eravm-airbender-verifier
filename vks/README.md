@@ -13,7 +13,7 @@ server (and the integration test) consume:
 
 ```bash
 # Needs a GPU runner with the trusted setup (CRS) on disk.
-cargo run -p eravm-prover-host --features snark_gpu -- gen-vks \
+cargo run -p eravm-prover-host --features gpu_snark -- gen-vks \
     --output-dir vks \
     --trusted-setup /path/to/setup.key
 git status vks/

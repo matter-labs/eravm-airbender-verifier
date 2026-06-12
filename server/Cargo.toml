@@ -41,4 +41,4 @@ default = ["gpu_fri"]
 gpu_fri = ["eravm-prover-host/gpu_fri"]
 # Compile the SNARK wrapper in GPU mode. Requires `bellman-cuda` (see README).
 # Forwards to the host crate's identically-named feature.
-snark_gpu = ["eravm-prover-host/snark_gpu"]
+gpu_snark = ["eravm-prover-host/gpu_snark"]

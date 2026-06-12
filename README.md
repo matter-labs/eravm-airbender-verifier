@@ -156,17 +156,17 @@ git lfs install
 # exist on disk before the prover starts — point at it via `--trusted-setup`
 # or `SNARK_TRUSTED_SETUP_FILE` (mirrors era's `KZG_TRUSTED_SETUP_FILE`).
 # IMPORTANT: CPU/GPU use different keys. The `download-trusted-setup`
-# subcommand picks the right URL based on the build's `snark_gpu` feature.
+# subcommand picks the right URL based on the build's `gpu_snark` feature.
 cargo run --release -p eravm-prover-host -- download-trusted-setup --output setup.key &
-cargo run --release -p eravm-prover-host --features snark_gpu -- download-trusted-setup --output setup_gpu.key
+cargo run --release -p eravm-prover-host --features gpu_snark -- download-trusted-setup --output setup_gpu.key
 
 ulimit -s unlimited
 
 # Generate FRI proof
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-fri --batch-files 506093.bin.gz --output-dir ./artifacts/proofs
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-fri --batch-files 506093.bin.gz --output-dir ./artifacts/proofs
 
 # Generate SNARK proof
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key
 ```
 
 If you need to save intermediate SNARK artifacts:
@@ -176,17 +176,17 @@ If you need to save intermediate SNARK artifacts:
 RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup.key --save-intermediates
 
 # On GPU
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features snark_gpu -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key --save-intermediates
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key --save-intermediates
 ```
 
-Note: `--features snark_gpu` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
+Note: `--features gpu_snark` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
 
 ### Verification keys
 
 The prover server only loads verification keys from disk; it never derives them on the fly. The canonical FRI and SNARK VKs live in [`vks/`](vks/) and CI re-derives them on every PR (see the `vk-check` job in [.github/workflows/ci-check.yaml](.github/workflows/ci-check.yaml)). If a guest change invalidates them, regenerate locally and commit the result:
 
 ```bash
-cargo run --release -p eravm-prover-host --features snark_gpu -- gen-vks \
+cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
     --output-dir vks \
     --trusted-setup setup_gpu.key
 ```
@@ -210,7 +210,7 @@ docker run --rm --ulimit stack=-1 \
     eravm-prover-cpu
 ```
 
-The GPU image ([`Dockerfile`](Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features snark_gpu` builds still enable it.
+The GPU image ([`Dockerfile`](Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features gpu_snark` builds still enable it.
 
 ## Policies
 

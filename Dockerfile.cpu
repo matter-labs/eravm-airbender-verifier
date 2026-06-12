@@ -51,7 +51,7 @@ RUN test -f guest/dist/app/app.bin \
              "It is committed to the repo; refresh it with /update-vks." >&2; exit 1)
 
 # Build the CPU SNARK server. `--no-default-features` keeps `gpu_fri` (CUDA)
-# off; we add no `snark_gpu` either, so the wrapper stays on CPU. BuildKit cache
+# off; we add no `gpu_snark` either, so the wrapper stays on CPU. BuildKit cache
 # mounts persist cargo's registry/git/target across builds; binaries are copied
 # to `/out` within the same RUN since cache mounts aren't part of image layers.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

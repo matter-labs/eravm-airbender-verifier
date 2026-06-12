@@ -58,7 +58,7 @@ ENV CUDAARCHS="80;120"
 
 # Step 1: build era-bellman-cuda. `zksync-crypto-gpu`'s `gpu-ffi` build script
 # reads `BELLMAN_CUDA_DIR` from the env when the server is compiled with
-# `--features snark_gpu` (forwards to `zkos-wrapper/gpu`). Same recipe as
+# `--features gpu_snark` (forwards to `zkos-wrapper/gpu`). Same recipe as
 # `ci-check.yaml::server-integration-build`. Pinned to a specific commit so the
 # Docker layer cache invalidates intentionally on upstream bumps — bump this
 # ARG when you want to pick up new era-bellman-cuda changes. Sits above
@@ -110,7 +110,7 @@ RUN test -f guest/dist/app/app.bin \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/target \
-    cargo build --release --locked --features snark_gpu \
+    cargo build --release --locked --features gpu_snark \
         -p eravm-prover-server -p eravm-prover-host \
     && mkdir -p /out \
     && cp /workspace/target/release/eravm-prover-server /out/ \

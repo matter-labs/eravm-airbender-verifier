@@ -19,7 +19,7 @@ const DOWNLOAD_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Default trusted-setup filename for the build's SNARK feature set.
 pub fn default_trusted_setup_path() -> PathBuf {
-    if cfg!(feature = "snark_gpu") {
+    if cfg!(feature = "gpu_snark") {
         PathBuf::from("setup_gpu.key")
     } else {
         PathBuf::from("setup.key")
@@ -29,7 +29,7 @@ pub fn default_trusted_setup_path() -> PathBuf {
 /// Default download URL for the trusted-setup file matching the build's
 /// SNARK feature set.
 pub fn default_trusted_setup_download_url() -> &'static str {
-    if cfg!(feature = "snark_gpu") {
+    if cfg!(feature = "gpu_snark") {
         GPU_TRUSTED_SETUP_URL
     } else {
         CPU_TRUSTED_SETUP_URL
