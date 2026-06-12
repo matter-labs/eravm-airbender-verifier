@@ -90,13 +90,14 @@ impl Default for CommitmentInput {
 /// - `V2`: canonical post-v31 layout.
 ///
 /// Both `V1` and `V2` carry the same Rust payload; only the on-wire shape
-/// differs. [`AirbenderVerifierInput::into_v2`] strips the tag.
+/// differs. [`AirbenderVerifierInput::into_v2`] strips the tag. The payloads
+/// are boxed only to keep the enum itself small; `Box<T>` is
+/// serde-transparent, so the wire encoding is unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum AirbenderVerifierInput {
     V0,
-    V1(#[serde(with = "crate::v1_compat")] V2AirbenderVerifierInput),
-    V2(V2AirbenderVerifierInput),
+    V1(#[serde(with = "crate::v1_compat")] Box<V2AirbenderVerifierInput>),
+    V2(Box<V2AirbenderVerifierInput>),
 }
 
 impl AirbenderVerifierInput {
@@ -104,7 +105,7 @@ impl AirbenderVerifierInput {
     pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
             Self::V0 => anyhow::bail!("AirbenderVerifierInput::V0 has no payload"),
-            Self::V1(payload) | Self::V2(payload) => Ok(payload),
+            Self::V1(payload) | Self::V2(payload) => Ok(*payload),
         }
     }
 }
@@ -124,13 +125,12 @@ impl AirbenderVerifierInput {
 /// using the tagged [`AirbenderVerifierInput`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum FlatAirbenderVerifierInput {
     /// Post-v31 flat payload: all v31 fields present (`settlement_layer`
     /// required, `interop_fee` may default).
-    V2(V2AirbenderVerifierInput),
+    V2(Box<V2AirbenderVerifierInput>),
     /// Pre-v31 flat payload from a node that does not know the v31 fields.
-    Legacy(#[serde(with = "crate::v1_compat")] V2AirbenderVerifierInput),
+    Legacy(#[serde(with = "crate::v1_compat")] Box<V2AirbenderVerifierInput>),
 }
 
 impl FlatAirbenderVerifierInput {
@@ -140,7 +140,7 @@ impl FlatAirbenderVerifierInput {
     /// defaults.
     pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
         match self {
-            Self::V2(payload) => Ok(payload),
+            Self::V2(payload) => Ok(*payload),
             Self::Legacy(payload) => {
                 let version = payload.system_env.version;
                 anyhow::ensure!(
@@ -148,7 +148,7 @@ impl FlatAirbenderVerifierInput {
                     "flat payload has the pre-v31 wire shape (no `settlement_layer`) \
                      but claims post-v31 protocol version {version:?}"
                 );
-                Ok(payload)
+                Ok(*payload)
             }
         }
     }

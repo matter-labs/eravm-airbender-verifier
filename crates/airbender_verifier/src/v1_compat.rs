@@ -105,7 +105,9 @@ pub fn serialize<S: Serializer>(
     .serialize(ser)
 }
 
-pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<V2AirbenderVerifierInput, D::Error> {
+pub fn deserialize<'de, D: Deserializer<'de>>(
+    de: D,
+) -> Result<Box<V2AirbenderVerifierInput>, D::Error> {
     let legacy = Legacy::deserialize(de)?;
     // `PubdataParams::new` only rejects `CommitmentScheme(None)`; the
     // `Address(_)` variant we pass is always valid.
@@ -114,7 +116,7 @@ pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<V2AirbenderVerifi
         legacy.pubdata_params.pubdata_type,
     )
     .expect("Address variant is always a valid PubdataParams");
-    Ok(V2AirbenderVerifierInput {
+    Ok(Box::new(V2AirbenderVerifierInput {
         vm_run_data: legacy.vm_run_data,
         merkle_paths: legacy.merkle_paths,
         l2_blocks_execution_data: legacy.l2_blocks_execution_data,
@@ -132,5 +134,5 @@ pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<V2AirbenderVerifi
         system_env: legacy.system_env,
         pubdata_params,
         commitment_input: legacy.commitment_input,
-    })
+    }))
 }

@@ -79,7 +79,7 @@ impl JobServerClient {
             .into_v2()
             .context("rejecting flat verifier-input payload from job server")?;
         let batch_number = v2.vm_run_data.l1_batch_number.0;
-        let input = AirbenderVerifierInput::V2(v2);
+        let input = AirbenderVerifierInput::V2(Box::new(v2));
         let mut inputs = Inputs::new();
         inputs
             .push(&input)

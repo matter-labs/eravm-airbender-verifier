@@ -1071,7 +1071,7 @@ mod tests {
     /// alter the on-disk layout.
     #[test]
     fn test_serialization_roundtrip_v2() {
-        bincode_roundtrip(AirbenderVerifierInput::V2(sample_v2()));
+        bincode_roundtrip(AirbenderVerifierInput::V2(Box::new(sample_v2())));
     }
 
     /// Pins the host↔guest channel wire: inputs cross into the guest encoded
@@ -1079,8 +1079,8 @@ mod tests {
     #[test]
     fn test_codec_roundtrip() {
         for avi in [
-            AirbenderVerifierInput::V1(sample_v1()),
-            AirbenderVerifierInput::V2(sample_v2()),
+            AirbenderVerifierInput::V1(Box::new(sample_v1())),
+            AirbenderVerifierInput::V2(Box::new(sample_v2())),
         ] {
             let serialized = AirbenderCodecV0::encode(&avi)
                 .expect("Failed to serialize AirbenderVerifierInput.");
@@ -1096,7 +1096,7 @@ mod tests {
     /// corpus stops loading.
     #[test]
     fn test_serialization_roundtrip_v1() {
-        bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
+        bincode_roundtrip(AirbenderVerifierInput::V1(Box::new(sample_v1())));
     }
 
     /// The flat HTTP wire accepts the post-v31 shape via the strict `V2`
@@ -1104,7 +1104,7 @@ mod tests {
     #[test]
     fn test_flat_wire_accepts_v2_json() {
         let payload = sample_v2();
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::V2(payload.clone()))
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::V2(Box::new(payload.clone())))
             .expect("serialize V2 flat payload");
         assert!(
             json["l1_batch_env"].get("settlement_layer").is_some(),
@@ -1112,7 +1112,10 @@ mod tests {
         );
         let decoded: FlatAirbenderVerifierInput =
             serde_json::from_value(json).expect("deserialize V2 flat payload");
-        assert_eq!(decoded, FlatAirbenderVerifierInput::V2(payload.clone()));
+        assert_eq!(
+            decoded,
+            FlatAirbenderVerifierInput::V2(Box::new(payload.clone()))
+        );
         assert_eq!(decoded.into_v2().expect("post-v31 payload"), payload);
     }
 
@@ -1123,8 +1126,10 @@ mod tests {
     #[test]
     fn test_flat_wire_accepts_legacy_json() {
         let payload = sample_v1();
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(payload.clone()))
-            .expect("serialize legacy flat payload");
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(
+            payload.clone(),
+        )))
+        .expect("serialize legacy flat payload");
         assert!(
             json["l1_batch_env"].get("settlement_layer").is_none(),
             "legacy flat JSON must not carry settlement_layer"
@@ -1141,7 +1146,10 @@ mod tests {
         );
         let decoded: FlatAirbenderVerifierInput =
             serde_json::from_value(json).expect("deserialize legacy flat payload");
-        assert_eq!(decoded, FlatAirbenderVerifierInput::Legacy(payload.clone()));
+        assert_eq!(
+            decoded,
+            FlatAirbenderVerifierInput::Legacy(Box::new(payload.clone()))
+        );
         assert_eq!(decoded.into_v2().expect("pre-v31 payload"), payload);
     }
 
@@ -1154,7 +1162,7 @@ mod tests {
             ProtocolVersionId::Version31,
             L2PubdataValidator::Address(Address::zero()),
         );
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(payload))
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(payload)))
             .expect("serialize legacy flat payload");
         let decoded: FlatAirbenderVerifierInput =
             serde_json::from_value(json).expect("legacy shape itself decodes");
@@ -1191,14 +1199,14 @@ mod tests {
     fn test_v1_wire_rejects_post_v31_state() {
         let mut payload = sample_v1();
         payload.l1_batch_env.interop_fee = U256::from(1);
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
 
         let mut payload = sample_v1();
         payload.l1_batch_env.settlement_layer = SettlementLayer::for_tests();
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
 
         let payload = sample_v2(); // CommitmentScheme validator
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(payload)).is_err());
+        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
     }
 
     #[test]

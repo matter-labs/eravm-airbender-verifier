@@ -152,9 +152,9 @@ async fn handle_proof_inputs(State(state): State<TestServerState>) -> impl IntoR
         return StatusCode::NO_CONTENT.into_response();
     }
     println!("[test-server] Serving job to prover (legacy pre-v31 wire shape)");
-    Json(FlatAirbenderVerifierInput::Legacy(
+    Json(FlatAirbenderVerifierInput::Legacy(Box::new(
         (*state.verifier_input).clone(),
-    ))
+    )))
     .into_response()
 }
 
