@@ -106,10 +106,10 @@ jobs:
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
 
-      - name: Build eravm-prover-host (snark_gpu)
+      - name: Build eravm-prover-host (gpu_snark)
         env:
           RUST_BACKTRACE: 1
-        run: cargo build --release -p eravm-prover-host --locked --features snark_gpu
+        run: cargo build --release -p eravm-prover-host --locked --features gpu_snark
 
       - name: Stage runtime CUDA libraries
         run: |

@@ -3,8 +3,9 @@ name: docker-build
 on:
   pull_request:
     paths:
-      - Dockerfile
+      - 'docker/**'
       - 'server/**'
+      - 'host/**'
       - 'guest/**'
       - 'crates/**'
       - 'Cargo.toml'
@@ -26,8 +27,23 @@ concurrency:
 
 jobs:
   build:
-    name: build
+    # Two images from one workflow, published as separate repositories:
+    #   gpu — the default CUDA build (docker/Dockerfile), repo `…-verifier`.
+    #   cpu — the CUDA-free snark-only build (docker/Dockerfile.cpu), repo
+    #         `…-verifier-cpu`. Both share the same tag set (`<sha>-<ts>`,
+    #         `latest`, semver); the variant lives in the image name, not the tag.
+    name: build (${{ matrix.variant }})
     runs-on: matterlabs-ci-runner-high-performance
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: gpu
+            dockerfile: docker/Dockerfile
+            name_suffix: ''
+          - variant: cpu
+            dockerfile: docker/Dockerfile.cpu
+            name_suffix: 'snark-cpu'
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -61,9 +77,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
+          # The variant suffix is appended to the image NAME (repo), not the
+          # tag, so the CPU build publishes as `…-verifier-cpu`. The GPU
+          # variant's empty suffix leaves the name unchanged.
           images: |
-            ghcr.io/${{ github.repository }}
-            us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}
+            ghcr.io/${{ github.repository }}${{ matrix.name_suffix }}
+            us-docker.pkg.dev/matterlabs-infra/matterlabs-docker/${{ github.event.repository.name }}${{ matrix.name_suffix }}
           tags: |
             type=raw,value=${{ steps.tag.outputs.image_tag }}
             type=semver,pattern={{version}}
@@ -74,6 +93,7 @@ jobs:
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

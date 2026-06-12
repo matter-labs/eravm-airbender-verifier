@@ -9,12 +9,12 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use airbender_host::{GpuProverConfig, SecurityLevel};
+use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::Parser;
 use eravm_prover_host::{
-    default_fri_vk_path, deserialize_from_file, FriPipeline, FriVerifier, SnarkOptions,
-    SnarkPipeline, SnarkWrapperVK,
+    build_fri_prover, default_fri_vk_path, deserialize_from_file, FriProverConfig, FriVerifier,
+    SnarkOptions, SnarkPipeline, SnarkWrapperVK,
 };
 use tracing::info;
 use zksync_cli_utils::init_tracing;
@@ -45,7 +45,8 @@ struct Cli {
     #[arg(long, env = "PROVER_POLL_INTERVAL_MS", default_value = "5000")]
     poll_interval_ms: u64,
 
-    /// Number of worker threads for the GPU FRI prover
+    /// Number of worker threads for the GPU FRI prover (no effect in a
+    /// CUDA-free `snark-only` build).
     #[arg(long, env = "PROVER_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
@@ -238,19 +239,20 @@ fn build_prover(
         save_intermediates: false,
     };
 
-    // Assemble the prover config from the server's flags. The host
+    // Backend-agnostic FRI prover config from the server's flags. The host
     // transfer-buffer pool defaults below the upstream 256/128 to reclaim
     // committed pinned RAM; raise it back if FRI throughput regresses.
-    let mut fri_config = GpuProverConfig::default()
-        .maybe_worker_threads(cli.worker_threads)
-        .with_host_allocators_per_job(cli.fri_host_buffers_per_job)
-        .with_host_allocators_per_device(cli.fri_host_buffers_per_device);
-    if let Some(gb) = cli.fri_gpu_memory_gb {
-        fri_config = fri_config.with_max_device_memory_bytes((gb * (1u64 << 30) as f64) as usize);
-    }
+    // `build_fri_prover` is a CUDA-free build's stub that errors, so `fri-only`
+    // / `fri-snark` fail there with a clear message — no `#[cfg]` needed here.
     let build_fri = || {
-        FriPipeline::new(dist_dir, &cli.fri_vk, security, fri_config)
-            .context("while building FRI pipeline")
+        let fri_config = FriProverConfig {
+            worker_threads: cli.worker_threads,
+            max_device_memory_gb: cli.fri_gpu_memory_gb,
+            host_buffers_per_job: cli.fri_host_buffers_per_job,
+            host_buffers_per_device: cli.fri_host_buffers_per_device,
+        };
+        build_fri_prover(dist_dir, &cli.fri_vk, security, fri_config)
+            .context("while building FRI prover")
     };
     let build_snark = || -> Result<SnarkPipeline> {
         let snark_vk = load_snark_vk(cli.snark_vk.as_deref())?;
@@ -262,9 +264,9 @@ fn build_prover(
         ProverMode::FriOnly => builder.with_fri(build_fri()?),
         ProverMode::FriSnark => builder.with_fri(build_fri()?).with_snark(build_snark()?),
         ProverMode::SnarkOnly => {
-            // The worker doesn't run the GPU FRI prover here, but the FRI
-            // proofs we receive from the job server still have to be verified
-            // before we burn cycles wrapping them into a SNARK.
+            // The worker doesn't run the FRI prover here, but the FRI proofs we
+            // receive from the job server still have to be verified before we
+            // burn cycles wrapping them into a SNARK.
             let verifier = FriVerifier::load(dist_dir, &cli.fri_vk, security)
                 .context("while building FRI verifier for snark-only mode")?;
             builder
