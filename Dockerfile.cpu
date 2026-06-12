@@ -1,25 +1,6 @@
 # syntax=docker/dockerfile:1
 
 # CPU-only SNARK prover image.
-#
-# Builds `eravm-prover-server` with `--no-default-features`, which drops the
-# `gpu_fri` cargo feature and therefore Airbender's CUDA `gpu_prover` crate
-# entirely (see the `gpu_fri` feature in server/host Cargo.toml). The resulting
-# binary has no CUDA build- or run-time dependency and supports only
-# `--mode snark-only`: it polls the job server for FRI proofs, verifies them,
-# wraps them into SNARKs on CPU, and submits the SNARK. The SNARK wrapper runs
-# in CPU mode because `snark_gpu` (→ `zkos-wrapper/gpu`, bellman-cuda) is also
-# left off — that is the wrapper's default.
-#
-# Build:   docker build -f Dockerfile.cpu -t eravm-prover-cpu .
-# Run:     docker run --rm \
-#            --ulimit stack=-1 \
-#            -e PROVER_SERVER_URL=http://job-server:8080 \
-#            eravm-prover-cpu
-
-# ─── Build stage ─────────────────────────────────────────────────────────────
-# Plain Ubuntu — no CUDA toolchain. Mirrors the GPU Dockerfile's builder minus
-# everything CUDA-specific (cmake-from-Kitware, bellman-cuda, CUDAARCHS).
 FROM ubuntu:22.04 AS builder
 
 ARG RUST_TOOLCHAIN=nightly-2026-02-10
@@ -99,18 +80,9 @@ COPY --from=builder /setup/setup.key /setup/setup.key
 
 ENV PROVER_GUEST_DIST_DIR=/guest-program
 
-# The committed FRI and SNARK verification keys ship with the image. The server
-# hard-fails at startup if either file is missing or doesn't match the bundled
-# guest binary — it never derives a VK on the fly. The SNARK VK is a property of
-# the recursion circuit and the 2^24 CRS, so the committed `snark_vk.json` is
-# valid for both the GPU (`setup_compact.key`) and CPU (`setup_2^24.key`) setups.
-# If a mismatch ever surfaces, regenerate with
-# `eravm-prover-host gen-vks --trusted-setup /setup/setup.key` (CPU-capable).
 ENV FRI_VK=/vks/fri_vk.bin
 ENV SNARK_VK=/vks/snark_vk.json
 
-# CPU SNARK trusted setup ships with the image. Override `SNARK_TRUSTED_SETUP_FILE`
-# only if mounting it from a different path.
 ENV SNARK_TRUSTED_SETUP_FILE=/setup/setup.key
 
 # This image only supports the snark-only pipeline (no GPU FRI prover compiled

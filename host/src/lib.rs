@@ -157,61 +157,6 @@ pub fn wrap_to_snark(
     Ok(())
 }
 
-/// Converts a fetched SNARK input JSON (`{ l1_batch_number, fri_proof }`, where
-/// `fri_proof` is the hex-encoded bincode `Proof` envelope returned by the job
-/// server's `snark_inputs` endpoint) into a raw FRI proof JSON that
-/// `prove-snark` ([`wrap_to_snark`]) can consume. This lets a CPU box wrap a
-/// proof pulled straight off the job server without going through the server's
-/// polling/submission loop. Mirrors the envelope-stripping the SNARK worker
-/// does internally.
-pub fn decode_fri_input(input: &Path, output: &Path) -> Result<()> {
-    #[derive(serde::Deserialize)]
-    struct SnarkInput {
-        // Kept for documentation/round-trip clarity even though wrapping does
-        // not need the batch number.
-        #[allow(dead_code)]
-        l1_batch_number: u32,
-        fri_proof: String,
-    }
-
-    let raw = std::fs::read_to_string(input)
-        .with_context(|| format!("while attempting to read SNARK input {}", input.display()))?;
-    let parsed: SnarkInput = serde_json::from_str(&raw)
-        .with_context(|| format!("while attempting to parse SNARK input {}", input.display()))?;
-
-    let bytes = hex::decode(parsed.fri_proof.trim_start_matches("0x"))
-        .context("while attempting to hex-decode the fri_proof field")?;
-    let (proof, len): (Proof, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .context("while attempting to bincode-decode the FRI proof envelope")?;
-    if len != bytes.len() {
-        anyhow::bail!("incoming FRI proof envelope has trailing bytes");
-    }
-
-    let raw_proof = match proof {
-        Proof::Real(real) => real.into_inner(),
-        Proof::Dev(_) => {
-            anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
-        }
-    };
-
-    save_raw_proof(&raw_proof, output).with_context(|| {
-        format!(
-            "while attempting to write raw FRI proof {}",
-            output.display()
-        )
-    })?;
-
-    info!(
-        input = %input.display(),
-        output = %output.display(),
-        l1_batch_number = parsed.l1_batch_number,
-        "Decoded SNARK input into a raw FRI proof ready for prove-snark"
-    );
-
-    Ok(())
-}
-
 pub(crate) fn batch_output_dir(output_root: &Path, batch_number: u64) -> PathBuf {
     output_root.join(format!("batch-{batch_number}"))
 }

@@ -60,12 +60,6 @@ enum Command {
     Run(RunArgs),
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
-    /// Convert a fetched SNARK input JSON (`{ l1_batch_number, fri_proof }`,
-    /// as returned by the job server's `snark_inputs` endpoint and saved by
-    /// `scripts/fetch_prover_input.sh --snark`) into a raw FRI proof JSON that
-    /// `prove-snark` can consume. Lets a CPU box wrap a proof pulled straight
-    /// off the job server without the polling/submission server loop.
-    DecodeFriInput(DecodeFriInputArgs),
     /// Download the bellman SNARK trusted setup (CRS) so it is on disk before
     /// running `prove-snark`. Skips the download if the file already exists.
     DownloadTrustedSetup(DownloadTrustedSetupArgs),
@@ -153,17 +147,6 @@ struct DownloadTrustedSetupArgs {
 }
 
 #[derive(Debug, Args)]
-struct DecodeFriInputArgs {
-    /// Fetched SNARK input JSON (e.g. from `scripts/fetch_prover_input.sh --snark`).
-    #[arg(long)]
-    input: PathBuf,
-
-    /// Where to write the raw FRI proof JSON consumed by `prove-snark`.
-    #[arg(long)]
-    output: PathBuf,
-}
-
-#[derive(Debug, Args)]
 struct ProveSnarkArgs {
     #[arg(long, value_delimiter = ',')]
     proof_files: Vec<PathBuf>,
@@ -222,7 +205,6 @@ fn main() -> Result<()> {
                 args.security.into(),
             )
         }
-        Command::DecodeFriInput(args) => decode_fri_input(&args.input, &args.output),
         Command::DownloadTrustedSetup(args) => {
             download_trusted_setup_if_not_present(&args.output, &args.url)
                 .context("while attempting to download the SNARK trusted setup")
