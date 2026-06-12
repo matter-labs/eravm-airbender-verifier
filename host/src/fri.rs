@@ -1,5 +1,3 @@
-#[cfg(feature = "gpu_fri")]
-use airbender_host::{GpuProver, GpuProverBuilder, GpuProverConfig, Prover};
 use airbender_host::{
     Inputs, Proof, ProverLevel, RealVerifier, RealVerifierBuilder, Runner, SecurityLevel,
     TranspilerRunner, TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
@@ -7,13 +5,8 @@ use airbender_host::{
 use anyhow::{Context, Result};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-#[cfg(feature = "gpu_fri")]
 use std::time::Duration;
-#[cfg(feature = "gpu_fri")]
-use std::time::Instant;
 use tracing::info;
-#[cfg(feature = "gpu_fri")]
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 
 /// Resolves the guest binary inside a dist dir. We build the verifier/prover/
@@ -21,7 +14,7 @@ use zksync_airbender_verifier::Verify;
 /// also requires the unused `app.elf` / `manifest.toml`). The transpiler
 /// additionally reads the sibling `app.text`; both `app.bin` and `app.text` are
 /// committed under `guest/dist/app/`.
-fn app_bin_path(dist_dir: &Path) -> PathBuf {
+pub(crate) fn app_bin_path(dist_dir: &Path) -> PathBuf {
     dist_dir.join("app.bin")
 }
 
@@ -33,19 +26,11 @@ pub(crate) const FRI_PROOF_FILE_NAME: &str = "fri_proof.json";
 
 pub type RawFriProof = airbender_host::raw::UnrolledProgramProof;
 
-#[cfg(feature = "gpu_fri")]
-pub(crate) struct FriProofArtifact {
-    pub(crate) proof: RawFriProof,
-    pub(crate) proving_time: Duration,
-    pub(crate) cycles: u64,
-}
-
 /// Result of running the FRI prover on an encoded input.
 ///
 /// `proof` is the full `Proof` envelope (real or dev variant) so callers can
 /// either serialize it directly (server flow) or strip it to the raw inner
 /// proof for on-disk storage (host flow).
-#[cfg(feature = "gpu_fri")]
 pub struct ProveOutput {
     pub proof: Proof,
     pub cycles: u64,
@@ -53,16 +38,45 @@ pub struct ProveOutput {
     pub output: [u32; 8],
 }
 
+/// Backend-agnostic FRI prover. The only implementor today is the GPU
+/// [`FriPipeline`](crate::gpu_fri::FriPipeline), compiled in under the
+/// `gpu_fri` feature; the server holds a `Box<dyn FriProver>` so nothing on
+/// the proving path is aware of the GPU backend. `Send` is required because the
+/// server runs the prover on a dedicated thread.
+pub trait FriProver: Send {
+    /// Proves a pre-encoded input word stream, checks the output is non-zero,
+    /// and verifies the proof against the cached VK.
+    fn prove_input(&self, batch_number: u64, input_words: &[u32]) -> Result<ProveOutput>;
+}
+
+/// Plain (backend-agnostic) tuning knobs for the FRI prover. Mapped onto
+/// Airbender's `GpuProverConfig` inside the `gpu_fri` module; ignored by the
+/// CUDA-free build. Keeping it free of GPU types lets the server assemble it
+/// without depending on `airbender-host`'s GPU API.
+#[derive(Clone, Debug, Default)]
+pub struct FriProverConfig {
+    /// Worker threads for the prover (None = backend default).
+    pub worker_threads: Option<usize>,
+    /// Cap (GiB) on device memory the allocator claims (None = all free VRAM).
+    pub max_device_memory_gb: Option<f64>,
+    /// Pinned host transfer buffers pre-allocated per concurrent job.
+    pub host_buffers_per_job: usize,
+    /// Pinned host transfer buffers pre-allocated per device.
+    pub host_buffers_per_device: usize,
+}
+
 // ==============================================================================
-// FRI Pipeline
+// FRI Verifier
 // ==============================================================================
 //
 // This module keeps all Airbender-specific behavior in one place so the rest of
 // the host can talk in terms of "run batch", "prove batch", and "load/save raw
 // proof" without needing to know how the guest program, GPU prover, or VK cache
-// are assembled.
+// are assembled. The GPU prover itself lives in the `gpu_fri` module so the
+// CUDA dependency is confined to a single conditionally-compiled file.
 
-/// Verifier-only counterpart to [`FriPipeline`]. Holds the real verifier and a
+/// Verifier-only counterpart to the GPU FRI pipeline. Holds the real verifier
+/// and a
 /// cached/generated verification key, but no GPU prover — built when callers
 /// (like the `snark-only` server mode) need to validate incoming FRI proofs
 /// without proving anything themselves.
@@ -137,146 +151,6 @@ impl FriVerifier {
         self.verifier
             .verify(proof, &self.vk, VerificationRequest::empty())
             .with_context(|| format!("while attempting to verify proof for batch {batch_number}"))
-    }
-}
-
-#[cfg(feature = "gpu_fri")]
-pub struct FriPipeline {
-    prover: GpuProver,
-    verifier: FriVerifier,
-}
-
-#[cfg(feature = "gpu_fri")]
-impl FriPipeline {
-    /// Strict constructor: hard-fails if `vk_path` is missing. Used by the
-    /// server, where a stale or absent VK must never silently regenerate.
-    pub fn new(
-        dist_dir: &Path,
-        vk_path: &Path,
-        security: SecurityLevel,
-        config: GpuProverConfig,
-    ) -> Result<Self> {
-        Self::with_verifier(
-            dist_dir,
-            FriVerifier::load(dist_dir, vk_path, security)?,
-            security,
-            config,
-        )
-    }
-
-    /// Lenient constructor: generates the VK at `vk_path` if it doesn't
-    /// exist yet. Used by the host `prove-fri` CLI so a dev can FRI-prove
-    /// against a fresh guest without first running `gen-vks` (which also
-    /// requires the SNARK trusted setup). The server never calls this.
-    pub fn new_with_generated_vk(
-        dist_dir: &Path,
-        vk_path: &Path,
-        worker_threads: Option<usize>,
-        security: SecurityLevel,
-    ) -> Result<Self> {
-        Self::with_verifier(
-            dist_dir,
-            FriVerifier::load_or_generate(dist_dir, vk_path, security)?,
-            security,
-            // Dev CLI only sets worker threads; it never runs the SNARK wrapper
-            // in-process, so it has no reason to cap VRAM or tune the host pool.
-            GpuProverConfig::default().maybe_worker_threads(worker_threads),
-        )
-    }
-
-    fn with_verifier(
-        dist_dir: &Path,
-        verifier: FriVerifier,
-        security: SecurityLevel,
-        config: GpuProverConfig,
-    ) -> Result<Self> {
-        let prover = GpuProverBuilder::new(app_bin_path(dist_dir))
-            .with_level(ProverLevel::RecursionUnified)
-            .with_security(security)
-            .with_config(config)
-            .build()
-            .context("while attempting to build GPU prover")?;
-
-        Ok(Self { prover, verifier })
-    }
-
-    /// Proves a preencoded input word stream, checks the output is non-zero,
-    /// and verifies the proof against the cached VK. Returns the full `Proof`
-    /// envelope so callers can choose how to persist it.
-    pub fn prove_input(&self, batch_number: u64, input_words: &[u32]) -> Result<ProveOutput> {
-        let proving_started_at = Instant::now();
-        let prove_result = self.prover.prove(input_words).with_context(|| {
-            format!("while attempting to generate proof for batch {batch_number}")
-        })?;
-        let proving_time = proving_started_at.elapsed();
-        let cycles = prove_result.cycles;
-        let output = prove_result.receipt.output;
-
-        info!(
-            batch_number,
-            cycles,
-            proving_time_secs = proving_time.as_secs_f64(),
-            ?output,
-            "Finished FRI proof generation"
-        );
-
-        self.verifier
-            .verify(batch_number, &prove_result.proof, output)?;
-
-        info!(batch_number, "Finished FRI proof verification");
-
-        Ok(ProveOutput {
-            proof: prove_result.proof,
-            cycles,
-            proving_time,
-            output,
-        })
-    }
-
-    /// Proves an `AirbenderVerifierInput` by encoding it to the prover word
-    /// stream first, then delegating to [`Self::prove_input`].
-    pub fn prove_verifier_input(
-        &self,
-        batch_number: u64,
-        input: &AirbenderVerifierInput,
-    ) -> Result<ProveOutput> {
-        let mut prover_input = Inputs::new();
-        prover_input
-            .push(input)
-            .context("failed to encode AirbenderVerifierInput")?;
-        self.prove_input(batch_number, prover_input.words())
-    }
-
-    pub(crate) fn prove_batch(
-        &self,
-        batch_number: u64,
-        batch_path: &Path,
-    ) -> Result<FriProofArtifact> {
-        let input = load_verifier_input(batch_path).with_context(|| {
-            format!(
-                "failed to load batch {batch_number} from {}",
-                batch_path.display()
-            )
-        })?;
-        let ProveOutput {
-            proof,
-            cycles,
-            proving_time,
-            ..
-        } = self.prove_verifier_input(batch_number, &input)?;
-
-        let proof = match proof {
-            Proof::Real(proof) => proof.into_inner(),
-            Proof::Dev(_) => {
-                anyhow::bail!("GPU prover returned a development proof unexpectedly")
-            }
-        };
-
-        Ok(FriProofArtifact {
-            proof,
-            proving_time,
-            cycles,
-        })
     }
 }
 

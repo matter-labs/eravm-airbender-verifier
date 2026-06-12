@@ -6,7 +6,6 @@ use eravm_prover_host::{
     deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
     generate_snark_vk, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
-#[cfg(feature = "gpu_fri")]
 use eravm_prover_host::{default_fri_vk_path, prove_batches_fri};
 use std::path::PathBuf;
 use zksync_cli_utils::{init_tracing, resolve_batch_inputs, BatchInputFile};
@@ -59,7 +58,6 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Run(RunArgs),
-    #[cfg(feature = "gpu_fri")]
     ProveFri(ProveFriArgs),
     ProveSnark(ProveSnarkArgs),
     /// Convert a fetched SNARK input JSON (`{ l1_batch_number, fri_proof }`,
@@ -100,7 +98,6 @@ struct RunArgs {
     jit: bool,
 }
 
-#[cfg(feature = "gpu_fri")]
 #[derive(Debug, Args)]
 struct ProveFriArgs {
     #[command(flatten)]
@@ -215,7 +212,6 @@ fn main() -> Result<()> {
             let batch_inputs = args.batch_selection.resolve()?;
             run_batches(&batch_inputs, args.jit)
         }
-        #[cfg(feature = "gpu_fri")]
         Command::ProveFri(args) => {
             let batch_inputs = args.batch_selection.resolve()?;
             prove_batches_fri(
