@@ -109,6 +109,51 @@ impl AirbenderVerifierInput {
     }
 }
 
+/// Untagged decoder for the flat JSON payload zksync-era puts on the wire
+/// (no version envelope — see `server`'s `fetch_fri_job`).
+///
+/// Variant order is load-bearing: the strict post-v31 shape is tried first;
+/// a payload without `settlement_layer` fails it and falls through to the
+/// legacy pre-v31 shape, which [`crate::v1_compat`] upgrades with the
+/// implicit pre-v31 defaults. [`FlatAirbenderVerifierInput::into_v2`] then
+/// rejects the legacy shape when the payload claims a post-v31 protocol
+/// version, so a corrupt v31 payload cannot smuggle in defaulted fields.
+///
+/// JSON-only: `#[serde(untagged)]` needs a self-describing format and must
+/// never sit on the bincode path (the corpus and host↔guest channel keep
+/// using the tagged [`AirbenderVerifierInput`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum FlatAirbenderVerifierInput {
+    /// Post-v31 flat payload: all v31 fields present (`settlement_layer`
+    /// required, `interop_fee` may default).
+    V2(V2AirbenderVerifierInput),
+    /// Pre-v31 flat payload from a node that does not know the v31 fields.
+    Legacy(#[serde(with = "crate::v1_compat")] V2AirbenderVerifierInput),
+}
+
+impl FlatAirbenderVerifierInput {
+    /// Unwrap to the canonical payload, rejecting a legacy-shaped payload
+    /// that carries a post-v31 protocol version: such a sender must provide
+    /// `settlement_layer` explicitly instead of inheriting the upgrade
+    /// defaults.
+    pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
+        match self {
+            Self::V2(payload) => Ok(payload),
+            Self::Legacy(payload) => {
+                let version = payload.system_env.version;
+                anyhow::ensure!(
+                    version.is_pre_medium_interop(),
+                    "flat payload has the pre-v31 wire shape (no `settlement_layer`) \
+                     but claims post-v31 protocol version {version:?}"
+                );
+                Ok(payload)
+            }
+        }
+    }
+}
+
 /// Canonical verifier input payload.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to

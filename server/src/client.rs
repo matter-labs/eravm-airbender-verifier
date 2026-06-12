@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use eravm_prover_host::SnarkWrapperProof;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{info, warn};
-use zksync_airbender_verifier::types::{AirbenderVerifierInput, V2AirbenderVerifierInput};
+use zksync_airbender_verifier::types::{AirbenderVerifierInput, FlatAirbenderVerifierInput};
 
 use crate::types::{SubmitFriProofRequest, SubmitSnarkProofRequest, WorkerJob};
 
@@ -63,16 +63,21 @@ impl JobServerClient {
     }
 
     pub fn fetch_fri_job(&self) -> Result<Option<WorkerJob>> {
-        // zksync-era's `AirbenderVerifierInput` is a flat struct on the wire,
-        // matching this verifier's `V2AirbenderVerifierInput` (whose nested
-        // types accept the pre-v31 JSON field spellings where supported). We
-        // deserialize the bare payload here and wrap it in the local
-        // versioned enum so the host↔guest channel and on-disk bincode
-        // corpus stay tagged.
-        let Some(v2) = self.poll_json::<V2AirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
+        // zksync-era's `AirbenderVerifierInput` is a flat struct on the wire
+        // (no version envelope). `FlatAirbenderVerifierInput` accepts both the
+        // post-v31 shape and the legacy pre-v31 shape from nodes that don't
+        // know the v31 fields; `into_v2` upgrades the latter and rejects a
+        // legacy-shaped payload claiming a post-v31 protocol version. The
+        // payload is then wrapped in the local versioned enum so the
+        // host↔guest channel and on-disk bincode corpus stay tagged.
+        let Some(flat) =
+            self.poll_json::<FlatAirbenderVerifierInput>(FRI_INPUTS_PATH, FRI_LABEL)?
         else {
             return Ok(None);
         };
+        let v2 = flat
+            .into_v2()
+            .context("rejecting flat verifier-input payload from job server")?;
         let batch_number = v2.vm_run_data.l1_batch_number.0;
         let input = AirbenderVerifierInput::V2(v2);
         let mut inputs = Inputs::new();

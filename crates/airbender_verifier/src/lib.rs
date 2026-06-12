@@ -770,7 +770,10 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, V2AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::types::{
+        AirbenderVerifierInput, FlatAirbenderVerifierInput, V2AirbenderVerifierInput,
+        VMRunWitnessInputData,
+    };
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -1081,6 +1084,73 @@ mod tests {
     fn test_serialization_roundtrip_v1() {
         bincode_roundtrip(AirbenderVerifierInput::V1(sample_v1()));
     }
+
+    /// The flat HTTP wire accepts the post-v31 shape via the strict `V2`
+    /// variant.
+    #[test]
+    fn test_flat_wire_accepts_v2_json() {
+        let payload = sample_v2();
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::V2(payload.clone()))
+            .expect("serialize V2 flat payload");
+        assert!(
+            json["l1_batch_env"].get("settlement_layer").is_some(),
+            "post-v31 flat JSON must carry settlement_layer"
+        );
+        let decoded: FlatAirbenderVerifierInput =
+            serde_json::from_value(json).expect("deserialize V2 flat payload");
+        assert_eq!(decoded, FlatAirbenderVerifierInput::V2(payload.clone()));
+        assert_eq!(decoded.into_v2().expect("post-v31 payload"), payload);
+    }
+
+    /// The flat HTTP wire accepts the legacy pre-v31 shape (what a
+    /// not-yet-upgraded zksync-era node sends: no `settlement_layer`, no
+    /// `interop_fee`, `l2_da_validator_address` in `pubdata_params`) and
+    /// upgrades it through the v1 adapter.
+    #[test]
+    fn test_flat_wire_accepts_legacy_json() {
+        let payload = sample_v1();
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(payload.clone()))
+            .expect("serialize legacy flat payload");
+        assert!(
+            json["l1_batch_env"].get("settlement_layer").is_none(),
+            "legacy flat JSON must not carry settlement_layer"
+        );
+        assert!(
+            json["l1_batch_env"].get("interop_fee").is_none(),
+            "legacy flat JSON must not carry interop_fee"
+        );
+        assert!(
+            json["pubdata_params"]
+                .get("l2_da_validator_address")
+                .is_some(),
+            "legacy flat JSON must carry the pre-v31 validator field"
+        );
+        let decoded: FlatAirbenderVerifierInput =
+            serde_json::from_value(json).expect("deserialize legacy flat payload");
+        assert_eq!(decoded, FlatAirbenderVerifierInput::Legacy(payload.clone()));
+        assert_eq!(decoded.into_v2().expect("pre-v31 payload"), payload);
+    }
+
+    /// A legacy-shaped flat payload claiming a post-v31 protocol version is
+    /// rejected: such a sender must supply `settlement_layer` explicitly
+    /// rather than inherit the upgrade defaults.
+    #[test]
+    fn test_flat_wire_rejects_legacy_shape_with_post_v31_version() {
+        let payload = sample_payload(
+            ProtocolVersionId::Version31,
+            L2PubdataValidator::Address(Address::zero()),
+        );
+        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(payload))
+            .expect("serialize legacy flat payload");
+        let decoded: FlatAirbenderVerifierInput =
+            serde_json::from_value(json).expect("legacy shape itself decodes");
+        let err = decoded.into_v2().expect_err("post-v31 legacy shape");
+        assert!(
+            err.to_string().contains("pre-v31 wire shape"),
+            "unexpected: {err}"
+        );
+    }
+
 
     /// V1 wire is lossy in one direction: post-v31-only state on a V2 payload
     /// (non-default `interop_fee` / `settlement_layer`, `CommitmentScheme`

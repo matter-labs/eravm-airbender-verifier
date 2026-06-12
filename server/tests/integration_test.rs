@@ -37,7 +37,7 @@ use eravm_prover_host::{
     default_trusted_setup_download_url, default_trusted_setup_path,
     download_trusted_setup_if_not_present, load_vk_from_disk, SnarkWrapperProof,
 };
-use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
+use zksync_airbender_verifier::types::{FlatAirbenderVerifierInput, V2AirbenderVerifierInput};
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
@@ -59,8 +59,9 @@ type CapturedFriProof = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
 #[derive(Clone)]
 struct TestServerState {
-    /// Stored as the bare V2 payload so the test mock matches the upstream
-    /// zksync-era wire format (a flat struct, no version enum wrapper).
+    /// Stored as the canonical V2 payload; `handle_proof_inputs` re-encodes
+    /// it in the legacy pre-v31 flat wire shape (no version enum wrapper)
+    /// to exercise the not-yet-upgraded-sender path.
     verifier_input: Arc<V2AirbenderVerifierInput>,
     /// One-shot latch for `/airbender/proof_inputs`: serve the job once, then 204.
     fri_input_served: Arc<AtomicBool>,
@@ -139,12 +140,22 @@ struct FriProofFixtureManifestEntry {
 }
 
 /// `POST /airbender/proof_inputs` — serves the job once, then returns 204.
+///
+/// Serves the LEGACY pre-v31 flat shape (no `settlement_layer`/`interop_fee`,
+/// `l2_da_validator_address` in `pubdata_params`) — what a zksync-era node
+/// that has not picked up v31 puts on the wire. This locks the
+/// legacy-sender→server→guest path end-to-end; the multi-batch tests below
+/// serve the post-v31 shape and lock the upgraded-sender path. Serialization
+/// fails loudly if the corpus batch ever carries post-v31-only state.
 async fn handle_proof_inputs(State(state): State<TestServerState>) -> impl IntoResponse {
     if state.fri_input_served.swap(true, Ordering::SeqCst) {
         return StatusCode::NO_CONTENT.into_response();
     }
-    println!("[test-server] Serving job to prover");
-    Json((*state.verifier_input).clone()).into_response()
+    println!("[test-server] Serving job to prover (legacy pre-v31 wire shape)");
+    Json(FlatAirbenderVerifierInput::Legacy(
+        (*state.verifier_input).clone(),
+    ))
+    .into_response()
 }
 
 /// `POST /airbender/snark_inputs` — once the FRI submission has been captured,

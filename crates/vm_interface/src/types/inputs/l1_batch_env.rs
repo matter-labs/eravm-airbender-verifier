@@ -28,7 +28,9 @@ pub struct L1BatchEnv {
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
     /// Introduced in v31. A missing `settlement_layer` field on the JSON wire
-    /// is a hard error — pair the `#[serde(default)]` on `interop_fee` above
-    /// against this strictness deliberately.
+    /// is a hard error for this struct, deliberately: that failure is what
+    /// routes a legacy pre-v31 flat payload to the fallback variant of the
+    /// verifier's `FlatAirbenderVerifierInput`, which fills the field through
+    /// the audited v1 upgrade path instead of a silent serde default.
     pub settlement_layer: SettlementLayer,
 }
