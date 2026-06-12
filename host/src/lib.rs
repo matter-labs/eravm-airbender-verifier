@@ -1,6 +1,13 @@
 mod fri;
 mod setup_download;
 mod snark;
+
+// The GPU FRI prover and its CUDA dependency are confined to these two modules,
+// compiled only under the `gpu_fri` feature. The CUDA-free build omits them and
+// uses the `build_fri_prover` / `prove_batches_fri` stubs defined below.
+#[cfg(feature = "gpu_fri")]
+mod gpu_fri;
+#[cfg(feature = "gpu_fri")]
 mod statistics;
 
 use airbender_host::SecurityLevel;
@@ -10,8 +17,8 @@ use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
 pub use crate::fri::{
-    default_fri_vk_path, dist_dir, load_vk_from_disk, FriPipeline, FriVerifier, ProveOutput,
-    RawFriProof,
+    default_fri_vk_path, dist_dir, load_vk_from_disk, FriProver, FriProverConfig, FriVerifier,
+    ProveOutput, RawFriProof,
 };
 pub use crate::setup_download::{
     default_trusted_setup_download_url, default_trusted_setup_path,
@@ -20,8 +27,39 @@ pub use crate::setup_download::{
 pub use crate::snark::{SnarkOptions, SnarkPipeline};
 pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK};
 
-use crate::fri::{build_runner, load_raw_proof, run_batch, save_raw_proof, FRI_PROOF_FILE_NAME};
-use crate::statistics::StatisticsCollector;
+// `build_fri_prover` and `prove_batches_fri` are always part of the public API.
+// The GPU build re-exports the real implementations; the CUDA-free build uses
+// the stubs below, so callers (server, host CLI) never need a `#[cfg]`.
+#[cfg(feature = "gpu_fri")]
+pub use crate::gpu_fri::{build_fri_prover, prove_batches_fri};
+
+use crate::fri::{build_runner, load_raw_proof, run_batch, FRI_PROOF_FILE_NAME};
+
+/// CUDA-free stub: building a FRI prover requires the `gpu_fri` feature.
+#[cfg(not(feature = "gpu_fri"))]
+pub fn build_fri_prover(
+    _dist_dir: &Path,
+    _vk_path: &Path,
+    _security: SecurityLevel,
+    _config: FriProverConfig,
+) -> Result<Box<dyn FriProver>> {
+    anyhow::bail!(
+        "FRI proving requires the `gpu_fri` feature; this is a CUDA-free build \
+         (only `--mode snark-only` is supported)"
+    )
+}
+
+/// CUDA-free stub: FRI proving requires the `gpu_fri` feature.
+#[cfg(not(feature = "gpu_fri"))]
+pub fn prove_batches_fri(
+    _batch_inputs: &[BatchInputFile],
+    _worker_threads: Option<usize>,
+    _output_root: &Path,
+    _vk_path: &Path,
+    _security: SecurityLevel,
+) -> Result<()> {
+    anyhow::bail!("FRI proving requires the `gpu_fri` feature; this is a CUDA-free build")
+}
 
 // ==============================================================================
 // Host Orchestration
@@ -43,50 +81,6 @@ pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
                 batch_input.path.display()
             )
         })?;
-    }
-
-    Ok(())
-}
-
-pub fn prove_batches_fri(
-    batch_inputs: &[BatchInputFile],
-    worker_threads: Option<usize>,
-    output_root: &Path,
-    vk_path: &Path,
-    security: SecurityLevel,
-) -> Result<()> {
-    // Host CLI is a dev/debug entry point — generate the FRI VK on the fly
-    // if it isn't checked in yet, so a fresh-guest workflow doesn't require
-    // the SNARK trusted setup just to FRI-prove a batch.
-    let pipeline =
-        FriPipeline::new_with_generated_vk(&dist_dir(), vk_path, worker_threads, security)?;
-    let mut statistics = StatisticsCollector::default();
-
-    for (index, batch_input) in batch_inputs.iter().enumerate() {
-        let proof_artifact = pipeline
-            .prove_batch(batch_input.number, &batch_input.path)
-            .with_context(|| {
-                format!(
-                    "while attempting to prove batch {} from {}",
-                    batch_input.number,
-                    batch_input.path.display()
-                )
-            })?;
-
-        let output_dir = batch_output_dir(output_root, batch_input.number);
-        let proof_path = output_dir.join(FRI_PROOF_FILE_NAME);
-        save_raw_proof(&proof_artifact.proof, &proof_path)?;
-
-        statistics.add_sample(proof_artifact.proving_time, proof_artifact.cycles);
-        info!(
-            batch_number = batch_input.number,
-            batch_file = %batch_input.path.display(),
-            proof_path = %proof_path.display(),
-            completed_batches = index + 1,
-            total_batches = batch_inputs.len(),
-            "Successfully wrote raw FRI proof"
-        );
-        statistics.print_stats();
     }
 
     Ok(())
@@ -162,7 +156,7 @@ pub fn wrap_to_snark(
     Ok(())
 }
 
-fn batch_output_dir(output_root: &Path, batch_number: u64) -> PathBuf {
+pub(crate) fn batch_output_dir(output_root: &Path, batch_number: u64) -> PathBuf {
     output_root.join(format!("batch-{batch_number}"))
 }
 

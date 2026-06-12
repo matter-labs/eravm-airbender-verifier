@@ -10,7 +10,7 @@
 //! `/airbender/submit_snark_proofs`. Two sequential processes — `fri-snark` would be cleaner but
 //! the FRI prover's GPU allocator eats nearly the whole device, leaving no room for the SNARK
 //! wrapper alongside it. The trusted setup is fetched into the system temp dir on first run
-//! (matches the build's `snark_gpu` feature — GPU `setup_compact.key` when enabled, CPU
+//! (matches the build's `gpu_snark` feature — GPU `setup_compact.key` when enabled, CPU
 //! `setup_2^24.key` otherwise); override the path via `IT_SNARK_TRUSTED_SETUP` to reuse a local
 //! copy.
 
@@ -482,7 +482,7 @@ fn snark_vk_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/snark_vk.json"))
 }
 
-/// CRS used by the SNARK wrapper. The build's `snark_gpu` feature picks the
+/// CRS used by the SNARK wrapper. The build's `gpu_snark` feature picks the
 /// right URL (GPU `setup_compact.key` vs CPU `setup_2^24.key`).
 ///
 /// If `IT_SNARK_TRUSTED_SETUP` is set, that path is used verbatim. Otherwise

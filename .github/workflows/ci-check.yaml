@@ -226,33 +226,33 @@ jobs:
           cmake --build era-bellman-cuda/build -j"$(nproc)"
           echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
 
-      - name: Build eravm-prover-server (snark_gpu)
+      - name: Build eravm-prover-server (gpu_snark)
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo build --release -p eravm-prover-server --locked --features snark_gpu
+          cargo build --release -p eravm-prover-server --locked --features gpu_snark
           ls -lh target/release/eravm-prover-server
 
       # Build the host CLI so the vk-check job can re-derive the FRI and SNARK
       # VKs on the GPU runner using `gen-vks`. Same toolchain as the server
       # build — both need bellman-cuda for the SNARK side.
-      - name: Build eravm-prover-host (snark_gpu)
+      - name: Build eravm-prover-host (gpu_snark)
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo build --release -p eravm-prover-host --locked --features snark_gpu
+          cargo build --release -p eravm-prover-host --locked --features gpu_snark
           ls -lh target/release/eravm-prover-host
 
       # Compile the integration test binary without running it. cargo emits
       # JSON metadata that tells us the exact path of the test executable
       # (it has a hash-suffixed name in target/release/deps/). Match the
-      # server build's `snark_gpu` feature so the test downloads the GPU CRS
+      # server build's `gpu_snark` feature so the test downloads the GPU CRS
       # and the spawned binary's wrapper matches.
       - name: Build integration test binary
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo test --release --locked --features snark_gpu \
+          cargo test --release --locked --features gpu_snark \
             --package eravm-prover-server --test integration_test \
             --no-run --message-format=json > test-build.json
           test_bin=$(jq -r 'select(.executable != null and (.target.name == "integration_test")) | .executable' test-build.json | tail -n1)
@@ -447,7 +447,7 @@ jobs:
     runs-on: matterlabs-ci-hetzner-rtx6000-gpu
     timeout-minutes: 30
     # eravm-prover-host links against era-bellman-cuda and libcudart.so.13
-    # via `--features snark_gpu`, so every step that runs the binary needs
+    # via `--features gpu_snark`, so every step that runs the binary needs
     # the staged CUDA libs on the loader path.
     env:
       LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs

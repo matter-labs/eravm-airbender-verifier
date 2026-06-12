@@ -95,7 +95,11 @@ ark-bls12-381 = { version = "0.5", default-features = false, features = ["scalar
 # Protocol and VM dependencies
 airbender = { package = "airbender-sdk", git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
 airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
-airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
+# `default-features = false` drops airbender-host's default `gpu-prover` (the
+# CUDA `gpu_prover` crate). Consumers re-enable it through their own `gpu_fri`
+# feature; a `--no-default-features` build stays CUDA-free. Must live on the
+# workspace dep — a member's `default-features = false` is otherwise ignored.
+airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3", default-features = false }
 airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
 circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
 zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
@@ -107,7 +111,10 @@ zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = 
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", rev = "4d110657a22025d4a49a563a7e119d754551b715" } # TODO: pin to a tag before merge
 
 # Local dependencies in this workspace
-eravm-prover-host = { path = "host" }
+# `default-features = false` drops the host crate's default `gpu_fri`; the
+# server re-enables it via its own `gpu_fri` feature. Set on the workspace dep
+# so a member's `default-features = false` isn't ignored.
+eravm-prover-host = { path = "host", default-features = false }
 zksync_basic_types = { path = "crates/basic_types" }
 zksync_prover_metrics = { path = "crates/prover_metrics" }
 zksync_cli_utils = { path = "crates/cli_utils" }

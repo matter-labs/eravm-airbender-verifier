@@ -9,7 +9,7 @@ use tracing::{info, warn};
 // Public GCS buckets that host the bellman SNARK trusted setup. Mirrors the
 // URLs in the README and CI workflow.
 const CPU_TRUSTED_SETUP_URL: &str =
-    "https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2^24.key";
+    "https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2^25.key";
 const GPU_TRUSTED_SETUP_URL: &str =
     "https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_compact.key";
 
@@ -19,7 +19,7 @@ const DOWNLOAD_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Default trusted-setup filename for the build's SNARK feature set.
 pub fn default_trusted_setup_path() -> PathBuf {
-    if cfg!(feature = "snark_gpu") {
+    if cfg!(feature = "gpu_snark") {
         PathBuf::from("setup_gpu.key")
     } else {
         PathBuf::from("setup.key")
@@ -29,7 +29,7 @@ pub fn default_trusted_setup_path() -> PathBuf {
 /// Default download URL for the trusted-setup file matching the build's
 /// SNARK feature set.
 pub fn default_trusted_setup_download_url() -> &'static str {
-    if cfg!(feature = "snark_gpu") {
+    if cfg!(feature = "gpu_snark") {
         GPU_TRUSTED_SETUP_URL
     } else {
         CPU_TRUSTED_SETUP_URL

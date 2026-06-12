@@ -140,7 +140,7 @@ struct DownloadTrustedSetupArgs {
     output: PathBuf,
 
     /// URL to download from. Defaults to the GCS bucket that matches the
-    /// build's SNARK feature set (CPU vs `snark_gpu`).
+    /// build's SNARK feature set (CPU vs `gpu_snark`).
     #[arg(long, default_value_t = default_trusted_setup_download_url().to_string())]
     url: String,
 }
