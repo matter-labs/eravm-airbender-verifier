@@ -52,8 +52,7 @@ WORKDIR /workspace
 # CUDA archs to build for. The gpu_prover default `native` requires a GPU on the
 # build host (which CI lacks) and otherwise falls back to an arch < compute_70,
 # breaking `__grid_constant__`. Tailored to prod hardware only: sm_80 (A100) and
-# sm_120 (RTX PRO 6000 Blackwell on airbender-prover-g4). vast.ai builds use
-# Dockerfile.vast-base with its own arch list.
+# sm_120 (RTX PRO 6000 Blackwell on airbender-prover-g4)
 ENV CUDAARCHS="80;120"
 
 # Step 1: build era-bellman-cuda. `zksync-crypto-gpu`'s `gpu-ffi` build script

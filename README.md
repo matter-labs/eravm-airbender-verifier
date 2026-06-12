@@ -201,16 +201,16 @@ The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the defaul
 cargo build --release --no-default-features -p eravm-prover-server
 ```
 
-[`Dockerfile.cpu`](Dockerfile.cpu) packages exactly this — a plain Ubuntu image (no CUDA runtime) that fetches the CPU CRS (`setup_2^24.key`) and runs the server in `snark-only` mode:
+[`docker/Dockerfile.cpu`](docker/Dockerfile.cpu) packages exactly this — a plain Ubuntu image (no CUDA runtime) that fetches the CPU CRS (`setup_2^24.key`) and runs the server in `snark-only` mode:
 
 ```bash
-docker build -f Dockerfile.cpu -t eravm-prover-cpu .
+docker build -f docker/Dockerfile.cpu -t eravm-prover-cpu .
 docker run --rm --ulimit stack=-1 \
     -e PROVER_SERVER_URL=http://job-server:8080 \
     eravm-prover-cpu
 ```
 
-The GPU image ([`Dockerfile`](Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features gpu_snark` builds still enable it.
+The GPU image ([`docker/Dockerfile`](docker/Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features gpu_snark` builds still enable it.
 
 ## Policies
 

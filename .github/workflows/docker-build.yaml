@@ -3,8 +3,7 @@ name: docker-build
 on:
   pull_request:
     paths:
-      - Dockerfile
-      - Dockerfile.cpu
+      - 'docker/**'
       - 'server/**'
       - 'host/**'
       - 'guest/**'
@@ -29,9 +28,9 @@ concurrency:
 jobs:
   build:
     # Two images from one workflow:
-    #   gpu — the default CUDA build (Dockerfile), tags unchanged.
-    #   cpu — the CUDA-free snark-only build (Dockerfile.cpu), `-cpu`-suffixed
-    #         tags (e.g. `<sha>-<ts>-cpu`, `latest-cpu`).
+    #   gpu — the default CUDA build (docker/Dockerfile), tags unchanged.
+    #   cpu — the CUDA-free snark-only build (docker/Dockerfile.cpu),
+    #         `-cpu`-suffixed tags (e.g. `<sha>-<ts>-cpu`, `latest-cpu`).
     name: build (${{ matrix.variant }})
     runs-on: matterlabs-ci-runner-high-performance
     strategy:
@@ -39,10 +38,10 @@ jobs:
       matrix:
         include:
           - variant: gpu
-            dockerfile: Dockerfile
+            dockerfile: docker/Dockerfile
             suffix: ''
           - variant: cpu
-            dockerfile: Dockerfile.cpu
+            dockerfile: docker/Dockerfile.cpu
             suffix: '-cpu'
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
