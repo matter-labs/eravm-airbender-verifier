@@ -132,8 +132,7 @@ impl ProverWorker {
                 Ok(raw_proof) => {
                     let started = Instant::now();
                     let snark = self.snark.as_mut().unwrap();
-                    let result =
-                        catch_prover_panic("SNARK prover", || snark.prove(raw_proof));
+                    let result = catch_prover_panic("SNARK prover", || snark.prove(raw_proof));
                     record_proof_metrics(
                         batch_number,
                         ProofType::Snark,
