@@ -1,3 +1,5 @@
+use std::any::Any;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{Receiver, SendError, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -97,9 +99,10 @@ impl ProverWorker {
             } => match self.fri.as_mut() {
                 Some(fri) => {
                     let started = Instant::now();
-                    let result = fri
-                        .prove_input(batch_number as u64, &input_words)
-                        .map(|out| out.proof);
+                    let result = catch_prover_panic("FRI prover", || {
+                        fri.prove_input(batch_number as u64, &input_words)
+                            .map(|out| out.proof)
+                    });
                     record_proof_metrics(
                         batch_number,
                         ProofType::Fri,
@@ -128,7 +131,9 @@ impl ProverWorker {
             } => match self.prepare_snark_input(batch_number, *proof) {
                 Ok(raw_proof) => {
                     let started = Instant::now();
-                    let result = self.snark.as_mut().unwrap().prove(raw_proof);
+                    let snark = self.snark.as_mut().unwrap();
+                    let result =
+                        catch_prover_panic("SNARK prover", || snark.prove(raw_proof));
                     record_proof_metrics(
                         batch_number,
                         ProofType::Snark,
@@ -168,6 +173,38 @@ impl ProverWorker {
                 anyhow::bail!("received development FRI proof; refusing to wrap into SNARK")
             }
         }
+    }
+}
+
+/// Runs the prover closure, converting a panic into an `Err` so a single
+/// poison input — e.g. a RISC-V guest that exhausts its memory and panics
+/// mid-proof — is reported as a failed proof instead of unwinding the prover
+/// thread and tearing down the whole process. The panic is still printed to
+/// stderr by the default panic hook before we recover it here.
+///
+/// Note: a genuine host-side allocation failure aborts the process and cannot
+/// be caught; this recovers panics (the common case for in-emulator OOM and
+/// assertion failures), not aborts. The pipeline is reused for the next job on
+/// the assumption that the failing job's memory is released on unwind.
+fn catch_prover_panic<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(payload) => Err(anyhow::anyhow!(
+            "{label} panicked: {}",
+            panic_payload_message(&payload)
+        )),
+    }
+}
+
+/// Extracts a human-readable message from a caught panic payload, which is
+/// typically a `&str` or `String` for `panic!`-style aborts.
+fn panic_payload_message(payload: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_owned()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_owned()
     }
 }
 
