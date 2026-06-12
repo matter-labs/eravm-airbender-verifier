@@ -3,7 +3,7 @@ use airbender_host::{
     TranspilerRunner, TranspilerRunnerBuilder, VerificationKey, VerificationRequest, Verifier,
 };
 use anyhow::{Context, Result};
-use std::io::{BufReader, BufWriter};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::info;
@@ -246,20 +246,6 @@ pub(crate) fn load_verifier_input(
     .next()
     .context("resolve_batch_inputs returned no entries")?;
     zksync_cli_utils::load_batch(&batch_input)
-}
-
-pub(crate) fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("while attempting to derive the parent directory for the raw FRI proof file")?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("while attempting to create {}", parent.display()))?;
-
-    let file = std::fs::File::create(path)
-        .with_context(|| format!("while attempting to create {}", path.display()))?;
-    let writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, proof)
-        .with_context(|| format!("while attempting to serialize {}", path.display()))
 }
 
 pub(crate) fn load_raw_proof(path: &Path) -> Result<RawFriProof> {

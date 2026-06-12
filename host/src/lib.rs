@@ -10,7 +10,7 @@ mod gpu_fri;
 #[cfg(feature = "gpu_fri")]
 mod statistics;
 
-use airbender_host::{Proof, SecurityLevel};
+use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -33,7 +33,6 @@ pub use zkos_wrapper::{deserialize_from_file, SnarkWrapperProof, SnarkWrapperVK}
 #[cfg(feature = "gpu_fri")]
 pub use crate::gpu_fri::{build_fri_prover, prove_batches_fri};
 
-use crate::fri::save_raw_proof;
 use crate::fri::{build_runner, load_raw_proof, run_batch, FRI_PROOF_FILE_NAME};
 
 /// CUDA-free stub: building a FRI prover requires the `gpu_fri` feature.

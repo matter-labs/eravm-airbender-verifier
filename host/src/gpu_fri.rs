@@ -10,6 +10,7 @@ use airbender_host::{
     GpuProver, GpuProverBuilder, GpuProverConfig, Inputs, Proof, Prover, ProverLevel, SecurityLevel,
 };
 use anyhow::{Context, Result};
+use std::io::BufWriter;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -17,10 +18,26 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::BatchInputFile;
 
 use crate::fri::{
-    app_bin_path, load_verifier_input, save_raw_proof, FriProver, FriProverConfig, FriVerifier,
-    ProveOutput, RawFriProof, FRI_PROOF_FILE_NAME,
+    app_bin_path, load_verifier_input, FriProver, FriProverConfig, FriVerifier, ProveOutput,
+    RawFriProof, FRI_PROOF_FILE_NAME,
 };
 use crate::statistics::StatisticsCollector;
+
+/// Serializes a raw FRI proof to `path` as pretty JSON, creating parent dirs.
+/// Lives here because the GPU `prove-fri` flow is now its only caller.
+fn save_raw_proof(proof: &RawFriProof, path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("while attempting to derive the parent directory for the raw FRI proof file")?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("while attempting to create {}", parent.display()))?;
+
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("while attempting to create {}", path.display()))?;
+    let writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, proof)
+        .with_context(|| format!("while attempting to serialize {}", path.display()))
+}
 
 struct FriProofArtifact {
     proof: RawFriProof,

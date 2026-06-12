@@ -2,11 +2,10 @@ use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use eravm_prover_host::{
-    decode_fri_input, default_trusted_setup_download_url, default_trusted_setup_path,
+    default_fri_vk_path, default_trusted_setup_download_url, default_trusted_setup_path,
     deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
-    generate_snark_vk, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
+    generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
-use eravm_prover_host::{default_fri_vk_path, prove_batches_fri};
 use std::path::PathBuf;
 use zksync_cli_utils::{init_tracing, resolve_batch_inputs, BatchInputFile};
 
@@ -141,7 +140,7 @@ struct DownloadTrustedSetupArgs {
     output: PathBuf,
 
     /// URL to download from. Defaults to the GCS bucket that matches the
-    /// build's SNARK feature set (CPU vs `snark_gpu`).
+    /// build's SNARK feature set (CPU vs `gpu_snark`).
     #[arg(long, default_value_t = default_trusted_setup_download_url().to_string())]
     url: String,
 }
