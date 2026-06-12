@@ -31,11 +31,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 WORKDIR /workspace
 
 # Pre-fetch the CPU SNARK trusted setup so the runtime image ships with it in
-# place. The CPU wrapper uses the standard 2^24 monomial CRS (`setup_2^24.key`),
+# place. The CPU wrapper uses the standard 2^25 monomial CRS (`setup_2^25.key`),
 # NOT the GPU build's `setup_compact.key`. Override via
 # `--build-arg SNARK_TRUSTED_SETUP_URL=...`. Above `COPY . .` so repo edits
 # don't re-fetch this (hundreds of MB).
-ARG SNARK_TRUSTED_SETUP_URL="https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2^24.key"
+ARG SNARK_TRUSTED_SETUP_URL="https://storage.googleapis.com/matterlabs-setup-keys-us/setup-keys/setup_2^25.key"
 RUN mkdir -p /setup \
     && curl --fail --location --retry 5 --retry-delay 5 \
         "${SNARK_TRUSTED_SETUP_URL}" -o /setup/setup.key
