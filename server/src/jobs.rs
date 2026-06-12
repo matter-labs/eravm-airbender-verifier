@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 use zksync_prover_metrics::{ProofType, METRICS};
 
 use crate::client::JobServerClient;
-use crate::types::{ProofOutcome, ProverMode, ProverResult, WorkerJob};
+use crate::types::{ProofKind, ProofOutcome, ProverMode, ProverResult, WorkerJob};
 
 /// Orchestrates the network side of the prover: fetches jobs from the
 /// [`JobServerClient`], forwards them to the prover thread, and submits
@@ -179,12 +179,29 @@ impl JobWorker {
                 batch_number
             }
             Err(failure) => {
-                anyhow::bail!(
-                    "prover job for batch {} ({}) failed: {}",
-                    failure.batch_number,
-                    failure.kind,
-                    failure.reason,
+                // Report the failure to the server so it can release the batch
+                // for retry (bounded by the server's attempts limit) without
+                // waiting for the proving timeout to elapse.
+                warn!(
+                    batch_number = failure.batch_number,
+                    kind = %failure.kind,
+                    reason = %failure.reason,
+                    "Prover job failed; reporting to server",
                 );
+                match failure.kind {
+                    ProofKind::Fri => self
+                        .client
+                        .submit_fri_error(failure.batch_number, &failure.reason)?,
+                    ProofKind::Snark => self
+                        .client
+                        .submit_snark_error(failure.batch_number, &failure.reason)?,
+                }
+                info!(
+                    batch_number = failure.batch_number,
+                    kind = %failure.kind,
+                    "Reported failed proof to server",
+                );
+                return Ok(());
             }
         };
         info!(batch_number, kind = %kind, "Successfully submitted proof");
