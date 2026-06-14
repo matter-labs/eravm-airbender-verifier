@@ -111,7 +111,13 @@ pub struct VmExecutionState {
     system_logs: Vec<zksync_types::l2_to_l1_log::SystemL2ToL1Log>,
     state_diffs: Vec<StateDiffRecord>,
     pubdata_input: Option<Vec<u8>>,
-    expanded_heap: Vec<u8>,
+    /// Blake2 hash of the expanded bootloader initial heap. We hash the
+    /// (~60 MiB) expanded heap here in `execute` and keep only the 32-byte
+    /// digest, instead of carrying the full buffer into `verify_commitment`
+    /// — that buffer is built right after the VM is dropped and would
+    /// otherwise stay live across the whole commitment phase, re-peaking the
+    /// guest heap.
+    bootloader_heap_hash: H256,
     zk_porter_available: bool,
     bootloader_code_hash: H256,
     default_aa_code_hash: H256,
@@ -144,7 +150,7 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     // Pin the protocol version to the single one this verifier is built for.
     // `protocol_version` is operator-supplied and only *gates* commitment fields
     // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
@@ -366,6 +372,15 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
         dynamic_heap_groups: (pubdata_n * 7 / 10).max(1024),
     };
 
+    // Free witness fields that verification never consumes, before the VM run,
+    // so ~17 MiB isn't held live through execution (it counts against the
+    // fixed guest heap). `initial_heap_content` is never read (hashing it would
+    // be unsound — see above); `storage_refunds`/`pubdata_costs` only provided
+    // the counts captured just above.
+    input.vm_run_data.initial_heap_content = Vec::new();
+    input.vm_run_data.storage_refunds = Vec::new();
+    input.vm_run_data.pubdata_costs = Vec::new();
+
     let mut vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
     vm.reserve_capacities(hints);
 
@@ -410,7 +425,13 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     )?;
 
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
-    let expanded_heap = expand_bootloader_heap(&final_bootloader_memory, bootloader_memory_size);
+    // Hash the expanded heap immediately and drop the ~60 MiB buffer; only the
+    // digest is needed downstream (see `bootloader_heap_hash` field docs).
+    let bootloader_heap_hash = {
+        let expanded_heap =
+            expand_bootloader_heap(&final_bootloader_memory, bootloader_memory_size);
+        Blake2Hasher.hash_bytes(&expanded_heap)
+    };
 
     Ok(VmExecutionState {
         batch_number,
@@ -422,7 +443,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
         system_logs,
         state_diffs,
         pubdata_input,
-        expanded_heap,
+        bootloader_heap_hash,
         zk_porter_available,
         bootloader_code_hash,
         default_aa_code_hash,
@@ -490,7 +511,7 @@ pub fn verify_commitment(
 
     let system_logs_hash = H256(keccak256(&serialize_commitments(&state.system_logs)));
     let state_diff_hash = H256(keccak256(&serialize_commitments(&state.state_diffs)));
-    let bootloader_heap_hash = Blake2Hasher.hash_bytes(&state.expanded_heap);
+    let bootloader_heap_hash = state.bootloader_heap_hash;
 
     anyhow::ensure!(
         commitment_input.blob_hashes.len() == TOTAL_BLOBS_IN_COMMITMENT,
