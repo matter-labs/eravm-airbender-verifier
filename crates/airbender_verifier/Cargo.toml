@@ -36,6 +36,7 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+serde_json = "1"
 airbender-codec.workspace = true
 zksync_cli_utils.workspace = true
 zksync_contracts.workspace = true
