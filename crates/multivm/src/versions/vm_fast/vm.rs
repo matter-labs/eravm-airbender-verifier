@@ -191,12 +191,17 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
     /// with hints derived from the witness.
     pub fn reserve_capacities(&mut self, hints: VmCapacityHints) {
         let wd = self.inner.world_diff_mut();
-        wd.reserve_auxiliary_log_capacity(
-            hints.events,
-            hints.pubdata_costs,
-            hints.storage_refunds,
-        );
-        self.inner.reserve_dynamic_heap_capacity(hints.dynamic_heap_groups);
+        wd.reserve_auxiliary_log_capacity(hints.events, hints.pubdata_costs, hints.storage_refunds);
+        // The verifier derives `deduplicated_storage_logs` from vm2's
+        // rollback-aware maps (see `get_current_execution_state`) and never
+        // reads the per-access `storage_log_queries()` trace — there is no
+        // in-circuit storage argument on the Airbender side. Opt out of
+        // recording that trace so it doesn't reclaim the memory this whole
+        // path exists to save (~270 MiB on large batches). vm2 defaults to
+        // recording on for Boojum-style consumers.
+        wd.set_record_storage_logs(false);
+        self.inner
+            .reserve_dynamic_heap_capacity(hints.dynamic_heap_groups);
     }
 
     pub fn skip_signature_verification(&mut self) {
@@ -427,8 +432,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                 //   - ~330M cycles: no global sort, no full-trace walk
                 use std::collections::BTreeSet;
                 let storage_changes = world_diff.get_storage_state();
-                let mut slots: BTreeSet<(H160, U256)> =
-                    storage_changes.keys().copied().collect();
+                let mut slots: BTreeSet<(H160, U256)> = storage_changes.keys().copied().collect();
                 for slot in world_diff.committed_reads_at_depth_zero_iter() {
                     slots.insert(slot);
                 }
@@ -438,8 +442,10 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                         .initial_storage_value(address, key)
                         .map(|s| s.value)
                         .unwrap_or(U256::zero());
-                    let final_value =
-                        storage_changes.get(&(address, key)).copied().unwrap_or(initial);
+                    let final_value = storage_changes
+                        .get(&(address, key))
+                        .copied()
+                        .unwrap_or(initial);
                     let is_write = initial != final_value;
                     let log_query = LogQuery {
                         timestamp: Timestamp(0),
