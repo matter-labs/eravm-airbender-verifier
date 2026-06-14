@@ -77,13 +77,6 @@ impl VmRunResult {
 type InnerVm<S, Tr, Val> =
     VirtualMachine<WithBuiltinTracers<Tr, Val>, World<S, WithBuiltinTracers<Tr, Val>>>;
 
-/// Fast VM wrapper.
-///
-/// The wrapper is parametric by the storage and tracer types. Besides the [`Tracer`] trait, the tracer must implement [`Default`]
-/// (the latter is necessary to complete batches). Validation is encapsulated in a separate type param. It should be set to `()`
-/// for "standard" validation (not stopping after validation; no validation-specific checks), or [`FullValidationTracer`](super::FullValidationTracer)
-/// for full validation (stopping after validation; validation-specific checks).
-
 /// Capacity hints for `Vm::reserve_capacities`. Each field is a one-shot
 /// upper bound the caller derives from the witness; the inner `WorldDiff`
 /// uses `reserve_exact`, so the underlying Vecs allocate exactly once and
@@ -96,6 +89,12 @@ pub struct VmCapacityHints {
     pub dynamic_heap_groups: usize,
 }
 
+/// Fast VM wrapper.
+///
+/// The wrapper is parametric by the storage and tracer types. Besides the [`Tracer`] trait, the tracer must implement [`Default`]
+/// (the latter is necessary to complete batches). Validation is encapsulated in a separate type param. It should be set to `()`
+/// for "standard" validation (not stopping after validation; no validation-specific checks), or [`FullValidationTracer`](super::FullValidationTracer)
+/// for full validation (stopping after validation; validation-specific checks).
 pub struct Vm<S, Tr = (), Val = FastValidationTracer> {
     pub(super) world: World<S, WithBuiltinTracers<Tr, Val>>,
     pub(super) inner: InnerVm<S, Tr, Val>,
