@@ -120,7 +120,8 @@ impl JobServerClient {
             let payload = SubmitFriProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                proof: &proof_bytes,
+                proof: Some(&proof_bytes),
+                error: None,
             };
             self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
         })
@@ -132,7 +133,40 @@ impl JobServerClient {
             let payload = SubmitSnarkProofRequest {
                 l1_batch_number: batch_number,
                 prover_id: self.prover_id.clone(),
-                snark_proof: proof.clone(),
+                snark_proof: Some(proof.clone()),
+                error: None,
+            };
+            self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
+        })
+    }
+
+    /// Reports a FRI proving failure to the server, releasing the batch for
+    /// retry without waiting for the proving timeout. Posts to the same
+    /// endpoint as [`Self::submit_fri`] but carries `error` instead of a proof.
+    pub fn submit_fri_error(&self, batch_number: u32, error: &str) -> Result<()> {
+        self.submit_with_retries(FRI_LABEL, batch_number, |attempt, attempts| {
+            info!(batch_number, attempt, attempts, "Submitting FRI failure");
+            let payload = SubmitFriProofRequest {
+                l1_batch_number: batch_number,
+                prover_id: self.prover_id.clone(),
+                proof: None,
+                error: Some(error.to_owned()),
+            };
+            self.post_payload(FRI_LABEL, batch_number, SUBMIT_FRI_PATH, &payload)
+        })
+    }
+
+    /// Reports a SNARK proving failure to the server. The server reverts the
+    /// batch to `generated`, preserving the FRI proof so only the SNARK stage
+    /// is retried.
+    pub fn submit_snark_error(&self, batch_number: u32, error: &str) -> Result<()> {
+        self.submit_with_retries(SNARK_LABEL, batch_number, |attempt, attempts| {
+            info!(batch_number, attempt, attempts, "Submitting SNARK failure");
+            let payload = SubmitSnarkProofRequest {
+                l1_batch_number: batch_number,
+                prover_id: self.prover_id.clone(),
+                snark_proof: None,
+                error: Some(error.to_owned()),
             };
             self.post_payload(SNARK_LABEL, batch_number, SUBMIT_SNARK_PATH, &payload)
         })

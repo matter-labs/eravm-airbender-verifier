@@ -120,18 +120,27 @@ impl FailedProof {
 /// [`ProofOutcome`] or a [`FailedProof`].
 pub type ProverResult = Result<ProofOutcome, FailedProof>;
 
-/// Mirrors `SubmitAirbenderProofRequest` from zksync-era.
-/// The `proof` bytes are hex-encoded in JSON, matching the `#[serde_as(as = "Hex")]` annotation.
+/// Mirrors `SubmitAirbenderProofRequest` from zksync-era. Carries either a
+/// `proof` (success) or an `error` (the prover could not produce the proof),
+/// which releases the batch for retry — bounded by the server's configured
+/// attempts limit — without waiting for the proving timeout to elapse. Exactly
+/// one of `proof`/`error` is set; the unset field is omitted from the JSON so
+/// the server's `#[serde(default)]` fields default to `None`.
+/// The `proof` bytes are hex-encoded in JSON, matching the `#[serde_as(as = "Option<Hex>")]` annotation.
 #[serde_with::serde_as]
 #[derive(serde::Serialize)]
 pub struct SubmitFriProofRequest<'a> {
     pub l1_batch_number: u32,
     pub prover_id: String,
-    #[serde_as(as = "serde_with::hex::Hex")]
-    pub proof: &'a [u8],
+    #[serde_as(as = "Option<serde_with::hex::Hex>")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<&'a [u8]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-/// SNARK submission payload. The VK is resolved once at startup and is not
+/// SNARK submission payload. Like [`SubmitFriProofRequest`], carries either a
+/// `snark_proof` or an `error`. The VK is resolved once at startup and is not
 /// included here; the receiver is expected to know it out of band.
 /// `snark_proof` is carried as a nested JSON object (the wrapper PLONK proof),
 /// matching `SubmitAirbenderSnarkProofRequest` in zksync-era.
@@ -139,5 +148,55 @@ pub struct SubmitFriProofRequest<'a> {
 pub struct SubmitSnarkProofRequest {
     pub l1_batch_number: u32,
     pub prover_id: String,
-    pub snark_proof: Box<SnarkWrapperProof>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snark_proof: Option<Box<SnarkWrapperProof>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fri_success_serializes_hex_proof_and_omits_error() {
+        let json = serde_json::to_value(SubmitFriProofRequest {
+            l1_batch_number: 42,
+            prover_id: "prover-1".to_string(),
+            proof: Some(&[10, 11, 12, 13, 14]),
+            error: None,
+        })
+        .unwrap();
+        assert_eq!(json["l1_batch_number"], 42);
+        assert_eq!(json["prover_id"], "prover-1");
+        assert_eq!(json["proof"], "0a0b0c0d0e");
+        // The server defaults `error` to `None`, so a success submission omits it.
+        assert!(json.get("error").is_none());
+    }
+
+    #[test]
+    fn fri_failure_serializes_error_and_omits_proof() {
+        let json = serde_json::to_value(SubmitFriProofRequest {
+            l1_batch_number: 42,
+            prover_id: "prover-1".to_string(),
+            proof: None,
+            error: Some("prover ran out of memory".to_string()),
+        })
+        .unwrap();
+        assert_eq!(json["error"], "prover ran out of memory");
+        assert!(json.get("proof").is_none());
+    }
+
+    #[test]
+    fn snark_failure_serializes_error_and_omits_proof() {
+        let json = serde_json::to_value(SubmitSnarkProofRequest {
+            l1_batch_number: 42,
+            prover_id: "prover-1".to_string(),
+            snark_proof: None,
+            error: Some("snark wrapper panicked".to_string()),
+        })
+        .unwrap();
+        assert_eq!(json["error"], "snark wrapper panicked");
+        assert!(json.get("snark_proof").is_none());
+    }
 }
