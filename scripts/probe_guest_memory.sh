@@ -10,8 +10,9 @@
 #   e.g. scripts/probe_guest_memory.sh 67912.bin.gz 952   ->  FITS / OOM(<bytes>)
 #
 # Notes:
-#  - Batch file is resolved under testdata/era_mainnet_batches/binary (LFS) unless
-#    given as a path. Encode raw proof_inputs JSON with the `encode_batch` example.
+#  - Batch file is looked up under testdata/era_mainnet_batches/binary (LFS);
+#    a relative name is resolved there, only an absolute path is used as-is.
+#    Encode raw proof_inputs JSON with the `encode_batch` example first.
 #  - Building the RISC-V guest needs a riscv-capable clang. In CI's cargo-airbender
 #    image it's the default; locally on macOS export
 #    CC=/opt/homebrew/opt/llvm/bin/clang AR=/opt/homebrew/opt/llvm/bin/llvm-ar

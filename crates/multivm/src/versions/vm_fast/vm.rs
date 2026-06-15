@@ -195,7 +195,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
         // rollback-aware maps (see `get_current_execution_state`) and never
         // reads the per-access `storage_log_queries()` trace — there is no
         // in-circuit storage argument on the Airbender side. Opt out of
-        // recording that trace so it doesn't reclaim the memory this whole
+        // recording that trace so it doesn't consume the memory this whole
         // path exists to save (~270 MiB on large batches). vm2 defaults to
         // recording on for Boojum-style consumers.
         wd.set_record_storage_logs(false);
