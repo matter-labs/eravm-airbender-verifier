@@ -325,7 +325,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                     .world_diff()
                     .get_storage_state()
                     .get(&(KNOWN_CODES_STORAGE_ADDRESS, h256_to_u256(hash)))
-                    .map(|x| !x.is_zero())
+                    .map(|x| !x.value.is_zero())
                     .unwrap_or_else(|| self.world.storage.is_bytecode_known(&hash))
             })
         };
@@ -443,7 +443,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                         .unwrap_or(U256::zero());
                     let final_value = storage_changes
                         .get(&(address, key))
-                        .copied()
+                        .map(|e| e.value)
                         .unwrap_or(initial);
                     let is_write = initial != final_value;
                     let log_query = LogQuery {
