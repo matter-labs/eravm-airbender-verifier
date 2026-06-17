@@ -203,6 +203,20 @@ The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the defaul
 cargo build --release --no-default-features -p eravm-prover-host
 ```
 
+### Integration tests
+
+`host/tests/integration_test.rs` drives the proving pipeline in-process (no server). The tests are `#[ignore]` because they need the LFS batch corpus — and, for proving, a GPU, the committed guest binary, and the SNARK trusted setup. CI runs the end-to-end test in the `host-integration-run` job whenever proving-relevant code changes. Run it locally with:
+
+```bash
+# CPU-only: native verification vs. transpiler execution
+cargo test -p eravm-prover-host --test integration_test \
+    -- --ignored --nocapture host_runs_batch_native_and_transpiler
+
+# GPU: FRI proving followed by SNARK wrapping, end to end
+cargo test -p eravm-prover-host --features gpu_snark --test integration_test \
+    -- --ignored --nocapture host_proves_fri_then_snark
+```
+
 ## Policies
 
 - [Security policy](SECURITY.md)
