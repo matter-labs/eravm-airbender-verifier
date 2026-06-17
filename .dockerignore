@@ -1,5 +1,0 @@
-# Keep the Docker build context (and the resulting image layers) lean.
-# NOTE: guest/dist/ is intentionally NOT ignored — the prod image COPYs the
-# prebuilt reproducible guest dist from the context (see Dockerfile).
-target
-airbender-platform

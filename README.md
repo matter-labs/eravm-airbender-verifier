@@ -4,6 +4,10 @@ This repository combines reduced EraVM verifier libraries with an Airbender gues
 It is used to reproduce ZKsync Era mainnet batch verification, compare VM execution, generate Airbender
 FRI proofs, and wrap those proofs into SNARK proofs.
 
+The long-running prover service that drives this pipeline in production lives in `zksync-era`, not here.
+This repository is self-contained around the guest, the `eravm-prover-host` CLI/library, and the verifier
+libraries; the service consumes `eravm-prover-host` as a dependency.
+
 ## Layout
 
 - `crates/`: reduced verifier libraries extracted from `zksync-era` (entrypoint crate: `zksync_airbender_verifier`).
@@ -183,7 +187,7 @@ Note: `--features gpu_snark` is not technically required, it enables GPU SNARK p
 
 ### Verification keys
 
-The prover server only loads verification keys from disk; it never derives them on the fly. The canonical FRI and SNARK VKs live in [`vks/`](vks/) and CI re-derives them on every PR (see the `vk-check` job in [.github/workflows/ci-check.yaml](.github/workflows/ci-check.yaml)). If a guest change invalidates them, regenerate locally and commit the result:
+The canonical FRI and SNARK verification keys live in [`vks/`](vks/), and CI re-derives them on every PR (see the `vk-check` job in [.github/workflows/ci-check.yaml](.github/workflows/ci-check.yaml)). The keys are loaded from disk rather than derived on the fly. If a guest change invalidates them, regenerate locally and commit the result:
 
 ```bash
 cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
@@ -191,26 +195,13 @@ cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
     --trusted-setup setup_gpu.key
 ```
 
-The server accepts the VK paths via `--fri-vk` / `FRI_VK` and `--snark-vk` / `SNARK_VK`; the Dockerfile ships `vks/` into the image and sets both env vars by default.
+### CUDA-free builds
 
-### CPU-only SNARK prover
-
-The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the default build links CUDA. A SNARK-only prover, however, needs no GPU at all: it verifies incoming FRI proofs and wraps them into SNARKs on CPU. The default-on `gpu_fri` cargo feature gates the CUDA dependency, so a `--no-default-features` build is completely CUDA-free and supports only `--mode snark-only`:
+The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the default build links CUDA. The default-on `gpu_fri` cargo feature gates that dependency, so a `--no-default-features` build of `eravm-prover-host` is completely CUDA-free — it can verify FRI proofs and wrap them into SNARKs on CPU, but cannot generate FRI proofs:
 
 ```bash
-cargo build --release --no-default-features -p eravm-prover-server
+cargo build --release --no-default-features -p eravm-prover-host
 ```
-
-[`docker/Dockerfile.cpu`](docker/Dockerfile.cpu) packages exactly this — a plain Ubuntu image (no CUDA runtime) that fetches the CPU CRS (`setup_2^24.key`) and runs the server in `snark-only` mode:
-
-```bash
-docker build -f docker/Dockerfile.cpu -t eravm-prover-cpu .
-docker run --rm --ulimit stack=-1 \
-    -e PROVER_SERVER_URL=http://job-server:8080 \
-    eravm-prover-cpu
-```
-
-The GPU image ([`docker/Dockerfile`](docker/Dockerfile)) and CI are unaffected: `gpu_fri` is on by default, and `--features gpu_snark` builds still enable it.
 
 ## Policies
 

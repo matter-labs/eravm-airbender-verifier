@@ -18,11 +18,6 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 ///   aggregation pipelines (Loki, Datadog, ...).
 /// * anything else or unset — the default human-readable text format.
 ///
-/// When the crate's `sentry` feature is enabled (the server binary turns it on),
-/// a Sentry layer is also attached so `tracing` errors become Sentry events and
-/// lower-level spans become breadcrumbs. The layer is inert until a Sentry
-/// client is initialized, so enabling the feature alone has no effect.
-///
 /// Centralizing this keeps every binary's logging behavior identical.
 pub fn init_tracing() -> Result<()> {
     use tracing_subscriber::layer::SubscriberExt;
@@ -43,8 +38,6 @@ pub fn init_tracing() -> Result<()> {
     };
 
     let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
-    #[cfg(feature = "sentry")]
-    let subscriber = subscriber.with(sentry::integrations::tracing::layer());
 
     // `try_init` returns a `TryInitError` that does not implement
     // `std::error::Error`, so `.context()` is unavailable here.
