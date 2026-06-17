@@ -147,21 +147,16 @@ fn host_proves_fri_then_snark() {
 
     // 3. Build the GPU FRI prover against the committed VK and prove. The
     //    prover verifies the proof against that VK internally, and rejects a
-    //    zero output (failed guest verification/commitment).
-    //
-    // Set the host transfer-buffer pool explicitly: `FriProverConfig::default()`
-    // leaves both counts at 0, which `build_fri_prover` forwards to the GPU
-    // prover verbatim — starving its pinned host↔device copy pool and stalling
-    // proving. These mirror the values the production prover service uses.
+    //    zero output (failed guest verification/commitment). The default config
+    //    keeps the backend's own host-buffer pool sizing.
     println!("[test] Building GPU FRI prover against committed VK...");
-    let fri_config = FriProverConfig {
-        worker_threads: None,
-        max_device_memory_gb: None,
-        host_buffers_per_job: 224,
-        host_buffers_per_device: 64,
-    };
-    let prover = build_fri_prover(&guest_dist_dir(), &fri_vk_path(), security, fri_config)
-        .expect("failed to build GPU FRI prover");
+    let prover = build_fri_prover(
+        &guest_dist_dir(),
+        &fri_vk_path(),
+        security,
+        FriProverConfig::default(),
+    )
+    .expect("failed to build GPU FRI prover");
     println!("[test] Proving FRI for batch {}...", batch.number);
     let output = prover
         .prove_input(batch.number, words.words())
