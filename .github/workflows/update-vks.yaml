@@ -66,7 +66,7 @@ jobs:
   # Build the host CLI from the PR head. Done inside this workflow so
   # /update-vks doesn't have to wait for the PR's ci-run to finish — and so a
   # ci-run that ends in failure (e.g. because vk-check fails on stale VKs)
-  # doesn't block us from finding artifacts. Mirrors `server-integration-build`
+  # doesn't block us from finding artifacts. Mirrors `vk-build`
   # in ci-check.yaml; permissions stay read-only because no PR code should ever
   # see the push token. The guest is built separately (build-guest) so this
   # GPU/CUDA-only build never touches the reproducibility-critical app.bin.
