@@ -175,6 +175,13 @@ fn host_proves_fri_then_snark() {
         Proof::Dev(_) => panic!("GPU prover unexpectedly returned a development proof"),
     };
 
+    // Release the FRI prover's GPU memory before the SNARK wrapper allocates its
+    // own device pool. Production runs FRI and SNARK in separate processes; here
+    // they share one, so without this drop the wrapper's setup allocation OOMs
+    // the device (shivini's static allocator) on top of the still-resident FRI
+    // pool. `output` owns the proof data, so the prover is no longer needed.
+    drop(prover);
+
     // 6. Provision the trusted setup (CRS). Cached in the system temp dir so
     //    the test stays self-contained; override via IT_SNARK_TRUSTED_SETUP.
     let trusted_setup = std::env::var_os("IT_SNARK_TRUSTED_SETUP")
