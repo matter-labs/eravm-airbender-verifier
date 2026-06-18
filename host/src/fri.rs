@@ -59,9 +59,11 @@ pub struct FriProverConfig {
     pub worker_threads: Option<usize>,
     /// Cap (GiB) on device memory the allocator claims (None = all free VRAM).
     pub max_device_memory_gb: Option<f64>,
-    /// Pinned host transfer buffers pre-allocated per concurrent job.
+    /// Pinned host transfer buffers pre-allocated per concurrent job
+    /// (0 = backend default).
     pub host_buffers_per_job: usize,
-    /// Pinned host transfer buffers pre-allocated per device.
+    /// Pinned host transfer buffers pre-allocated per device
+    /// (0 = backend default).
     pub host_buffers_per_device: usize,
 }
 
