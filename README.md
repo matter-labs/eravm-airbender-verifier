@@ -53,6 +53,88 @@ Compare legacy and fast VM execution on that batch:
 cargo run --release -p zksync_vm_compare --bin vm_compare -- --batch-files 506093.bin.gz
 ```
 
+## VM Compare Finding Validation
+
+`vm_compare` is the batch-level validator for legacy VM vs FastVM behavior. It
+loads full `V1AirbenderVerifierInput` batch files, runs both VMs, and reports
+trace or output divergences. It also treats a panic in only one VM as a
+divergence instead of aborting the whole run.
+
+Use raw `vm_compare` when you want to inspect one or more concrete batches:
+
+```sh
+cargo run --release -p zksync_vm_compare --bin vm_compare -- \
+  --batch-files 506093.bin.gz
+```
+
+Use `vm_compare_findings` when you have a list of audit findings and want a
+repeatable status check for which ones have full-batch reproducers:
+
+```sh
+cargo run --release -p zksync_vm_compare --bin vm_compare_findings -- \
+  --manifest /path/to/vm-compare-findings.json \
+  --batches-dir /path/to/repro-batches \
+  --system-contracts-baseline /path/to/trusted-baseline.bin.gz \
+  --ledger /path/to/found-divergences.md \
+  --markdown
+```
+
+The manifest is bookkeeping over `vm_compare`; it does not create repros. A
+minimal manifest looks like this:
+
+```json
+{
+  "findings": [
+    {
+      "id": "D-001",
+      "title": "example reachable divergence",
+      "vm_compare": {
+        "status": "batch_reproducer",
+        "batch_files": ["900001.bin"],
+        "expected_substrings": ["VM panic mismatch"],
+        "reason": "Brief explanation of what the batch exercises"
+      }
+    },
+    {
+      "id": "D-002",
+      "title": "example non-representable finding",
+      "vm_compare": {
+        "status": "not_representable",
+        "reason": "Requires custom system contract bytecode, so it is outside accepted vm_compare repro rules"
+      }
+    }
+  ]
+}
+```
+
+Supported statuses:
+
+- `batch_reproducer`: `batch_files` are resolved under `--batches-dir` and must
+  make `vm_compare` diverge. `expected_substrings` are optional but recommended
+  so the check proves the expected divergence, not just any divergence.
+- `needs_batch_reproducer`: tracked as pending; the command prints the reason
+  but does not fail.
+- `not_representable`: tracked as intentionally not reproducible in
+  `vm_compare`; include the reachability or tooling blocker in `reason`.
+
+If the manifest contains any `batch_reproducer`, `--system-contracts-baseline`
+is required. It should point to a trusted, unmodified batch for the same
+protocol/system-contract set. Each reproducer batch must have the same
+bootloader, default AA, and EVM emulator hashes and bytecode as that baseline;
+otherwise the validation fails before running `vm_compare`. For reproducers
+from different protocol versions, run separate manifests with the matching
+baseline for each version.
+
+If `--ledger` is provided, `vm_compare_findings` also checks that every
+`## D-...` entry in the ledger has a manifest entry and vice versa. The command
+exits non-zero if a `batch_reproducer` does not diverge, if an expected
+substring is missing, or if ledger coverage does not match.
+
+For audit validation, prefer full-batch reproducers that keep the real
+bootloader, default AA, and EVM emulator base system contracts intact.
+Reproducer batches and audit-local manifests can live outside the repository
+unless the team intentionally wants to track those artifacts.
+
 Run host execution:
 
 ```sh
