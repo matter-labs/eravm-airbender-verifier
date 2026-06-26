@@ -20,7 +20,7 @@ use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
         utils::compress_value_and_index,
-        FinishedL1Batch, L2BlockEnv, VmInterfaceExt, VmInterfaceHistoryEnabled,
+        FinishedL1Batch, L2BlockEnv, TxExecutionMode, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
@@ -169,6 +169,16 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         input.vm_run_data.protocol_version == protocol_version,
         "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
         input.vm_run_data.protocol_version,
+    );
+    // The verifier proves a settled batch, which the sequencer executed in
+    // `VerifyExecute`. `EstimateFee` ignores AA-validation errors and `EthCall`
+    // uses mimic-calls (no signature checks), so an operator-chosen mode could
+    // prove transactions that bypass validation. `execution_mode` is
+    // operator-supplied and not otherwise bound — pin it.
+    anyhow::ensure!(
+        input.system_env.execution_mode == TxExecutionMode::VerifyExecute,
+        "system_env.execution_mode must be VerifyExecute for proving, got {:?}",
+        input.system_env.execution_mode,
     );
     // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
     // populated by the witness generator for the legacy proving path and are not
@@ -999,6 +1009,81 @@ mod tests {
             .expect("Failed to deserialize AirbenderVerifierInput.");
 
         assert_eq!(avi, deserialized);
+    }
+
+    /// Minimal input on a FastVM-supported version, valid enough to reach the
+    /// early `system_env` checks in `execute()` (it errors out there, before any
+    /// VM run, so the otherwise-empty witness is fine).
+    fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> V1AirbenderVerifierInput {
+        let version = ProtocolVersionId::latest();
+        V1AirbenderVerifierInput {
+            vm_run_data: VMRunWitnessInputData {
+                l1_batch_number: Default::default(),
+                used_bytecodes: Default::default(),
+                initial_heap_content: vec![],
+                protocol_version: version,
+                bootloader_code: vec![],
+                default_account_code_hash: Default::default(),
+                evm_emulator_code_hash: None,
+                storage_refunds: vec![],
+                pubdata_costs: vec![],
+                witness_block_state: Default::default(),
+            },
+            merkle_paths: WitnessInputMerklePaths::new(0),
+            l2_blocks_execution_data: vec![],
+            l1_batch_env: L1BatchEnv {
+                previous_batch_hash: Some(H256([1; 32])),
+                number: Default::default(),
+                timestamp: 0,
+                fee_input: Default::default(),
+                fee_account: Default::default(),
+                enforced_base_fee: None,
+                first_l2_block: L2BlockEnv {
+                    number: 0,
+                    timestamp: 0,
+                    prev_block_hash: H256([1; 32]),
+                    max_virtual_blocks_to_create: 0,
+                    interop_roots: vec![],
+                },
+            },
+            system_env: SystemEnv {
+                zk_porter_available: false,
+                version,
+                base_system_smart_contracts: BaseSystemContracts {
+                    bootloader: SystemContractCode {
+                        code: vec![1; 32],
+                        hash: H256([1; 32]),
+                    },
+                    default_aa: SystemContractCode {
+                        code: vec![1; 32],
+                        hash: H256([1; 32]),
+                    },
+                    evm_emulator: None,
+                },
+                bootloader_gas_limit: 0,
+                execution_mode: mode,
+                default_validation_computational_gas_limit: 0,
+                chain_id: Default::default(),
+            },
+            pubdata_params: Default::default(),
+            commitment_input: None,
+        }
+    }
+
+    #[test]
+    fn execute_rejects_non_verify_execute_mode() {
+        for mode in [TxExecutionMode::EstimateFee, TxExecutionMode::EthCall] {
+            let mode_str = format!("{mode:?}");
+            let err = match execute(fastvm_input_with_execution_mode(mode)) {
+                Ok(_) => panic!("{mode_str} should have been rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string()
+                    .contains("execution_mode must be VerifyExecute"),
+                "{mode_str}: unexpected error: {err}"
+            );
+        }
     }
 
     /// Exercises the binding logic with non-zero `prev_meta_hash` / `prev_aux_hash`:
