@@ -14,18 +14,21 @@ fn run_commitment_test(batch_number: u64) {
         "../../testdata/era_mainnet_batches/binary/{batch_number}.bin.gz"
     ));
 
-    if !batch_path.exists() {
-        eprintln!(
-            "Skipping test for batch {batch_number}: batch file not found at {}. Run: ./scripts/fetch_lfs_batches.sh {batch_number}.bin.gz",
-            batch_path.display()
+    let present = batch_path.exists()
+        && std::fs::metadata(&batch_path)
+            .map(|m| m.len() >= 1000)
+            .unwrap_or(false);
+    if !present {
+        // Under CI the corpus is fetched, so a missing fixture must fail the job
+        // rather than silently skip (otherwise a missing-LFS misconfiguration
+        // reports green). Locally we skip for convenience (the default
+        // `cargo test` doesn't fetch LFS).
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "batch {batch_number} fixture missing under CI — run ./scripts/fetch_lfs_batches.sh {batch_number}.bin.gz before `cargo test`"
         );
-        return;
-    }
-
-    let file_size = std::fs::metadata(&batch_path).unwrap().len();
-    if file_size < 1000 {
         eprintln!(
-            "Skipping test for batch {batch_number}: batch file appears to be a Git LFS pointer ({file_size} bytes)"
+            "Skipping test for batch {batch_number}: fixture missing (run ./scripts/fetch_lfs_batches.sh {batch_number}.bin.gz)"
         );
         return;
     }

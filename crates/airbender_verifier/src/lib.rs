@@ -10,12 +10,12 @@ pub mod commitment;
 pub mod test_utils;
 pub mod types;
 
+mod merkle_witness;
+
 use anyhow::{Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
-use zksync_merkle_tree::{
-    BlockOutputWithProofs, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof, ValueHash,
-};
+use zksync_merkle_tree::{BlockOutputWithProofs, TreeInstruction, TreeLogEntry, ValueHash};
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
@@ -41,9 +41,9 @@ use zksync_types::{
 };
 
 use crate::commitment::expand_bootloader_heap;
+use crate::merkle_witness::{build_view_from_merkle_paths, get_bowp};
 use crate::types::{
-    AirbenderVerifierInput, CommitmentInput, StorageLogMetadata, V1AirbenderVerifierInput,
-    WitnessInputMerklePaths, TOTAL_BLOBS_IN_COMMITMENT,
+    AirbenderVerifierInput, CommitmentInput, V1AirbenderVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
 };
 
 /// A structure to hold the result of verification.
@@ -528,144 +528,6 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
     Ok(())
 }
 
-/// The pre-state a single Merkle-witness leaf encodes, after rejecting shapes
-/// the tree never emits.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum WitnessLeaf {
-    /// Empty leaf: value 0, no enumeration index (a read of a missing key, or a
-    /// first write / insertion of a previously-empty slot).
-    Empty { is_write: bool },
-    /// Existing leaf at `index > 0` with pre-state `value`.
-    Existing {
-        is_write: bool,
-        index: u64,
-        value: H256,
-    },
-}
-
-/// Classify a Merkle-witness leaf, rejecting malformed shapes the tree never
-/// produces: a read flagged `first_write`, and a repeated write to enum index 0.
-fn classify_witness_leaf(log: &StorageLogMetadata) -> anyhow::Result<WitnessLeaf> {
-    let key = log.leaf_hashed_key;
-    match (log.is_write, log.first_write, log.leaf_enumeration_index) {
-        (false, true, _) => {
-            anyhow::bail!("witness read entry for leaf {key:x} is marked first_write")
-        }
-        (false, _, 0) => Ok(WitnessLeaf::Empty { is_write: false }),
-        (false, false, index) => Ok(WitnessLeaf::Existing {
-            is_write: false,
-            index,
-            value: H256(log.value_read),
-        }),
-        (true, true, _) => Ok(WitnessLeaf::Empty { is_write: true }),
-        (true, false, 0) => {
-            anyhow::bail!("witness repeated write to leaf {key:x} has enumeration index 0")
-        }
-        (true, false, index) => Ok(WitnessLeaf::Existing {
-            is_write: true,
-            index,
-            value: H256(log.value_read),
-        }),
-    }
-}
-
-/// Build the storage view from the committed `merkle_paths` witness: each entry's
-/// classified pre-state (empty leaf -> `None`, existing leaf -> `Some((value,
-/// index))`), keyed by its hashed key (a little-endian `U256`). Every entry is
-/// proven against `old_root_hash` by the later `verify_proofs` fold, so this only
-/// translates shapes — rejecting malformed leaves (via the classifier) and any
-/// conflicting duplicate (`merkle_paths` is deduplicated to one entry per slot).
-fn build_view_from_merkle_paths(
-    merkle_paths: &[StorageLogMetadata],
-) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
-    use std::collections::btree_map::Entry;
-
-    let mut view = std::collections::BTreeMap::new();
-    for log in merkle_paths {
-        let prestate = match classify_witness_leaf(log)? {
-            WitnessLeaf::Empty { .. } => None,
-            WitnessLeaf::Existing { index, value, .. } => Some((value, index)),
-        };
-        let mut key_bytes = [0u8; 32];
-        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
-        match view.entry(H256(key_bytes)) {
-            Entry::Vacant(slot) => {
-                slot.insert(prestate);
-            }
-            Entry::Occupied(slot) => anyhow::ensure!(
-                *slot.get() == prestate,
-                "merkle_paths has a conflicting pre-state for slot {:?}: {:?} vs {prestate:?}",
-                slot.key(),
-                slot.get(),
-            ),
-        }
-    }
-    Ok(view)
-}
-
-/// Builds `BlockOutputWithProofs` from the merkle witness, paired with each
-/// entry's `leaf_hashed_key` in order.
-///
-/// The keys are returned separately because `BlockOutputWithProofs` doesn't
-/// carry them, yet `generate_tree_instructions` must bind each proof to the VM's
-/// storage-log key. `verify_proofs` checks the Merkle path against the VM key
-/// (via the `TreeInstruction`), while the storage view is seeded by
-/// `leaf_hashed_key`; if those two keys are allowed to differ, a proof for one
-/// slot's pre-state could be paired with a VM that read a *different* value for
-/// that slot. Binding them keeps the proven slot and the executed slot the same.
-fn get_bowp(
-    witness_input_merkle_paths: WitnessInputMerklePaths,
-) -> Result<(BlockOutputWithProofs, Vec<U256>)> {
-    let entries: Vec<(TreeLogEntryWithProof, U256)> = witness_input_merkle_paths
-        .into_merkle_paths()
-        .map(|log| -> anyhow::Result<(TreeLogEntryWithProof, U256)> {
-            let root_hash = log.root_hash.into();
-            let leaf_hashed_key = log.leaf_hashed_key;
-            // Same classifier as the storage-view derivation, so the two can
-            // never disagree on which witness shapes are valid. `value_written`
-            // is intentionally unused: the verifier derives the written value
-            // from VM execution, not from the witness.
-            let base = match classify_witness_leaf(&log)? {
-                WitnessLeaf::Empty { is_write: false } => TreeLogEntry::ReadMissingKey,
-                WitnessLeaf::Empty { is_write: true } => TreeLogEntry::Inserted,
-                WitnessLeaf::Existing {
-                    is_write: false,
-                    index,
-                    value,
-                } => TreeLogEntry::Read {
-                    leaf_index: index,
-                    value: value.0.into(),
-                },
-                WitnessLeaf::Existing {
-                    is_write: true,
-                    index,
-                    value,
-                } => TreeLogEntry::Updated {
-                    leaf_index: index,
-                    previous_value: value.0.into(),
-                },
-            };
-            let merkle_path = log.merkle_paths.into_iter().map(|x| x.into()).collect();
-            Ok((
-                TreeLogEntryWithProof {
-                    base,
-                    merkle_path,
-                    root_hash,
-                },
-                leaf_hashed_key,
-            ))
-        })
-        .collect::<anyhow::Result<_>>()?;
-    let (logs, leaf_keys): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
-    Ok((
-        BlockOutputWithProofs {
-            logs,
-            leaf_count: 0,
-        },
-        leaf_keys,
-    ))
-}
-
 /// Executes the VM and returns `FinishedL1Batch` on success.
 fn execute_vm<VM>(
     l2_blocks_execution_data: Vec<L2BlockExecutionData>,
@@ -713,13 +575,15 @@ where
     Ok(vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version)))
 }
 
-/// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`
+/// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`. `key` is the
+/// storage log's hashed key, passed in so the caller (which already computed it
+/// to bind against `leaf_hashed_key`) doesn't hash it twice.
 fn map_log_tree(
+    key: U256,
     storage_log: &StorageLog,
     tree_log_entry: &TreeLogEntry,
     idx: &mut u64,
 ) -> anyhow::Result<TreeInstruction> {
-    let key = storage_log.key.hashed_key_u256();
     let tree_instruction = match (storage_log.is_write(), *tree_log_entry) {
         (true, TreeLogEntry::Updated { leaf_index, .. }) => {
             TreeInstruction::write(key, leaf_index, H256(storage_log.value.into()))
@@ -791,7 +655,7 @@ fn generate_tree_instructions(
                 "merkle_paths leaf_hashed_key {leaf_hashed_key:?} does not match \
                  VM storage-log key {vm_key:?}",
             );
-            map_log_tree(&log_query, &tree_log_entry.base, &mut idx)
+            map_log_tree(vm_key, &log_query, &tree_log_entry.base, &mut idx)
         })
         .collect::<Result<Vec<_>, _>>()
 }
@@ -832,7 +696,11 @@ mod tests {
 
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
-    use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+    use crate::merkle_witness::{classify_witness_leaf, WitnessLeaf};
+    use crate::types::{
+        AirbenderVerifierInput, StorageLogMetadata, V1AirbenderVerifierInput,
+        VMRunWitnessInputData, WitnessInputMerklePaths,
+    };
 
     fn key(n: u64) -> zksync_types::StorageKey {
         use zksync_types::{AccountTreeId, Address};
