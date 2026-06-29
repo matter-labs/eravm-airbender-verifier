@@ -48,6 +48,27 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      # Fetch the LFS batch fixtures the storage-soundness regressions
+      # (crates/airbender_verifier/tests/fail_closed.rs) run against. A clean
+      # checkout only has LFS pointers, and those tests fail closed under CI
+      # rather than silently skip, so the `tests` job must materialize them.
+      - name: Install linux packages
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO=sudo
+          fi
+          ${SUDO} apt update && ${SUDO} apt install -y git-lfs
+
+      - name: Install Git LFS
+        run: git lfs install --local
+
+      - name: Pull CI mainnet batches
+        run: ./scripts/fetch_lfs_batches.sh "$CI_BATCHES"
+
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@ede6de059f8046a5e236c94046823e2af11ca670 # v1.2.2
         with:

@@ -10,7 +10,7 @@ pub mod commitment;
 pub mod test_utils;
 pub mod types;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_crypto_primitives::hasher::Hasher;
 use zksync_merkle_tree::{
@@ -19,7 +19,6 @@ use zksync_merkle_tree::{
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
-        utils::compress_value_and_index,
         FinishedL1Batch, L2BlockEnv, TxExecutionMode, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
@@ -38,7 +37,7 @@ use zksync_types::{
     u256_to_h256,
     web3::keccak256,
     writes::StateDiffRecord,
-    L1BatchNumber, ProtocolVersionId, StorageLog, StorageValue, Transaction, H256, U256,
+    L1BatchNumber, ProtocolVersionId, StorageLog, Transaction, H256, U256,
 };
 
 use crate::commitment::expand_bootloader_heap;
@@ -257,57 +256,26 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         );
     }
 
-    // Map hashed storage key → enumeration index, sourced from the Merkle witness.
-    // Needed so `FinishedL1Batch.state_diffs` carries correct enum indices for the
-    // state-diff hash. A key that appears in multiple merkle-path entries (read+write
-    // in the same batch) must agree on its enum index — disagreement means a malformed
-    // witness.
-    let mut enum_index_map: std::collections::BTreeMap<H256, u64> =
-        std::collections::BTreeMap::new();
-    for log in input
-        .merkle_paths
-        .merkle_paths
-        .iter()
-        .filter(|log| log.leaf_enumeration_index > 0)
-    {
-        let mut key_bytes = [0u8; 32];
-        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
-        let hashed = H256(key_bytes);
-        if let Some(&existing) = enum_index_map.get(&hashed) {
-            anyhow::ensure!(
-                existing == log.leaf_enumeration_index,
-                "merkle_paths witness has inconsistent enumeration indices for \
-                 leaf_hashed_key {hashed:?}: {existing} vs {}",
-                log.leaf_enumeration_index,
-            );
-        } else {
-            enum_index_map.insert(hashed, log.leaf_enumeration_index);
-        }
-    }
-
-    let read_storage_ops = input
-        .vm_run_data
-        .witness_block_state
+    // Pre-batch storage view. Slot values come only from `merkle_paths`, which the
+    // `verify_proofs` fold below proves against `old_root_hash` — so the operator
+    // cannot forge the pre-state of any slot the tree witness covers.
+    //
+    // `merkle_paths` omits exactly one shape: a write the batch fully rolled back.
+    // The VM still cold-reads such a slot before writing it, but its pre-state
+    // cannot affect the committed output (the write nets to nothing), so we serve
+    // `None` (empty) instead of trusting an operator value. The operator's
+    // read/write key sets are used only to learn *which* slots to materialize; a
+    // slot the VM touches but that is declared nowhere is missing from the view and
+    // panics in `StorageSnapshot` — fail closed.
+    let mut storage = build_view_from_merkle_paths(&input.merkle_paths.merkle_paths)?;
+    let witness_block_state = &input.vm_run_data.witness_block_state;
+    for key in witness_block_state
         .read_storage_key
-        .into_iter();
-
-    let initial_writes_ops = input
-        .vm_run_data
-        .witness_block_state
-        .is_write_initial
-        .into_iter();
-
-    let storage =
-        read_storage_ops
-            .map(|(key, value)| {
-                let hashed = key.hashed_key();
-                let enum_idx = enum_index_map.get(&hashed).copied();
-                (hashed, compress_value_and_index(value, enum_idx))
-            })
-            .chain(initial_writes_ops.filter_map(|(key, initial_write)| {
-                initial_write.then_some((key.hashed_key(), None))
-            }))
-            .collect();
+        .keys()
+        .chain(witness_block_state.is_write_initial.keys())
+    {
+        storage.entry(key.hashed_key()).or_insert(None);
+    }
 
     // Verify user-contract bytecodes (factory_deps) match their claimed hashes.
     // VM-internal contracts (bootloader/default_aa/evm_emulator) are loaded from
@@ -350,10 +318,14 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         "VM output is missing final_bootloader_memory — required for the bootloader heap commitment",
     )?;
 
-    let block_output_with_proofs = get_bowp(input.merkle_paths)?;
+    let (block_output_with_proofs, leaf_keys) = get_bowp(input.merkle_paths)?;
 
-    let instructions: Vec<TreeInstruction> =
-        generate_tree_instructions(enumeration_index, &block_output_with_proofs, vm_out)?;
+    let instructions: Vec<TreeInstruction> = generate_tree_instructions(
+        enumeration_index,
+        &block_output_with_proofs,
+        &leaf_keys,
+        vm_out,
+    )?;
 
     block_output_with_proofs
         .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
@@ -556,72 +528,142 @@ fn verify_bytecode_hash(claimed_hash: U256, flat_bytecode: &[u8]) -> anyhow::Res
     Ok(())
 }
 
-/// Sets the initial storage values and returns `BlockOutputWithProofs`
-fn get_bowp(witness_input_merkle_paths: WitnessInputMerklePaths) -> Result<BlockOutputWithProofs> {
-    let logs_result: Result<_, _> = witness_input_merkle_paths
+/// The pre-state a single Merkle-witness leaf encodes, after rejecting shapes
+/// the tree never emits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WitnessLeaf {
+    /// Empty leaf: value 0, no enumeration index (a read of a missing key, or a
+    /// first write / insertion of a previously-empty slot).
+    Empty { is_write: bool },
+    /// Existing leaf at `index > 0` with pre-state `value`.
+    Existing {
+        is_write: bool,
+        index: u64,
+        value: H256,
+    },
+}
+
+/// Classify a Merkle-witness leaf, rejecting malformed shapes the tree never
+/// produces: a read flagged `first_write`, and a repeated write to enum index 0.
+fn classify_witness_leaf(log: &StorageLogMetadata) -> anyhow::Result<WitnessLeaf> {
+    let key = log.leaf_hashed_key;
+    match (log.is_write, log.first_write, log.leaf_enumeration_index) {
+        (false, true, _) => {
+            anyhow::bail!("witness read entry for leaf {key:x} is marked first_write")
+        }
+        (false, _, 0) => Ok(WitnessLeaf::Empty { is_write: false }),
+        (false, false, index) => Ok(WitnessLeaf::Existing {
+            is_write: false,
+            index,
+            value: H256(log.value_read),
+        }),
+        (true, true, _) => Ok(WitnessLeaf::Empty { is_write: true }),
+        (true, false, 0) => {
+            anyhow::bail!("witness repeated write to leaf {key:x} has enumeration index 0")
+        }
+        (true, false, index) => Ok(WitnessLeaf::Existing {
+            is_write: true,
+            index,
+            value: H256(log.value_read),
+        }),
+    }
+}
+
+/// Build the storage view from the committed `merkle_paths` witness: each entry's
+/// classified pre-state (empty leaf -> `None`, existing leaf -> `Some((value,
+/// index))`), keyed by its hashed key (a little-endian `U256`). Every entry is
+/// proven against `old_root_hash` by the later `verify_proofs` fold, so this only
+/// translates shapes — rejecting malformed leaves (via the classifier) and any
+/// conflicting duplicate (`merkle_paths` is deduplicated to one entry per slot).
+fn build_view_from_merkle_paths(
+    merkle_paths: &[StorageLogMetadata],
+) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
+    use std::collections::btree_map::Entry;
+
+    let mut view = std::collections::BTreeMap::new();
+    for log in merkle_paths {
+        let prestate = match classify_witness_leaf(log)? {
+            WitnessLeaf::Empty { .. } => None,
+            WitnessLeaf::Existing { index, value, .. } => Some((value, index)),
+        };
+        let mut key_bytes = [0u8; 32];
+        log.leaf_hashed_key.to_little_endian(&mut key_bytes);
+        match view.entry(H256(key_bytes)) {
+            Entry::Vacant(slot) => {
+                slot.insert(prestate);
+            }
+            Entry::Occupied(slot) => anyhow::ensure!(
+                *slot.get() == prestate,
+                "merkle_paths has a conflicting pre-state for slot {:?}: {:?} vs {prestate:?}",
+                slot.key(),
+                slot.get(),
+            ),
+        }
+    }
+    Ok(view)
+}
+
+/// Builds `BlockOutputWithProofs` from the merkle witness, paired with each
+/// entry's `leaf_hashed_key` in order.
+///
+/// The keys are returned separately because `BlockOutputWithProofs` doesn't
+/// carry them, yet `generate_tree_instructions` must bind each proof to the VM's
+/// storage-log key. `verify_proofs` checks the Merkle path against the VM key
+/// (via the `TreeInstruction`), while the storage view is seeded by
+/// `leaf_hashed_key`; if those two keys are allowed to differ, a proof for one
+/// slot's pre-state could be paired with a VM that read a *different* value for
+/// that slot. Binding them keeps the proven slot and the executed slot the same.
+fn get_bowp(
+    witness_input_merkle_paths: WitnessInputMerklePaths,
+) -> Result<(BlockOutputWithProofs, Vec<U256>)> {
+    let entries: Vec<(TreeLogEntryWithProof, U256)> = witness_input_merkle_paths
         .into_merkle_paths()
-        .map(
-            |StorageLogMetadata {
-                 root_hash,
-                 merkle_paths,
-                 is_write,
-                 first_write,
-                 leaf_enumeration_index,
-                 value_read,
-                 leaf_hashed_key: leaf_storage_key,
-                 // `value_written` is consumed only by the Merkle tree's build path
-                 // (`zksync_merkle_tree::domain`), never by the verifier, which derives
-                 // the written value from VM execution. Bind it explicitly (instead of
-                 // `..`) so this match stays exhaustive: a future field added to
-                 // `StorageLogMetadata` won't compile until someone decides whether the
-                 // verifier should consume it, rather than being silently ignored.
-                 value_written: _,
-             }| {
-                let root_hash = root_hash.into();
-                let merkle_path = merkle_paths.into_iter().map(|x| x.into()).collect();
-                let base: TreeLogEntry = match (is_write, first_write, leaf_enumeration_index) {
-                    (false, _, 0) => TreeLogEntry::ReadMissingKey,
-                    (false, false, _) => {
-                        tracing::trace!(
-                            "TreeLogEntry::Read {leaf_storage_key:x} = {:x}",
-                            StorageValue::from(value_read)
-                        );
-                        TreeLogEntry::Read {
-                            leaf_index: leaf_enumeration_index,
-                            value: value_read.into(),
-                        }
-                    }
-                    (false, true, _) => {
-                        tracing::error!("get_bowp is_write = false, first_write = true");
-                        bail!("get_bowp is_write = false, first_write = true");
-                    }
-                    (true, true, _) => TreeLogEntry::Inserted,
-                    (true, false, _) => {
-                        tracing::trace!(
-                            "TreeLogEntry::Updated {leaf_storage_key:x} = {:x}",
-                            StorageValue::from(value_read)
-                        );
-                        TreeLogEntry::Updated {
-                            leaf_index: leaf_enumeration_index,
-                            previous_value: value_read.into(),
-                        }
-                    }
-                };
-                Ok(TreeLogEntryWithProof {
+        .map(|log| -> anyhow::Result<(TreeLogEntryWithProof, U256)> {
+            let root_hash = log.root_hash.into();
+            let leaf_hashed_key = log.leaf_hashed_key;
+            // Same classifier as the storage-view derivation, so the two can
+            // never disagree on which witness shapes are valid. `value_written`
+            // is intentionally unused: the verifier derives the written value
+            // from VM execution, not from the witness.
+            let base = match classify_witness_leaf(&log)? {
+                WitnessLeaf::Empty { is_write: false } => TreeLogEntry::ReadMissingKey,
+                WitnessLeaf::Empty { is_write: true } => TreeLogEntry::Inserted,
+                WitnessLeaf::Existing {
+                    is_write: false,
+                    index,
+                    value,
+                } => TreeLogEntry::Read {
+                    leaf_index: index,
+                    value: value.0.into(),
+                },
+                WitnessLeaf::Existing {
+                    is_write: true,
+                    index,
+                    value,
+                } => TreeLogEntry::Updated {
+                    leaf_index: index,
+                    previous_value: value.0.into(),
+                },
+            };
+            let merkle_path = log.merkle_paths.into_iter().map(|x| x.into()).collect();
+            Ok((
+                TreeLogEntryWithProof {
                     base,
                     merkle_path,
                     root_hash,
-                })
-            },
-        )
-        .collect();
-
-    let logs: Vec<TreeLogEntryWithProof> = logs_result?;
-
-    Ok(BlockOutputWithProofs {
-        logs,
-        leaf_count: 0,
-    })
+                },
+                leaf_hashed_key,
+            ))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let (logs, leaf_keys): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+    Ok((
+        BlockOutputWithProofs {
+            logs,
+            leaf_count: 0,
+        },
+        leaf_keys,
+    ))
 }
 
 /// Executes the VM and returns `FinishedL1Batch` on success.
@@ -721,21 +763,36 @@ fn map_log_tree(
 fn generate_tree_instructions(
     mut idx: u64,
     bowp: &BlockOutputWithProofs,
+    leaf_keys: &[U256],
     vm_out: FinishedL1Batch,
 ) -> anyhow::Result<Vec<TreeInstruction>> {
     let vm_logs = vm_out.final_execution_state.deduplicated_storage_logs;
-    assert_eq!(
-        vm_logs.len(),
-        bowp.logs.len(),
+    anyhow::ensure!(
+        vm_logs.len() == bowp.logs.len() && bowp.logs.len() == leaf_keys.len(),
         "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
         vm_logs.len(),
-        bowp.logs.len()
+        bowp.logs.len(),
     );
 
     vm_logs
         .into_iter()
         .zip(bowp.logs.iter())
-        .map(|(log_query, tree_log_entry)| map_log_tree(&log_query, &tree_log_entry.base, &mut idx))
+        .zip(leaf_keys.iter())
+        .map(|((log_query, tree_log_entry), &leaf_hashed_key)| {
+            // Bind the proof to the slot the VM actually touched: the Merkle path
+            // is verified against `vm_key`, but the storage view was seeded by
+            // `leaf_hashed_key`. If they differ, the operator could prove a write
+            // against one slot's real pre-state while having fed the VM a forged
+            // value for that slot (served empty via the gap fallback). They must
+            // refer to the same slot.
+            let vm_key = log_query.key.hashed_key_u256();
+            anyhow::ensure!(
+                leaf_hashed_key == vm_key,
+                "merkle_paths leaf_hashed_key {leaf_hashed_key:?} does not match \
+                 VM storage-log key {vm_key:?}",
+            );
+            map_log_tree(&log_query, &tree_log_entry.base, &mut idx)
+        })
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -776,6 +833,82 @@ mod tests {
     use super::*;
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
     use crate::types::{AirbenderVerifierInput, V1AirbenderVerifierInput, VMRunWitnessInputData};
+
+    fn key(n: u64) -> zksync_types::StorageKey {
+        use zksync_types::{AccountTreeId, Address};
+        zksync_types::StorageKey::new(
+            AccountTreeId::new(Address::from_low_u64_be(n)),
+            H256::zero(),
+        )
+    }
+
+    fn meta(
+        key: zksync_types::StorageKey,
+        is_write: bool,
+        first_write: bool,
+        leaf_enumeration_index: u64,
+        value_read: H256,
+    ) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: [0u8; 32],
+            is_write,
+            first_write,
+            merkle_paths: vec![],
+            leaf_hashed_key: key.hashed_key_u256(),
+            leaf_enumeration_index,
+            value_written: [0u8; 32],
+            value_read: value_read.0,
+        }
+    }
+
+    #[test]
+    fn classify_rejects_read_marked_first_write() {
+        assert!(classify_witness_leaf(&meta(key(1), false, true, 0, H256::zero())).is_err());
+    }
+
+    #[test]
+    fn classify_rejects_repeated_write_zero_index() {
+        assert!(classify_witness_leaf(&meta(key(2), true, false, 0, H256::zero())).is_err());
+    }
+
+    #[test]
+    fn classify_maps_existing_read() {
+        let v = H256::from_low_u64_be(0x9);
+        match classify_witness_leaf(&meta(key(3), false, false, 7, v)).unwrap() {
+            WitnessLeaf::Existing {
+                is_write,
+                index,
+                value,
+            } => {
+                assert!(!is_write);
+                assert_eq!(index, 7);
+                assert_eq!(value, v);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_maps_empty_first_write() {
+        assert!(matches!(
+            classify_witness_leaf(&meta(key(4), true, true, 0, H256::zero())).unwrap(),
+            WitnessLeaf::Empty { is_write: true }
+        ));
+    }
+
+    #[test]
+    fn get_bowp_rejects_repeated_write_with_zero_index() {
+        let mut paths = WitnessInputMerklePaths::new(1);
+        paths.push_merkle_path(meta(key(0x3001), true, false, 0, H256::zero()));
+        assert!(get_bowp(paths).is_err());
+    }
+
+    #[test]
+    fn get_bowp_rejects_read_marked_first_write() {
+        let mut paths = WitnessInputMerklePaths::new(1);
+        paths.push_merkle_path(meta(key(0x3002), false, true, 0, H256::zero()));
+        assert!(get_bowp(paths).is_err());
+    }
 
     #[test]
     fn test_verify_bytecode_hash_valid() {
@@ -1090,6 +1223,46 @@ mod tests {
     /// a claimed `prev_batch_commitment` recomputed from consistent inputs must
     /// match, and tampering with any input must cause a mismatch (which
     /// `verify_with_vm` turns into an error via `anyhow::ensure!`).
+    #[test]
+    fn view_from_merkle_paths_maps_prestate() {
+        let read = key(0x11);
+        let updated = key(0x12);
+        let inserted = key(0x13);
+        let missing = key(0x14);
+        let v = H256::from_low_u64_be(0x9);
+        let v2 = H256::from_low_u64_be(0xA);
+        let paths = vec![
+            meta(read, false, false, 7, v),
+            meta(updated, true, false, 9, v2),
+            meta(inserted, true, true, 0, H256::zero()),
+            meta(missing, false, false, 0, H256::zero()),
+        ];
+        let view = build_view_from_merkle_paths(&paths).unwrap();
+        assert_eq!(view.get(&read.hashed_key()), Some(&Some((v, 7))));
+        assert_eq!(view.get(&updated.hashed_key()), Some(&Some((v2, 9))));
+        assert_eq!(view.get(&inserted.hashed_key()), Some(&None));
+        assert_eq!(view.get(&missing.hashed_key()), Some(&None));
+    }
+
+    #[test]
+    fn view_from_merkle_paths_rejects_conflicting_duplicate() {
+        let k = key(0x15);
+        let paths = vec![
+            meta(k, false, false, 7, H256::from_low_u64_be(1)),
+            meta(k, false, false, 7, H256::from_low_u64_be(2)),
+        ];
+        assert!(build_view_from_merkle_paths(&paths).is_err());
+    }
+
+    #[test]
+    fn view_from_merkle_paths_accepts_consistent_duplicate() {
+        let k = key(0x16);
+        let v = H256::from_low_u64_be(3);
+        let paths = vec![meta(k, false, false, 7, v), meta(k, true, false, 7, v)];
+        let view = build_view_from_merkle_paths(&paths).unwrap();
+        assert_eq!(view.get(&k.hashed_key()), Some(&Some((v, 7))));
+    }
+
     #[test]
     fn test_prev_commitment_binding_rejects_mismatch() {
         use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
