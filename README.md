@@ -187,7 +187,9 @@ Note: `--features gpu_snark` is not technically required, it enables GPU SNARK p
 
 ### Verification keys
 
-The canonical FRI and SNARK verification keys live in [`vks/`](vks/), and CI re-derives them on every PR (see the `vk-check` job in [.github/workflows/ci-check.yaml](.github/workflows/ci-check.yaml)). The keys are loaded from disk rather than derived on the fly. If a guest change invalidates them, regenerate locally and commit the result:
+The canonical FRI and SNARK verification keys are published as GitHub **release assets** (`fri_vk.bin`, `snark_vk.json`), alongside the guest binary (`app.bin`, `app.text`) and a `checksums.txt`. They are built from the released commit by [`.github/workflows/release-artifacts.yaml`](.github/workflows/release-artifacts.yaml) — not committed to the repo — so they always match the source they were derived from. The server loads them from disk rather than deriving them on the fly; download them from a release or point the server at a local copy via `--fri-vk` (`FRI_VK`). See [`vks/README.md`](vks/README.md).
+
+VK generation is costly (GPU + trusted setup) and only runs at release time, so you don't normally need keys locally. Regenerate them only when proving against a locally-changed guest:
 
 ```bash
 cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
@@ -205,7 +207,7 @@ cargo build --release --no-default-features -p eravm-prover-host
 
 ### Integration tests
 
-`host/tests/integration_test.rs` drives the proving pipeline in-process (no server). The tests are `#[ignore]` because they need the LFS batch corpus — and, for proving, a GPU, the committed guest binary, and the SNARK trusted setup. CI runs the end-to-end test in the `host-integration-run` job whenever proving-relevant code changes. Run it locally with:
+`host/tests/integration_test.rs` drives the proving pipeline in-process (no server). The tests are `#[ignore]` because they need the LFS batch corpus — and, for proving, a GPU, the guest binary, and the SNARK trusted setup. The GPU proving test no longer runs on every PR (VK/proving work is costly); run it locally or on demand with:
 
 ```bash
 # CPU-only: native verification vs. transpiler execution

@@ -4,8 +4,8 @@
 //! library surface that service now consumes.
 //!
 //! All tests are `#[ignore]` because they need the LFS batch corpus (and, for
-//! proving, a GPU + the committed guest binary + the SNARK trusted setup). Run
-//! one explicitly, e.g.:
+//! proving, a GPU + the guest binary + the SNARK trusted setup). Run one
+//! explicitly, e.g.:
 //!
 //! ```sh
 //! cargo test -p eravm-prover-host --features gpu_snark --test integration_test \
@@ -40,8 +40,9 @@ fn batch_file_path(filename: &str) -> PathBuf {
         .join(filename)
 }
 
-/// Committed FRI verification key. `build_fri_prover` loads it strictly (never
-/// regenerates), so proving here verifies against the same VK production uses.
+/// FRI verification key (a release asset; override with `IT_FRI_VK`).
+/// `build_fri_prover` loads it strictly (never regenerates), so proving here
+/// verifies against the same VK production uses.
 #[cfg(feature = "gpu_fri")]
 fn fri_vk_path() -> PathBuf {
     std::env::var_os("IT_FRI_VK")
@@ -49,8 +50,9 @@ fn fri_vk_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/fri_vk.bin"))
 }
 
-/// Committed SNARK wrapper VK. Loaded when present so the wrapper reuses it
-/// instead of re-deriving from the setup chain; absent → derived on the fly.
+/// SNARK wrapper VK (a release asset; override with `IT_SNARK_VK`). Loaded when
+/// present so the wrapper reuses it instead of re-deriving from the setup chain;
+/// absent → derived on the fly.
 #[cfg(feature = "gpu_fri")]
 fn snark_vk_path() -> PathBuf {
     std::env::var_os("IT_SNARK_VK")
@@ -104,13 +106,13 @@ fn host_runs_batch_native_and_transpiler() {
 /// End-to-end host proving path, mirroring what the service does per job but
 /// without any network hop:
 ///   1. load the batch, natively verify it to get the expected public input;
-///   2. build the GPU FRI prover against the committed VK and prove the encoded
+///   2. build the GPU FRI prover against the release VK and prove the encoded
 ///      input — `prove_input` also verifies the proof against that VK;
 ///   3. cross-check the proven guest output equals the native public input;
 ///   4. strip the envelope to a raw FRI proof and wrap it into a SNARK;
 ///   5. round-trip the SNARK proof through `serde_json` as a shape check.
 #[cfg(feature = "gpu_fri")]
-#[ignore = "requires GPU, committed guest binary, LFS batch, and SNARK trusted setup"]
+#[ignore = "requires GPU, guest binary, LFS batch, and SNARK trusted setup"]
 #[test]
 fn host_proves_fri_then_snark() {
     use airbender_host::{Inputs, Proof, SecurityLevel};
@@ -145,11 +147,11 @@ fn host_proves_fri_then_snark() {
         .push(&input)
         .expect("failed to encode AirbenderVerifierInput");
 
-    // 3. Build the GPU FRI prover against the committed VK and prove. The
+    // 3. Build the GPU FRI prover against the release VK and prove. The
     //    prover verifies the proof against that VK internally, and rejects a
     //    zero output (failed guest verification/commitment). The default config
     //    keeps the backend's own host-buffer pool sizing.
-    println!("[test] Building GPU FRI prover against committed VK...");
+    println!("[test] Building GPU FRI prover against release VK...");
     let prover = build_fri_prover(
         &guest_dist_dir(),
         &fri_vk_path(),
@@ -194,12 +196,11 @@ fn host_proves_fri_then_snark() {
     download_trusted_setup_if_not_present(&trusted_setup, default_trusted_setup_download_url())
         .expect("failed to provision SNARK trusted setup");
 
-    // Reuse the committed SNARK VK when present; otherwise derive it.
+    // Reuse the release SNARK VK when present; otherwise derive it.
     let snark_vk: Option<SnarkWrapperVK> = {
         let path = snark_vk_path();
         path.exists().then(|| {
-            deserialize_from_file(&path.to_string_lossy())
-                .expect("failed to load committed SNARK VK")
+            deserialize_from_file(&path.to_string_lossy()).expect("failed to load SNARK VK")
         })
     };
 
