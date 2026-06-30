@@ -26,6 +26,7 @@ cargo run -p eravm-prover-host --features gpu_snark -- gen-vks \
     --trusted-setup /path/to/setup.key
 ```
 
-You normally don't need to do this locally — VK generation is costly and only
-runs at release time. Regenerate only when you actually need to prove against a
-locally-changed guest.
+You normally don't need to do this locally. VK generation is costly, so it runs
+in CI only for the proving test (`host-integration-run`, on guest/VK-relevant
+changes) and at release time. Regenerate locally only when you actually need to
+prove against a locally-changed guest.

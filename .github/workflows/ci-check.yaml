@@ -121,8 +121,8 @@ jobs:
   # yields a reproducible app.bin — the same image + invocation the
   # release-artifacts workflow uses — so this also catches a guest that fails to
   # build. The guest dist is no longer committed; it is a release asset (see
-  # .github/workflows/release-artifacts.yaml). host-run-batches consumes the
-  # artifact this job uploads.
+  # .github/workflows/release-artifacts.yaml). host-run-batches and
+  # host-integration-run consume the artifact this job uploads.
   # -----------------------------------------------------------------------------
   guest-build:
     name: guest-build
@@ -197,6 +197,276 @@ jobs:
             --batches-dir "$BATCHES_DIR" \
             --batch-files "$CI_BATCHES"
 
+  # -----------------------------------------------------------------------------
+  # Cheap precondition for the expensive proving guard: only run vk-build /
+  # host-integration-run when the PR changes something that could affect the
+  # guest binary or either verification key. Most PRs touch none of these, so we
+  # skip the CUDA build + GPU proving rather than burning runners.
+  # -----------------------------------------------------------------------------
+  change-filter:
+    name: change-filter
+    runs-on: ubuntu-latest
+    outputs:
+      # Inputs that can change the guest binary or either VK (and thus the
+      # proving pipeline): guest sources, the workspace crates the guest links,
+      # the dependency pins, the toolchain, and the host CLI that derives the VKs.
+      vk: ${{ steps.filter.outputs.vk }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            vk:
+              - 'guest/**'
+              - 'crates/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'rust-toolchain.toml'
+              - 'host/**'
+              - '.github/workflows/ci-check.yaml'
+
+  # -----------------------------------------------------------------------------
+  # Build the host CLI with `--features gpu_snark` (plus era-bellman-cuda) on a
+  # high-performance runner inside the cargo-airbender CUDA image. This is the
+  # ONLY place where `gpu-prover` (and transitively `era_cudart_sys`,
+  # `bellman-cuda`-using crates) compile — the GPU runner that runs
+  # host-integration-run has the driver but no toolkit, so cargo there would
+  # either fail or hang. Gated on `vk` changes so most PRs skip the CUDA build.
+  #
+  # The guest is built separately (guest-build); host-integration-run downloads
+  # these artifacts plus the guest dist and runs them on the GPU runner.
+  # -----------------------------------------------------------------------------
+  vk-build:
+    name: vk-build
+    needs: change-filter
+    if: needs.change-filter.outputs.vk == 'true'
+    runs-on: matterlabs-ci-runner-high-performance
+    timeout-minutes: 90
+    # Prebuilt cargo-airbender CUDA image (v0.2.3) — ships nightly Rust +
+    # clang + cmake + the CUDA 12.9 devel toolchain, so no per-step installs.
+    container:
+      image: ghcr.io/matter-labs/cargo-airbender-cuda:v0.2.3
+    env:
+      # The runtime runner is an RTX 6000 Ada (sm_89). Match the GPU runner.
+      CUDA_ARCH: "89"
+      CUDAARCHS: "89"
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # sccache (RUSTC_WRAPPER) wired to matterlabs's GCS bucket.
+      - name: Setup runner
+        uses: matter-labs/zksync-os-server/.github/actions/runner-setup@24d38529dbeb2f0bdd016005b1e5e0bc491b692f
+
+      - name: Install extra apt packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: apt-get update && apt-get install -y libclang-dev
+
+      - name: Inspect toolchain
+        run: |
+          nvcc --version
+          cmake --version
+          rustc --version
+
+      # Build era-bellman-cuda — `zksync-crypto-gpu`'s `gpu-ffi` build script
+      # reads `BELLMAN_CUDA_DIR` from the env. Without it, linking gpu-prover
+      # fails or stalls.
+      - name: Build era-bellman-cuda
+        run: |
+          git clone --depth=1 https://github.com/matter-labs/era-bellman-cuda.git
+          cmake -B era-bellman-cuda/build -S era-bellman-cuda -DCMAKE_BUILD_TYPE=Release
+          cmake --build era-bellman-cuda/build -j"$(nproc)"
+          echo "BELLMAN_CUDA_DIR=$(pwd)/era-bellman-cuda" >> "${GITHUB_ENV}"
+
+      # Build the host CLI so host-integration-run can derive the VKs (`gen-vks`)
+      # and download the trusted setup on the GPU runner.
+      - name: Build eravm-prover-host (gpu_snark)
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo build --release -p eravm-prover-host --locked --features gpu_snark
+          ls -lh target/release/eravm-prover-host
+
+      # Compile (don't run) the host integration test so host-integration-run
+      # can execute it on the GPU runner, which has no CUDA toolkit to build it.
+      # cargo emits JSON metadata pointing at the hash-suffixed test executable.
+      - name: Build host integration test binary
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo test --release --locked --features gpu_snark \
+            --package eravm-prover-host --test integration_test \
+            --no-run --message-format=json > test-build.json
+          test_bin=$(jq -r 'select(.executable != null and (.target.name == "integration_test")) | .executable' test-build.json | tail -n1)
+          if [ -z "$test_bin" ]; then
+            echo "Failed to locate integration_test binary in cargo metadata" >&2
+            exit 1
+          fi
+          echo "Test binary: $test_bin"
+          mkdir -p test-stage
+          cp -v "$test_bin" test-stage/integration_test
+
+      # Stage runtime CUDA libraries host-integration-run needs on the GPU runner:
+      #   - bellman-cuda's own outputs (it isn't in any system path)
+      #   - libcudart from the container's CUDA toolkit (the GPU runner has the
+      #     driver — `libcuda.so` — but no toolkit, so `libcudart.so.13` is
+      #     missing without us shipping it)
+      - name: Stage runtime CUDA libraries
+        run: |
+          mkdir -p bellman-cuda-stage
+          find era-bellman-cuda/build -type f \( -name '*.so*' -o -name '*.a' \) -exec cp -v {} bellman-cuda-stage/ \;
+          cp -v /usr/local/cuda/lib64/libcudart.so* bellman-cuda-stage/
+          ls -lh bellman-cuda-stage/
+
+      - name: Upload prover-host binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-host-bin
+          path: target/release/eravm-prover-host
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload host integration test binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: eravm-prover-host-integration-test
+          path: test-stage/integration_test
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload bellman-cuda libraries
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
+        with:
+          name: bellman-cuda
+          path: bellman-cuda-stage
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # -----------------------------------------------------------------------------
+  # Derive the VKs on the GPU runner from the freshly-built guest (never the
+  # committed copy — there isn't one anymore) and run the host integration test,
+  # which drives the FRI→SNARK proving pipeline in-process against those VKs.
+  # Because the VKs are generated from this PR's guest, the proof is always
+  # verified against the binary the PR would actually ship. No cargo here — only
+  # the prebuilt host + test binaries from vk-build, the staged CUDA runtime
+  # libs, the guest dist from guest-build, and the LFS batch. Gated on the same
+  # `vk` filter as vk-build.
+  # -----------------------------------------------------------------------------
+  host-integration-run:
+    name: host-integration-run
+    needs: [vk-build, guest-build, change-filter]
+    # vk-build shares the `vk` filter, so it runs whenever this job does.
+    # guest-build is unconditional; require its success since we prove against
+    # the guest it produced. `!cancelled()` lets this evaluate normally.
+    if: >-
+      !cancelled() &&
+      needs.change-filter.outputs.vk == 'true' &&
+      needs.vk-build.result == 'success' &&
+      needs.guest-build.result == 'success'
+    # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
+    # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
+    runs-on: matterlabs-ci-hetzner-rtx6000-gpu
+    # gen-vks (VK derivation) + the full FRI→SNARK proving test run back to back
+    # here; allow more headroom than proving alone needed.
+    timeout-minutes: 120
+    # eravm-prover-host and the test binary link era-bellman-cuda and
+    # libcudart.so.13 via `--features gpu_snark`, so every step that runs them
+    # needs the staged CUDA libs on the loader path.
+    env:
+      LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
+    steps:
+      # Need the repo for scripts/fetch_lfs_batches.sh and the testdata path.
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install git-lfs
+        shell: 'bash -ex {0}'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+          ${SUDO} apt-get update
+          ${SUDO} apt-get install -y git-lfs
+
+      - name: Pull batch 506093
+        run: |
+          git lfs install --local
+          ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+
+      - name: Download prover-host binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-host-bin
+          path: stage/bin
+
+      - name: Download host integration test binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eravm-prover-host-integration-test
+          path: stage/test
+
+      - name: Download bellman-cuda libraries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: bellman-cuda
+          path: stage/cuda-libs
+
+      - name: Download guest dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: guest-dist
+          path: guest/dist/app
+
+      - name: Make binaries executable
+        run: |
+          chmod +x stage/bin/eravm-prover-host stage/test/integration_test
+          ls -lh stage/bin stage/test stage/cuda-libs guest/dist/app
+
+      - name: Download SNARK trusted setup
+        run: |
+          mkdir -p stage/setup
+          ./stage/bin/eravm-prover-host download-trusted-setup \
+              --output stage/setup/setup.key
+
+      - name: Generate VKs from the built guest
+        env:
+          # Derive VKs from the guest-build output (the FRI VK embeds
+          # sha256(app.bin)); the baked-in CARGO_MANIFEST_DIR points elsewhere.
+          ERAVM_PROVER_HOST_GUEST_DIR: ${{ github.workspace }}/guest/dist/app
+          RUST_BACKTRACE: 1
+          RUST_MIN_STACK: "134217728"
+        run: |
+          # SNARK wrapper recursion needs an unbounded stack — see README.md.
+          ulimit -s unlimited
+          mkdir -p vks
+          ./stage/bin/eravm-prover-host gen-vks \
+              --output-dir vks \
+              --trusted-setup stage/setup/setup.key
+          ls -lh vks
+
+      - name: Run host integration test (FRI then SNARK)
+        env:
+          # The test binary's baked-in CARGO_MANIFEST_DIR points at the build
+          # runner, so steer it at this runner's guest dist / generated VKs /
+          # corpus.
+          IT_GUEST_DIST_DIR: ${{ github.workspace }}/guest/dist/app
+          IT_BATCHES_DIR: ${{ github.workspace }}/testdata/era_mainnet_batches/binary
+          IT_FRI_VK: ${{ github.workspace }}/vks/fri_vk.bin
+          IT_SNARK_VK: ${{ github.workspace }}/vks/snark_vk.json
+          IT_BATCH_FILE: 506093.bin.gz
+          RUST_BACKTRACE: 1
+          # SNARK wrapping needs far more than the 2 MB default thread stack.
+          RUST_MIN_STACK: "134217728"
+        run: |
+          # SNARK wrapper recursion needs a large stack — see README.md.
+          ulimit -s unlimited
+          ./stage/test/integration_test --ignored --nocapture host_proves_fri_then_snark
+
   pr-checks:
     runs-on: ubuntu-latest
     if: always()
@@ -206,8 +476,14 @@ jobs:
       - vm-compare-batches
       - guest-build
       - host-run-batches
+      - change-filter
+      - vk-build
+      - host-integration-run
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
+          # vk-build / host-integration-run legitimately skip on PRs that don't
+          # touch the guest binary or the VK-deriving host code (see change-filter).
+          allowed-skips: vk-build,host-integration-run
           jobs: ${{ toJSON(needs) }}

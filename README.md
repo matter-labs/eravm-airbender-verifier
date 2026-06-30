@@ -189,7 +189,7 @@ Note: `--features gpu_snark` is not technically required, it enables GPU SNARK p
 
 The canonical FRI and SNARK verification keys are published as GitHub **release assets** (`fri_vk.bin`, `snark_vk.json`), alongside the guest binary (`app.bin`, `app.text`) and a `checksums.txt`. They are built from the released commit by [`.github/workflows/release-artifacts.yaml`](.github/workflows/release-artifacts.yaml) — not committed to the repo — so they always match the source they were derived from. The server loads them from disk rather than deriving them on the fly; download them from a release or point the server at a local copy via `--fri-vk` (`FRI_VK`). See [`vks/README.md`](vks/README.md).
 
-VK generation is costly (GPU + trusted setup) and only runs at release time, so you don't normally need keys locally. Regenerate them only when proving against a locally-changed guest:
+VK generation is costly (GPU + trusted setup). CI regenerates the keys from the PR's freshly-built guest to run the proving test (the `host-integration-run` job, only when guest/VK-relevant code changes), and the release build regenerates them to publish the assets — but you don't normally need keys locally. Regenerate them locally only when proving against a locally-changed guest:
 
 ```bash
 cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
@@ -207,7 +207,7 @@ cargo build --release --no-default-features -p eravm-prover-host
 
 ### Integration tests
 
-`host/tests/integration_test.rs` drives the proving pipeline in-process (no server). The tests are `#[ignore]` because they need the LFS batch corpus — and, for proving, a GPU, the guest binary, and the SNARK trusted setup. The GPU proving test no longer runs on every PR (VK/proving work is costly); run it locally or on demand with:
+`host/tests/integration_test.rs` drives the proving pipeline in-process (no server). The tests are `#[ignore]` because they need the LFS batch corpus — and, for proving, a GPU, the guest binary, and the SNARK trusted setup. CI runs the end-to-end proving test in the `host-integration-run` job whenever guest/VK-relevant code changes, deriving the VKs from the PR's freshly-built guest. Run it locally with:
 
 ```bash
 # CPU-only: native verification vs. transpiler execution
