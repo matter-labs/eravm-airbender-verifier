@@ -34,7 +34,7 @@ fn batch_path(number: u64) -> Option<std::path::PathBuf> {
 
 /// `merkle_paths` hashed keys (`leaf_hashed_key` is a little-endian `U256`).
 fn merkle_path_keys(
-    v1: &zksync_airbender_verifier::types::V2AirbenderVerifierInput,
+    v1: &zksync_airbender_verifier::types::AirbenderVerifierInput,
 ) -> HashSet<H256> {
     v1.merkle_paths
         .merkle_paths
@@ -60,9 +60,7 @@ fn rolled_back_write_batch_506155_verifies_and_gap_is_harmless() {
         number: 506155,
         path,
     })
-    .expect("load")
-    .into_v2()
-    .expect("v2");
+    .expect("load");
 
     let honest = v1
         .clone()
@@ -123,9 +121,7 @@ fn committed_read_bound_to_merkle_paths() {
         number: 506093,
         path,
     })
-    .expect("load")
-    .into_v2()
-    .expect("v2");
+    .expect("load");
 
     let honest = v1
         .clone()
@@ -177,9 +173,7 @@ fn merkle_path_key_bound_to_vm_key() {
         number: 506093,
         path,
     })
-    .expect("load")
-    .into_v2()
-    .expect("v2");
+    .expect("load");
 
     // Sanity: it verifies untouched.
     v1.clone().verify().expect("506093 verifies untouched");

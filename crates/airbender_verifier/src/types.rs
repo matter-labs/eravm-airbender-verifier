@@ -83,83 +83,12 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Versioned wire format for verifier input.
+/// Verifier input payload (v31 wire layout).
 ///
-/// - `V0`: reserved with no payload; pins later discriminants.
-/// - `V1`: pre-v31 bincode layout, decoded via [`crate::v1_compat`].
-/// - `V2`: canonical post-v31 layout.
-///
-/// Both `V1` and `V2` carry the same Rust payload; only the on-wire shape
-/// differs. [`AirbenderVerifierInput::into_v2`] strips the tag. The payloads
-/// are boxed only to keep the enum itself small; `Box<T>` is
-/// serde-transparent, so the wire encoding is unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum AirbenderVerifierInput {
-    V0,
-    V1(#[serde(with = "crate::v1_compat")] Box<V2AirbenderVerifierInput>),
-    V2(Box<V2AirbenderVerifierInput>),
-}
-
-impl AirbenderVerifierInput {
-    /// Strip the wire-version tag. Errors on the reserved `V0` marker.
-    pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
-        match self {
-            Self::V0 => anyhow::bail!("AirbenderVerifierInput::V0 has no payload"),
-            Self::V1(payload) | Self::V2(payload) => Ok(*payload),
-        }
-    }
-}
-
-/// Untagged decoder for the flat JSON payload zksync-era puts on the wire
-/// (no version envelope — see `server`'s `fetch_fri_job`).
-///
-/// Variant order is load-bearing: the strict post-v31 shape is tried first;
-/// a payload without `settlement_layer` fails it and falls through to the
-/// legacy pre-v31 shape, which [`crate::v1_compat`] upgrades with the
-/// implicit pre-v31 defaults. [`FlatAirbenderVerifierInput::into_v2`] then
-/// rejects the legacy shape when the payload claims a post-v31 protocol
-/// version, so a corrupt v31 payload cannot smuggle in defaulted fields.
-///
-/// JSON-only: `#[serde(untagged)]` needs a self-describing format and must
-/// never sit on the bincode path (the corpus and host↔guest channel keep
-/// using the tagged [`AirbenderVerifierInput`]).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum FlatAirbenderVerifierInput {
-    /// Post-v31 flat payload: all v31 fields present (`settlement_layer`
-    /// required, `interop_fee` may default).
-    V2(Box<V2AirbenderVerifierInput>),
-    /// Pre-v31 flat payload from a node that does not know the v31 fields.
-    Legacy(#[serde(with = "crate::v1_compat")] Box<V2AirbenderVerifierInput>),
-}
-
-impl FlatAirbenderVerifierInput {
-    /// Unwrap to the canonical payload, rejecting a legacy-shaped payload
-    /// that carries a post-v31 protocol version: such a sender must provide
-    /// `settlement_layer` explicitly instead of inheriting the upgrade
-    /// defaults.
-    pub fn into_v2(self) -> anyhow::Result<V2AirbenderVerifierInput> {
-        match self {
-            Self::V2(payload) => Ok(*payload),
-            Self::Legacy(payload) => {
-                // Both version copies must agree the payload is pre-v31;
-                // `execute()` re-checks they are equal, but failing here keeps
-                // the "legacy shape claiming v31" error at decode time.
-                let version = payload.system_env.version;
-                let witness_version = payload.vm_run_data.protocol_version;
-                anyhow::ensure!(
-                    version.is_pre_medium_interop() && witness_version.is_pre_medium_interop(),
-                    "flat payload has the pre-v31 wire shape (no `settlement_layer`) but \
-                     claims a post-v31 protocol version (system_env: {version:?}, \
-                     vm_run_data: {witness_version:?})"
-                );
-                Ok(*payload)
-            }
-        }
-    }
-}
-
-/// Canonical verifier input payload.
+/// This is the single canonical shape, encoded with bincode for the on-disk
+/// corpus and the host↔guest channel and with JSON for the zksync-era prover
+/// service. There is no version envelope: the repository targets the latest
+/// protocol version only.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
@@ -167,7 +96,7 @@ impl FlatAirbenderVerifierInput {
 /// (e.g., the serialization roundtrip test) can construct an input without
 /// fabricating commitment data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct V2AirbenderVerifierInput {
+pub struct AirbenderVerifierInput {
     pub vm_run_data: VMRunWitnessInputData,
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,

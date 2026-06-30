@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use zksync_airbender_verifier::types::V2AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_vm_compare::{CompareOptions, ComparisonOutcome};
 
@@ -46,16 +46,13 @@ fn main() -> Result<()> {
     let mut divergent_files = Vec::new();
 
     for batch_input in batch_inputs {
-        let input = load_batch(&batch_input)
-            .with_context(|| {
-                format!(
-                    "while attempting to load batch {} from {}",
-                    batch_input.number,
-                    batch_input.path.display()
-                )
-            })?
-            .into_v2()
-            .with_context(|| format!("batch {} has no V1 or V2 payload", batch_input.number))?;
+        let input = load_batch(&batch_input).with_context(|| {
+            format!(
+                "while attempting to load batch {} from {}",
+                batch_input.number,
+                batch_input.path.display()
+            )
+        })?;
         let matched = compare_batch(&batch_input, input, options)?;
         if !matched {
             divergent_files.push(batch_input.path.display().to_string());
@@ -80,7 +77,7 @@ fn main() -> Result<()> {
 
 fn compare_batch(
     batch_input: &BatchInputFile,
-    input: V2AirbenderVerifierInput,
+    input: AirbenderVerifierInput,
     options: CompareOptions,
 ) -> Result<bool> {
     let batch_number = batch_input.number;

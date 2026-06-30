@@ -9,7 +9,6 @@ pub mod commitment;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod types;
-pub mod v1_compat;
 
 mod merkle_witness;
 
@@ -43,9 +42,7 @@ use zksync_types::{
 
 use crate::commitment::expand_bootloader_heap;
 use crate::merkle_witness::{build_view_from_merkle_paths, get_bowp};
-use crate::types::{
-    AirbenderVerifierInput, CommitmentInput, V2AirbenderVerifierInput, TOTAL_BLOBS_IN_COMMITMENT,
-};
+use crate::types::{AirbenderVerifierInput, CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 
 /// A structure to hold the result of verification.
 pub struct VerificationResult {
@@ -82,21 +79,13 @@ pub trait Verify {
 }
 
 impl Verify for AirbenderVerifierInput {
-    /// Strip the wire-version tag and verify the payload. Errors on the
-    /// reserved `V0` marker.
-    fn verify(self) -> anyhow::Result<VerificationResult> {
-        self.into_v2()?.verify()
-    }
-}
-
-impl Verify for V2AirbenderVerifierInput {
     /// Run the VM, verify the new state root, and compute the batch commitment.
     /// Requires `commitment_input` to be `Some`.
     fn verify(mut self) -> anyhow::Result<VerificationResult> {
         // `execute` ignores `commitment_input`, so move it out first to avoid
         // cloning the blob hash vectors.
         let commitment_input = self.commitment_input.take().context(
-            "V2AirbenderVerifierInput::verify requires `commitment_input`; \
+            "AirbenderVerifierInput::verify requires `commitment_input`; \
              use `execute(...)` directly for VM-only flows",
         )?;
         let state = execute(self)?;
@@ -140,7 +129,7 @@ impl VmExecutionState {
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: V2AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "Protocol version {:?} is not supported by FastVM tee verifier",
@@ -719,8 +708,7 @@ mod tests {
     use crate::commitment::ZK_SYNC_BYTES_PER_BLOB;
     use crate::merkle_witness::{classify_witness_leaf, WitnessLeaf};
     use crate::types::{
-        AirbenderVerifierInput, FlatAirbenderVerifierInput, StorageLogMetadata,
-        V2AirbenderVerifierInput, VMRunWitnessInputData, WitnessInputMerklePaths,
+        AirbenderVerifierInput, StorageLogMetadata, VMRunWitnessInputData, WitnessInputMerklePaths,
     };
 
     fn key(n: u64) -> zksync_types::StorageKey {
@@ -1020,8 +1008,8 @@ mod tests {
     fn sample_payload(
         version: ProtocolVersionId,
         pubdata_validator: L2PubdataValidator,
-    ) -> V2AirbenderVerifierInput {
-        V2AirbenderVerifierInput {
+    ) -> AirbenderVerifierInput {
+        AirbenderVerifierInput {
             vm_run_data: sample_vm_run_data(version),
             merkle_paths: WitnessInputMerklePaths::new(0),
             l2_blocks_execution_data: vec![],
@@ -1042,163 +1030,39 @@ mod tests {
         }
     }
 
-    /// V2 wire fixture: post-v31 protocol with the `CommitmentScheme` validator.
-    fn sample_v2() -> V2AirbenderVerifierInput {
+    /// Canonical v31 fixture: post-medium-interop protocol with the
+    /// `CommitmentScheme` validator.
+    fn sample_input() -> AirbenderVerifierInput {
         sample_payload(
             ProtocolVersionId::Version31,
             L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
         )
     }
 
-    /// V1 wire fixture: pre-v31 protocol with an address-shaped validator
-    /// (zero address — the legacy default for chains that didn't set one).
-    fn sample_v1() -> V2AirbenderVerifierInput {
-        sample_payload(
-            ProtocolVersionId::Version29,
-            L2PubdataValidator::Address(Address::zero()),
-        )
-    }
-
-    /// Encodes / decodes via the same bincode config (`bincode 2`, varint
-    /// `standard()`) that `cli_utils::load_batch` uses, so this round-trip
-    /// pins the exact wire shape the on-disk corpus is loaded against.
-    fn bincode_roundtrip(avi: AirbenderVerifierInput) {
+    /// Pins the bincode wire so future struct changes can't silently alter the
+    /// on-disk corpus layout. Uses the same bincode config (`bincode 2`, varint
+    /// `standard()`) that `cli_utils::load_batch` decodes against.
+    #[test]
+    fn test_serialization_roundtrip() {
+        let input = sample_input();
         let bytes =
-            bincode::serde::encode_to_vec(&avi, bincode::config::standard()).expect("serialize");
+            bincode::serde::encode_to_vec(&input, bincode::config::standard()).expect("serialize");
         let (decoded, _): (AirbenderVerifierInput, usize) =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
                 .expect("deserialize");
-        assert_eq!(avi, decoded);
-    }
-
-    fn try_bincode_serialize(
-        avi: &AirbenderVerifierInput,
-    ) -> Result<Vec<u8>, impl std::error::Error> {
-        bincode::serde::encode_to_vec(avi, bincode::config::standard())
-    }
-
-    /// Pins the V2 bincode wire so future struct changes can't silently
-    /// alter the on-disk layout.
-    #[test]
-    fn test_serialization_roundtrip_v2() {
-        bincode_roundtrip(AirbenderVerifierInput::V2(Box::new(sample_v2())));
+        assert_eq!(input, decoded);
     }
 
     /// Pins the host↔guest channel wire: inputs cross into the guest encoded
-    /// with `AirbenderCodecV0`, independently of the bincode corpus format.
+    /// with `AirbenderCodecV0`.
     #[test]
     fn test_codec_roundtrip() {
-        for avi in [
-            AirbenderVerifierInput::V1(Box::new(sample_v1())),
-            AirbenderVerifierInput::V2(Box::new(sample_v2())),
-        ] {
-            let serialized = AirbenderCodecV0::encode(&avi)
-                .expect("Failed to serialize AirbenderVerifierInput.");
-            let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
-                .expect("Failed to deserialize AirbenderVerifierInput.");
-
-            assert_eq!(avi, deserialized);
-        }
-    }
-
-    /// Pins the V1 bincode wire. The on-disk corpus in
-    /// `testdata/era_mainnet_batches/` rides `V1(...)`; if this breaks, the
-    /// corpus stops loading.
-    #[test]
-    fn test_serialization_roundtrip_v1() {
-        bincode_roundtrip(AirbenderVerifierInput::V1(Box::new(sample_v1())));
-    }
-
-    /// The flat HTTP wire accepts the post-v31 shape via the strict `V2`
-    /// variant.
-    #[test]
-    fn test_flat_wire_accepts_v2_json() {
-        let payload = sample_v2();
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::V2(Box::new(payload.clone())))
-            .expect("serialize V2 flat payload");
-        assert!(
-            json["l1_batch_env"].get("settlement_layer").is_some(),
-            "post-v31 flat JSON must carry settlement_layer"
-        );
-        let decoded: FlatAirbenderVerifierInput =
-            serde_json::from_value(json).expect("deserialize V2 flat payload");
-        assert_eq!(
-            decoded,
-            FlatAirbenderVerifierInput::V2(Box::new(payload.clone()))
-        );
-        assert_eq!(decoded.into_v2().expect("post-v31 payload"), payload);
-    }
-
-    /// The flat HTTP wire accepts the legacy pre-v31 shape (what a
-    /// not-yet-upgraded zksync-era node sends: no `settlement_layer`, no
-    /// `interop_fee`, `l2_da_validator_address` in `pubdata_params`) and
-    /// upgrades it through the v1 adapter.
-    #[test]
-    fn test_flat_wire_accepts_legacy_json() {
-        let payload = sample_v1();
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(
-            payload.clone(),
-        )))
-        .expect("serialize legacy flat payload");
-        assert!(
-            json["l1_batch_env"].get("settlement_layer").is_none(),
-            "legacy flat JSON must not carry settlement_layer"
-        );
-        assert!(
-            json["l1_batch_env"].get("interop_fee").is_none(),
-            "legacy flat JSON must not carry interop_fee"
-        );
-        assert!(
-            json["pubdata_params"]
-                .get("l2_da_validator_address")
-                .is_some(),
-            "legacy flat JSON must carry the pre-v31 validator field"
-        );
-        let decoded: FlatAirbenderVerifierInput =
-            serde_json::from_value(json).expect("deserialize legacy flat payload");
-        assert_eq!(
-            decoded,
-            FlatAirbenderVerifierInput::Legacy(Box::new(payload.clone()))
-        );
-        assert_eq!(decoded.into_v2().expect("pre-v31 payload"), payload);
-    }
-
-    /// A legacy-shaped flat payload claiming a post-v31 protocol version is
-    /// rejected: such a sender must supply `settlement_layer` explicitly
-    /// rather than inherit the upgrade defaults.
-    #[test]
-    fn test_flat_wire_rejects_legacy_shape_with_post_v31_version() {
-        let payload = sample_payload(
-            ProtocolVersionId::Version31,
-            L2PubdataValidator::Address(Address::zero()),
-        );
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(payload)))
-            .expect("serialize legacy flat payload");
-        let decoded: FlatAirbenderVerifierInput =
-            serde_json::from_value(json).expect("legacy shape itself decodes");
-        let err = decoded.into_v2().expect_err("post-v31 legacy shape");
-        assert!(
-            err.to_string().contains("pre-v31 wire shape"),
-            "unexpected: {err}"
-        );
-    }
-
-    /// A corrupt sender cannot dodge the legacy-shape version check by
-    /// claiming pre-v31 in `system_env` while `vm_run_data` says post-v31:
-    /// both copies must agree at decode time.
-    #[test]
-    fn test_flat_wire_rejects_legacy_shape_with_disagreeing_versions() {
-        let mut payload = sample_v1();
-        payload.vm_run_data.protocol_version = ProtocolVersionId::Version31;
-        let json = serde_json::to_value(FlatAirbenderVerifierInput::Legacy(Box::new(payload)))
-            .expect("serialize legacy flat payload");
-        let decoded: FlatAirbenderVerifierInput =
-            serde_json::from_value(json).expect("legacy shape itself decodes");
-        let err = decoded.into_v2().expect_err("disagreeing versions");
-        assert!(
-            err.to_string().contains("pre-v31 wire shape"),
-            "unexpected: {err}"
-        );
+        let input = sample_input();
+        let serialized =
+            AirbenderCodecV0::encode(&input).expect("Failed to serialize AirbenderVerifierInput.");
+        let deserialized: AirbenderVerifierInput = AirbenderCodecV0::decode(&serialized)
+            .expect("Failed to deserialize AirbenderVerifierInput.");
+        assert_eq!(input, deserialized);
     }
 
     /// Pre-medium-interop bootloader encoding requires an address-shaped
@@ -1242,34 +1106,12 @@ mod tests {
         );
     }
 
-    /// V1 wire is lossy in one direction: post-v31-only state on a V2 payload
-    /// (non-default `interop_fee` / `settlement_layer`, `CommitmentScheme`
-    /// validator) cannot be encoded — V1 only exists to consume legacy bytes.
-    #[test]
-    fn test_v1_wire_rejects_post_v31_state() {
-        let mut payload = sample_v1();
-        payload.l1_batch_env.interop_fee = U256::from(1);
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
-
-        let mut payload = sample_v1();
-        payload.l1_batch_env.settlement_layer = SettlementLayer::for_tests();
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
-
-        let payload = sample_v2(); // CommitmentScheme validator
-        assert!(try_bincode_serialize(&AirbenderVerifierInput::V1(Box::new(payload))).is_err());
-    }
-
-    #[test]
-    fn test_into_v2_rejects_v0() {
-        assert!(AirbenderVerifierInput::V0.into_v2().is_err());
-    }
-
     /// Minimal input on a FastVM-supported version, valid enough to reach the
     /// early `system_env` checks in `execute()` (it errors out there, before any
     /// VM run, so the otherwise-empty witness is fine). The validator/protocol
     /// combination is kept consistent so the earlier pubdata-validator guard
     /// passes and execution reaches the `execution_mode` check.
-    fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> V2AirbenderVerifierInput {
+    fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> AirbenderVerifierInput {
         let mut input = sample_payload(
             ProtocolVersionId::latest(),
             L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),

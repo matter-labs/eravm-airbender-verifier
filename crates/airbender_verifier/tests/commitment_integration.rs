@@ -40,9 +40,7 @@ fn run_commitment_test(batch_number: u64) {
         number: batch_number,
         path: batch_path.clone(),
     })
-    .expect("failed to load batch")
-    .into_v2()
-    .expect("expected V1 or V2 payload");
+    .expect("failed to load batch");
 
     println!(
         "Running verification for batch {}...",

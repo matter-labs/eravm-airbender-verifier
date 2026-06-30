@@ -19,18 +19,14 @@ pub struct L1BatchEnv {
 
     /// The fee input into the batch. It contains information such as L1 gas price, L2 fair gas price, etc.
     pub fee_input: BatchFeeInput,
-    /// Introduced in v31. `#[serde(default)]` lets JSON inputs from
-    /// pre-medium-interop nodes omit the field; pre-v31 bincode corpus rides
-    /// the `V1` wire variant and gets `0` filled in at decode time.
+    /// Introduced in v31. `#[serde(default)]` tolerates a JSON payload that
+    /// omits the field, filling `0`.
     #[serde(default)]
     pub interop_fee: U256,
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
-    /// Introduced in v31. A missing `settlement_layer` field on the JSON wire
-    /// is a hard error for this struct, deliberately: that failure is what
-    /// routes a legacy pre-v31 flat payload to the fallback variant of the
-    /// verifier's `FlatAirbenderVerifierInput`, which fills the field through
-    /// the audited v1 upgrade path instead of a silent serde default.
+    /// Introduced in v31. Required on the wire — no serde default, so a missing
+    /// `settlement_layer` is a hard decode error.
     pub settlement_layer: SettlementLayer,
 }
