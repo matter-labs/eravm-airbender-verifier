@@ -190,10 +190,16 @@ pub fn build_fri_prover(
     security: SecurityLevel,
     config: FriProverConfig,
 ) -> Result<Box<dyn FriProver>> {
-    let mut gpu_config = GpuProverConfig::default()
-        .maybe_worker_threads(config.worker_threads)
-        .with_host_allocators_per_job(config.host_buffers_per_job)
-        .with_host_allocators_per_device(config.host_buffers_per_device);
+    let mut gpu_config = GpuProverConfig::default().maybe_worker_threads(config.worker_threads);
+    // Treat a 0 buffer count as "keep the backend default" rather than forcing
+    // zero pinned host↔device transfer buffers, which starves the prover's copy
+    // pool and stalls proving. This keeps `FriProverConfig::default()` usable.
+    if config.host_buffers_per_job > 0 {
+        gpu_config = gpu_config.with_host_allocators_per_job(config.host_buffers_per_job);
+    }
+    if config.host_buffers_per_device > 0 {
+        gpu_config = gpu_config.with_host_allocators_per_device(config.host_buffers_per_device);
+    }
     if let Some(gb) = config.max_device_memory_gb {
         gpu_config = gpu_config.with_max_device_memory_bytes((gb * (1u64 << 30) as f64) as usize);
     }

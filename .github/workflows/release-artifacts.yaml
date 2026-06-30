@@ -1,0 +1,50 @@
+name: release-artifacts
+
+# Attaches the committed guest binary and verification keys to every GitHub
+# Release as downloadable assets so downstream consumers (e.g. matter-labs/
+# zksync-era) can pull a versioned, immutable copy without checking out this
+# repo or its Git LFS objects.
+#
+# Releases are created by ci-release-please.yaml (the shared release-please
+# workflow) when a release PR merges; the `release: published` trigger fires
+# once the GitHub Release goes live, and we upload the assets onto that tag.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    name: upload release assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # The guest dist (app.bin/app.text) and VKs (fri_vk.bin/snark_vk.json)
+      # are committed to the repo and refreshed via /update-vks, so a plain
+      # checkout has the exact bytes that match this release's tag.
+      - name: Verify artifacts are present
+        run: |
+          set -euo pipefail
+          for f in \
+            guest/dist/app/app.bin \
+            guest/dist/app/app.text \
+            vks/fri_vk.bin \
+            vks/snark_vk.json; do
+            test -f "$f" || { echo "::error::missing release artifact: $f"; exit 1; }
+          done
+
+      # --clobber makes re-runs idempotent (e.g. re-publishing a release).
+      - name: Upload artifacts to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            guest/dist/app/app.bin \
+            guest/dist/app/app.text \
+            vks/fri_vk.bin \
+            vks/snark_vk.json \
+            --clobber
