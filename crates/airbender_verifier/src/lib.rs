@@ -167,6 +167,18 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         ProtocolVersionId::latest(),
     );
 
+    // `enforced_base_fee` is an `eth_call`/`estimateGas` simulation override (set
+    // only by the API call path when a caller supplies an explicit gas price); the
+    // batch-execution path always leaves it `None`. In a proved batch it must be
+    // `None` so the base fee is derived from `fee_input`. Pinning it here keeps the
+    // verifier fail-closed locally rather than relying on the proved-batch
+    // bootloader's base-fee assert.
+    anyhow::ensure!(
+        input.l1_batch_env.enforced_base_fee.is_none(),
+        "enforced_base_fee must be None for a proved batch; got {:?}",
+        input.l1_batch_env.enforced_base_fee,
+    );
+
     let old_root_hash = input
         .l1_batch_env
         .previous_batch_hash
@@ -1313,6 +1325,22 @@ mod tests {
         };
         assert!(
             err.to_string().contains("unsupported protocol version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn execute_rejects_enforced_base_fee() {
+        let mut input = sample_v1_input();
+        // `enforced_base_fee` is an eth_call/estimateGas override; a proved batch
+        // must leave it `None`. A `Some(_)` value must be rejected at the boundary.
+        input.l1_batch_env.enforced_base_fee = Some(42);
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the enforced_base_fee pin to reject Some(_)"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("enforced_base_fee must be None"),
             "unexpected error: {err}"
         );
     }
