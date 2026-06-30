@@ -198,7 +198,7 @@ jobs:
             --batch-files "$CI_BATCHES"
 
   # -----------------------------------------------------------------------------
-  # Cheap precondition for the expensive proving guard: only run vk-build /
+  # Cheap precondition for the expensive proving guard: only run build-prover-host /
   # host-integration-run when the PR changes something that could affect the
   # guest binary or either verification key. Most PRs touch none of these, so we
   # skip the CUDA build + GPU proving rather than burning runners.
@@ -238,8 +238,8 @@ jobs:
   # The guest is built separately (guest-build); host-integration-run downloads
   # these artifacts plus the guest dist and runs them on the GPU runner.
   # -----------------------------------------------------------------------------
-  vk-build:
-    name: vk-build
+  build-prover-host:
+    name: build-prover-host
     needs: change-filter
     if: needs.change-filter.outputs.vk == 'true'
     runs-on: matterlabs-ci-runner-high-performance
@@ -354,20 +354,20 @@ jobs:
   # which drives the FRI→SNARK proving pipeline in-process against those VKs.
   # Because the VKs are generated from this PR's guest, the proof is always
   # verified against the binary the PR would actually ship. No cargo here — only
-  # the prebuilt host + test binaries from vk-build, the staged CUDA runtime
+  # the prebuilt host + test binaries from build-prover-host, the staged CUDA runtime
   # libs, the guest dist from guest-build, and the LFS batch. Gated on the same
-  # `vk` filter as vk-build.
+  # `vk` filter as build-prover-host.
   # -----------------------------------------------------------------------------
   host-integration-run:
     name: host-integration-run
-    needs: [vk-build, guest-build, change-filter]
-    # vk-build shares the `vk` filter, so it runs whenever this job does.
+    needs: [build-prover-host, guest-build, change-filter]
+    # build-prover-host shares the `vk` filter, so it runs whenever this job does.
     # guest-build is unconditional; require its success since we prove against
     # the guest it produced. `!cancelled()` lets this evaluate normally.
     if: >-
       !cancelled() &&
       needs.change-filter.outputs.vk == 'true' &&
-      needs.vk-build.result == 'success' &&
+      needs.build-prover-host.result == 'success' &&
       needs.guest-build.result == 'success'
     # RTX 6000 Ada (48GB VRAM) — required for the airbender prover. The
     # default `matterlabs-ci-gpu-runner` (L4, 22GB) OOMs during proving.
@@ -477,13 +477,13 @@ jobs:
       - guest-build
       - host-run-batches
       - change-filter
-      - vk-build
+      - build-prover-host
       - host-integration-run
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
-          # vk-build / host-integration-run legitimately skip on PRs that don't
+          # build-prover-host / host-integration-run legitimately skip on PRs that don't
           # touch the guest binary or the VK-deriving host code (see change-filter).
-          allowed-skips: vk-build,host-integration-run
+          allowed-skips: build-prover-host,host-integration-run
           jobs: ${{ toJSON(needs) }}
