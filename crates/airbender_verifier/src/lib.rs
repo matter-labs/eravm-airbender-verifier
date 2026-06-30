@@ -19,7 +19,8 @@ use zksync_merkle_tree::{BlockOutputWithProofs, TreeInstruction, TreeLogEntry, V
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
-        FinishedL1Batch, L2BlockEnv, TxExecutionMode, VmInterfaceExt, VmInterfaceHistoryEnabled,
+        ExecutionResult, FinishedL1Batch, L2BlockEnv, TxExecutionMode, VmInterfaceExt,
+        VmInterfaceHistoryEnabled,
     },
     is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
@@ -301,6 +302,19 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         input.pubdata_params,
         protocol_version,
     )?;
+
+    // The bootloader must have finalized the batch successfully. `finish_batch`
+    // returns a `FinishedL1Batch` even when the batch-tip execution Halts, so
+    // without this check we could commit a public input for a batch that canonical
+    // execution would reject or never fully finalized.
+    anyhow::ensure!(
+        matches!(
+            vm_out.block_tip_execution_result.result,
+            ExecutionResult::Success { .. }
+        ),
+        "batch finalization did not succeed: {:?}",
+        vm_out.block_tip_execution_result.result,
+    );
 
     // Take fields out of vm_out before generate_tree_instructions consumes it.
     // The tree-instructions path only reads final_execution_state.deduplicated_storage_logs.
@@ -666,23 +680,34 @@ where
 {
     // Attempt to run VM with bytecode compression on.
     vm.make_snapshot();
-    if vm
-        .execute_transaction_with_bytecode_compression(tx.clone(), true)
-        .0
-        .is_ok()
-    {
+    let (compression, result) = vm.execute_transaction_with_bytecode_compression(tx.clone(), true);
+    if compression.is_ok() {
+        // The compression result and the execution result are independent: a tx
+        // can compress fine yet root-level `Halt`. A `Halt` means the bootloader
+        // could not execute the tx, so accepting it would commit a post-failure
+        // VM state. (A `Revert` is a normal committed outcome and is kept.)
+        ensure_not_halted(&result.result)?;
         vm.pop_snapshot_no_rollback();
         return Ok(());
     }
 
     // If failed with bytecode compression, attempt to run without bytecode compression.
     vm.rollback_to_the_latest_snapshot();
-    if vm
-        .execute_transaction_with_bytecode_compression(tx.clone(), false)
-        .0
-        .is_err()
-    {
+    let (compression, result) = vm.execute_transaction_with_bytecode_compression(tx.clone(), false);
+    if compression.is_err() {
         anyhow::bail!("compression can't fail if we don't apply it");
+    }
+    ensure_not_halted(&result.result)?;
+    Ok(())
+}
+
+/// Reject a transaction whose bootloader execution `Halt`ed. A sealed batch's
+/// transactions were accepted by the sequencer, so a `Halt` on re-execution means
+/// the witness diverges from canonical execution — committing it would attest to
+/// a batch that never validly executed.
+fn ensure_not_halted(result: &ExecutionResult) -> anyhow::Result<()> {
+    if let ExecutionResult::Halt { reason } = result {
+        anyhow::bail!("transaction halted during re-execution: {reason}");
     }
     Ok(())
 }
@@ -783,6 +808,22 @@ mod tests {
         let bytecode = vec![0u8; 32];
         let hash = BytecodeHash::for_bytecode(&bytecode);
         verify_bytecode_hash(hash.value_u256(), &bytecode).unwrap();
+    }
+
+    #[test]
+    fn ensure_not_halted_rejects_only_halt() {
+        use zksync_multivm::interface::{Halt, VmRevertReason};
+        // Success and Revert are valid committed outcomes.
+        ensure_not_halted(&ExecutionResult::Success { output: vec![] }).unwrap();
+        ensure_not_halted(&ExecutionResult::Revert {
+            output: VmRevertReason::VmError,
+        })
+        .unwrap();
+        // A root-level Halt must be rejected.
+        assert!(ensure_not_halted(&ExecutionResult::Halt {
+            reason: Halt::FromIsNotAnAccount,
+        })
+        .is_err());
     }
 
     #[test]
