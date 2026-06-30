@@ -22,7 +22,6 @@ use zksync_multivm::{
         ExecutionResult, FinishedL1Batch, L2BlockEnv, TxExecutionMode, VmInterfaceExt,
         VmInterfaceHistoryEnabled,
     },
-    is_supported_by_fast_vm,
     pubdata_builders::pubdata_params_to_builder,
     utils::get_used_bootloader_memory_bytes,
     FastVmInstance,
@@ -153,10 +152,19 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+    // Pin the protocol version to the single one this verifier is built for.
+    // `protocol_version` is operator-supplied and only *gates* commitment fields
+    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed
+    // into the commitment (see `L1BatchMetaParameters::to_bytes`). Without this
+    // pin a malicious witness could substitute a behavior-compatible version
+    // undetectably. The verifier ships one guest binary + VK set tied to
+    // `latest()`, so accepting anything else is never correct; this also implies
+    // FastVM support (`latest()` is always fast-VM-supported).
     anyhow::ensure!(
-        is_supported_by_fast_vm(input.system_env.version),
-        "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.system_env.version
+        input.system_env.version == ProtocolVersionId::latest(),
+        "unsupported protocol version {:?}; this verifier supports only {:?}",
+        input.system_env.version,
+        ProtocolVersionId::latest(),
     );
 
     let old_root_hash = input
@@ -1232,9 +1240,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_serialization_roundtrip() {
-        let v1 = V1AirbenderVerifierInput {
+    /// Minimal, structurally-valid `V1AirbenderVerifierInput` for unit tests.
+    /// Field values are placeholders — only the shape matters; `system_env.version`
+    /// defaults to `ProtocolVersionId::latest()`.
+    fn sample_v1_input() -> V1AirbenderVerifierInput {
+        V1AirbenderVerifierInput {
             vm_run_data: VMRunWitnessInputData {
                 l1_batch_number: Default::default(),
                 used_bytecodes: Default::default(),
@@ -1285,7 +1295,31 @@ mod tests {
             },
             pubdata_params: Default::default(),
             commitment_input: None,
+        }
+    }
+
+    #[test]
+    fn execute_rejects_non_target_protocol_version() {
+        let mut input = sample_v1_input();
+        // `Version27` is still FastVM-supported (the old check would have passed
+        // it), but it is not the version this verifier targets, so the pin must
+        // reject it. The version check is the first thing `execute` does, so the
+        // otherwise-minimal input never gets exercised.
+        input.system_env.version = ProtocolVersionId::Version27;
+        // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the version pin to reject Version27"),
+            Err(err) => err,
         };
+        assert!(
+            err.to_string().contains("unsupported protocol version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let v1 = sample_v1_input();
         let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
             AirbenderCodecV0::encode(&avi).expect("Failed to serialize AirbenderVerifierInput.");
