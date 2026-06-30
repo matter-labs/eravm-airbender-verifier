@@ -303,18 +303,8 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         protocol_version,
     )?;
 
-    // The bootloader must have finalized the batch successfully. `finish_batch`
-    // returns a `FinishedL1Batch` even when the batch-tip execution Halts, so
-    // without this check we could commit a public input for a batch that canonical
-    // execution would reject or never fully finalized.
-    anyhow::ensure!(
-        matches!(
-            vm_out.block_tip_execution_result.result,
-            ExecutionResult::Success { .. }
-        ),
-        "batch finalization did not succeed: {:?}",
-        vm_out.block_tip_execution_result.result,
-    );
+    // `execute_vm` already enforced that batch finalization succeeded (rejecting a
+    // `Halt`ed block tip), so `vm_out` here is a successfully-finalized batch.
 
     // Take fields out of vm_out before generate_tree_instructions consumes it.
     // The tree-instructions path only reads final_execution_state.deduplicated_storage_logs.
@@ -586,7 +576,22 @@ where
 
     tracing::trace!("about to vm.finish_batch()");
 
-    Ok(vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version)))
+    let finished = vm.finish_batch(pubdata_params_to_builder(pubdata_params, protocol_version));
+
+    // The bootloader must have finalized the batch successfully. `finish_batch`
+    // returns a `FinishedL1Batch` even when the batch-tip execution Halts, so
+    // without this check we could commit a public input for a batch that canonical
+    // execution would reject or never fully finalized.
+    anyhow::ensure!(
+        matches!(
+            finished.block_tip_execution_result.result,
+            ExecutionResult::Success { .. }
+        ),
+        "batch finalization did not succeed: {:?}",
+        finished.block_tip_execution_result.result,
+    );
+
+    Ok(finished)
 }
 
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`. `key` is the
@@ -812,7 +817,7 @@ mod tests {
 
     #[test]
     fn ensure_not_halted_rejects_only_halt() {
-        use zksync_multivm::interface::{Halt, VmRevertReason};
+        use zksync_multivm::interface::VmRevertReason;
         // Success and Revert are valid committed outcomes.
         ensure_not_halted(&ExecutionResult::Success { output: vec![] }).unwrap();
         ensure_not_halted(&ExecutionResult::Revert {
@@ -824,6 +829,145 @@ mod tests {
             reason: Halt::FromIsNotAnAccount,
         })
         .is_err());
+    }
+
+    use zksync_multivm::interface::Halt;
+
+    /// Minimal VM that drives `execute_tx`/`execute_vm` to the two halt-rejection
+    /// paths without needing a real (halting) batch. `Tx` halts the transaction;
+    /// `BlockTip` lets txs succeed but halts the batch tip at `finish_batch`.
+    #[derive(Clone, Copy)]
+    enum HaltAt {
+        Tx,
+        BlockTip,
+    }
+
+    struct HaltMockVm {
+        halt_at: HaltAt,
+    }
+
+    impl zksync_multivm::interface::VmInterface for HaltMockVm {
+        type TracerDispatcher = ();
+
+        fn push_transaction(
+            &mut self,
+            _tx: Transaction,
+        ) -> zksync_multivm::interface::PushTransactionResult<'_> {
+            unimplemented!("unused by execute_tx/execute_vm")
+        }
+
+        fn inspect(
+            &mut self,
+            _: &mut Self::TracerDispatcher,
+            _: zksync_multivm::interface::InspectExecutionMode,
+        ) -> zksync_multivm::interface::VmExecutionResultAndLogs {
+            unimplemented!("unused by execute_tx/execute_vm")
+        }
+
+        fn start_new_l2_block(&mut self, _: L2BlockEnv) {}
+
+        fn inspect_transaction_with_bytecode_compression(
+            &mut self,
+            _: &mut Self::TracerDispatcher,
+            _tx: Transaction,
+            _with_compression: bool,
+        ) -> (
+            zksync_multivm::interface::BytecodeCompressionResult<'_>,
+            zksync_multivm::interface::VmExecutionResultAndLogs,
+        ) {
+            // Compression succeeds; the execution result is independent (a tx can
+            // compress fine yet `Halt`).
+            let result = match self.halt_at {
+                HaltAt::Tx => ExecutionResult::Halt {
+                    reason: Halt::FromIsNotAnAccount,
+                },
+                HaltAt::BlockTip => ExecutionResult::Success { output: vec![] },
+            };
+            (
+                Ok(std::borrow::Cow::Borrowed(&[])),
+                zksync_multivm::interface::VmExecutionResultAndLogs::new(result),
+            )
+        }
+
+        fn finish_batch(
+            &mut self,
+            _: std::rc::Rc<dyn zksync_multivm::interface::pubdata::PubdataBuilder>,
+        ) -> FinishedL1Batch {
+            let block_tip = match self.halt_at {
+                HaltAt::BlockTip => ExecutionResult::Halt {
+                    reason: Halt::FromIsNotAnAccount,
+                },
+                HaltAt::Tx => ExecutionResult::Success { output: vec![] },
+            };
+            FinishedL1Batch {
+                block_tip_execution_result:
+                    zksync_multivm::interface::VmExecutionResultAndLogs::new(block_tip),
+                final_execution_state: zksync_multivm::interface::CurrentExecutionState {
+                    events: vec![],
+                    deduplicated_storage_logs: vec![],
+                    used_contract_hashes: vec![],
+                    system_logs: vec![],
+                    user_l2_to_l1_logs: vec![],
+                    storage_refunds: vec![],
+                    pubdata_costs: vec![],
+                },
+                final_bootloader_memory: None,
+                pubdata_input: None,
+                state_diffs: None,
+            }
+        }
+    }
+
+    impl zksync_multivm::interface::VmInterfaceHistoryEnabled for HaltMockVm {
+        fn make_snapshot(&mut self) {}
+        fn rollback_to_the_latest_snapshot(&mut self) {}
+        fn pop_snapshot_no_rollback(&mut self) {}
+        fn pop_front_snapshot_no_rollback(&mut self) {}
+    }
+
+    fn dummy_l1_tx() -> Transaction {
+        use zksync_types::{l1::L1TxCommonData, Execute, ExecuteTransactionCommon};
+        Transaction {
+            common_data: ExecuteTransactionCommon::L1(L1TxCommonData::default()),
+            execute: Execute::default(),
+            received_timestamp_ms: 0,
+            raw_bytes: None,
+        }
+    }
+
+    // e2e: a tx whose bootloader execution `Halt`s must be rejected by `execute_tx`,
+    // even though the (independent) bytecode-compression result is `Ok`.
+    #[test]
+    fn execute_tx_rejects_halted_transaction() {
+        let mut vm = HaltMockVm {
+            halt_at: HaltAt::Tx,
+        };
+        let err = execute_tx(&dummy_l1_tx(), &mut vm).unwrap_err();
+        assert!(
+            err.to_string().contains("halted during re-execution"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // e2e: txs succeed but the batch tip `Halt`s at `finish_batch`; `execute_vm`
+    // must reject the batch. An empty block list reaches `finish_batch` directly.
+    #[test]
+    fn execute_vm_rejects_halted_block_tip() {
+        let vm = HaltMockVm {
+            halt_at: HaltAt::BlockTip,
+        };
+        let err = execute_vm(
+            vec![],
+            vm,
+            PubdataParams::default(),
+            ProtocolVersionId::latest(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("batch finalization did not succeed"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
