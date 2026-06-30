@@ -833,17 +833,24 @@ mod tests {
 
     use zksync_multivm::interface::Halt;
 
-    /// Minimal VM that drives `execute_tx`/`execute_vm` to the two halt-rejection
-    /// paths without needing a real (halting) batch. `Tx` halts the transaction;
-    /// `BlockTip` lets txs succeed but halts the batch tip at `finish_batch`.
+    /// Minimal VM that drives `execute_tx`/`execute_vm` to the halt-rejection
+    /// paths without needing a real (halting) batch.
+    /// - `Tx`: the first (with-compression) attempt halts → `execute_tx` Path A.
+    /// - `RetryHalt`: the first attempt's *compression* fails (forcing a rollback +
+    ///   no-compression retry), and the retry halts → `execute_tx` Path B.
+    /// - `BlockTip`: txs succeed but the batch tip halts at `finish_batch`.
     #[derive(Clone, Copy)]
     enum HaltAt {
         Tx,
+        RetryHalt,
         BlockTip,
     }
 
     struct HaltMockVm {
         halt_at: HaltAt,
+        /// Number of `inspect_transaction_with_bytecode_compression` calls so far
+        /// (so `RetryHalt` can fail the first attempt and halt the second).
+        calls: u32,
     }
 
     impl zksync_multivm::interface::VmInterface for HaltMockVm {
@@ -875,16 +882,30 @@ mod tests {
             zksync_multivm::interface::BytecodeCompressionResult<'_>,
             zksync_multivm::interface::VmExecutionResultAndLogs,
         ) {
-            // Compression succeeds; the execution result is independent (a tx can
-            // compress fine yet `Halt`).
+            use zksync_multivm::interface::BytecodeCompressionError;
+            self.calls += 1;
+            // `RetryHalt` fails compression on the first attempt so `execute_tx`
+            // rolls back and retries without compression (Path B); that retry
+            // halts. Otherwise compression succeeds and the result is independent
+            // (a tx can compress fine yet `Halt`).
+            let compression = if matches!(self.halt_at, HaltAt::RetryHalt) && self.calls == 1 {
+                Err(BytecodeCompressionError::BytecodeCompressionFailed)
+            } else {
+                Ok(std::borrow::Cow::Borrowed(&[][..]))
+            };
             let result = match self.halt_at {
                 HaltAt::Tx => ExecutionResult::Halt {
+                    reason: Halt::FromIsNotAnAccount,
+                },
+                // First call is the failed-compression attempt (result ignored
+                // since compression is `Err`); the retry halts.
+                HaltAt::RetryHalt => ExecutionResult::Halt {
                     reason: Halt::FromIsNotAnAccount,
                 },
                 HaltAt::BlockTip => ExecutionResult::Success { output: vec![] },
             };
             (
-                Ok(std::borrow::Cow::Borrowed(&[])),
+                compression,
                 zksync_multivm::interface::VmExecutionResultAndLogs::new(result),
             )
         }
@@ -897,7 +918,9 @@ mod tests {
                 HaltAt::BlockTip => ExecutionResult::Halt {
                     reason: Halt::FromIsNotAnAccount,
                 },
-                HaltAt::Tx => ExecutionResult::Success { output: vec![] },
+                // These variants halt at the tx, not the tip; `finish_batch` isn't
+                // reached in their tests, but the match must stay exhaustive.
+                HaltAt::Tx | HaltAt::RetryHalt => ExecutionResult::Success { output: vec![] },
             };
             FinishedL1Batch {
                 block_tip_execution_result:
@@ -935,14 +958,33 @@ mod tests {
         }
     }
 
-    // e2e: a tx whose bootloader execution `Halt`s must be rejected by `execute_tx`,
-    // even though the (independent) bytecode-compression result is `Ok`.
+    // e2e: a tx whose bootloader execution `Halt`s must be rejected by `execute_tx`
+    // on the with-compression path (Path A), even though the (independent)
+    // bytecode-compression result is `Ok`.
     #[test]
     fn execute_tx_rejects_halted_transaction() {
         let mut vm = HaltMockVm {
             halt_at: HaltAt::Tx,
+            calls: 0,
         };
         let err = execute_tx(&dummy_l1_tx(), &mut vm).unwrap_err();
+        assert!(
+            err.to_string().contains("halted during re-execution"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // e2e: the first (with-compression) attempt fails compression, so `execute_tx`
+    // rolls back and retries without compression — and that retry `Halt`s. The
+    // second `ensure_not_halted` (Path B) must reject it.
+    #[test]
+    fn execute_tx_rejects_halt_on_uncompressed_retry() {
+        let mut vm = HaltMockVm {
+            halt_at: HaltAt::RetryHalt,
+            calls: 0,
+        };
+        let err = execute_tx(&dummy_l1_tx(), &mut vm).unwrap_err();
+        assert_eq!(vm.calls, 2, "should have retried without compression");
         assert!(
             err.to_string().contains("halted during re-execution"),
             "unexpected error: {err}"
@@ -955,6 +997,7 @@ mod tests {
     fn execute_vm_rejects_halted_block_tip() {
         let vm = HaltMockVm {
             halt_at: HaltAt::BlockTip,
+            calls: 0,
         };
         let err = execute_vm(
             vec![],
