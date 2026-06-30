@@ -90,6 +90,13 @@ impl BytecodeHash {
         bytecode_len_in_bytes: usize,
     ) -> Self {
         validate_bytecode(bytecode).expect("invalid bytecode");
+        // The encoded length must not exceed the buffer it describes (EVM
+        // bytecode is padded, so the raw length is `<=` the padded buffer).
+        assert!(
+            bytecode_len_in_bytes <= bytecode.len(),
+            "bytecode length {bytecode_len_in_bytes} exceeds buffer length {}",
+            bytecode.len()
+        );
 
         let mut hasher = Sha256::new();
         let len = match kind {

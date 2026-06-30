@@ -42,8 +42,16 @@ pub mod vm;
 pub mod web3;
 
 /// Computes `ceil(a / b)`.
+///
+/// Uses `a / b + (a % b != 0)` rather than `(a + b - 1) / b` so it cannot
+/// overflow for inputs near `U256::MAX`. Panics on `b == 0`, same as `/`.
 pub fn ceil_div_u256(a: U256, b: U256) -> U256 {
-    (a + b - U256::from(1)) / b
+    let extra = if (a % b).is_zero() {
+        U256::zero()
+    } else {
+        U256::one()
+    };
+    a / b + extra
 }
 
 /// Account place in the global state tree is uniquely identified by its address.
@@ -271,5 +279,25 @@ impl Default for L1BlockNumber {
 impl Default for PriorityOpId {
     fn default() -> Self {
         Self(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ceil_div_u256_basic() {
+        assert_eq!(ceil_div_u256(0.into(), 3.into()), 0.into());
+        assert_eq!(ceil_div_u256(1.into(), 3.into()), 1.into());
+        assert_eq!(ceil_div_u256(3.into(), 3.into()), 1.into());
+        assert_eq!(ceil_div_u256(4.into(), 3.into()), 2.into());
+    }
+
+    #[test]
+    fn ceil_div_u256_does_not_overflow_near_max() {
+        // `(a + b - 1) / b` would overflow here; the `a / b + rem` form must not.
+        assert_eq!(ceil_div_u256(U256::MAX, 1.into()), U256::MAX);
+        assert_eq!(ceil_div_u256(U256::MAX, 2.into()), U256::MAX / 2 + 1);
     }
 }
