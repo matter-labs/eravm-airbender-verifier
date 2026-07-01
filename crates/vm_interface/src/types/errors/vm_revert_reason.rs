@@ -34,7 +34,7 @@ pub enum VmRevertReason {
 /// the 32-bit proving guest (`riscv32im`) is `2^32 - 1` — so a word the 64-bit
 /// sequencer accepts in attacker-supplied revert data would otherwise abort the
 /// guest mid-execution instead of yielding a clean parse error.
-fn word_to_usize(word: &[u8]) -> Option<usize> {
+fn word_to_usize(word: &[u8; 32]) -> Option<usize> {
     let value = U256::from_big_endian(word);
     if value > U256::from(usize::MAX as u64) {
         None
@@ -52,8 +52,10 @@ impl VmRevertReason {
             return Err(VmRevertReasonParsingError::InputIsTooShort(bytes.to_vec()));
         }
         // A word exceeding `usize::MAX` can't be a valid in-bounds offset; map it
-        // to the offset error rather than panicking in `as_usize`.
-        let data_offset = word_to_usize(&bytes[0..32])
+        // to the offset error rather than panicking in `as_usize`. The `bytes.len() < 32`
+        // guard above makes the fixed-size conversion infallible.
+        let offset_word = <&[u8; 32]>::try_from(&bytes[..32]).expect("checked bytes.len() >= 32");
+        let data_offset = word_to_usize(offset_word)
             .ok_or_else(|| VmRevertReasonParsingError::IncorrectDataOffset(bytes.to_vec()))?;
 
         // Data offset couldn't be less than 32 because data offset size is 32 bytes
@@ -71,7 +73,9 @@ impl VmRevertReason {
             return Err(VmRevertReasonParsingError::InputIsTooShort(bytes.to_vec()));
         };
 
-        let string_length = word_to_usize(&data[0..32])
+        // The `data.len() < 32` guard above makes this conversion infallible.
+        let length_word = <&[u8; 32]>::try_from(&data[..32]).expect("checked data.len() >= 32");
+        let string_length = word_to_usize(length_word)
             .ok_or_else(|| VmRevertReasonParsingError::IncorrectStringLength(bytes.to_vec()))?;
 
         // `string_length + 32` can itself overflow `usize` on the 32-bit guest, so
