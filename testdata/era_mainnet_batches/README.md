@@ -33,13 +33,13 @@ git lfs install
 Fetch one batch:
 
 ```sh
-./scripts/fetch_lfs_batches.sh 506093.bin.gz
+./scripts/fetch_lfs_batches.sh 84730.bin.gz
 ```
 
 Fetch the curated CI subset:
 
 ```sh
-./scripts/fetch_lfs_batches.sh 506093.bin.gz,506155.bin.gz,506169.bin.gz
+./scripts/fetch_lfs_batches.sh 84730.bin.gz,84731.bin.gz,84732.bin.gz
 ```
 
 Fetch everything tracked in this directory:
@@ -63,20 +63,20 @@ The import script intentionally stages only the batch payloads. It does not auto
 ## Running Tools Against This Corpus
 
 Both the VM compare tool and the host runner accept this directory directly.
-They read plain `*.bin` files for backwards compatibility, but the CLI expects one or more concrete filenames via `--batch-files`, such as `506093.bin` or `506093.bin.gz`. The repo-first workflow is the compressed one.
+They read plain `*.bin` files for backwards compatibility, but the CLI expects one or more concrete filenames via `--batch-files`, such as `84730.bin` or `84730.bin.gz`. The repo-first workflow is the compressed one.
 The default `--batches-dir` assumes you run `cargo run -p ...` from the workspace root; otherwise, pass `--batches-dir` explicitly.
 
 Compare one batch:
 
 ```sh
-cargo run --release -p zksync_vm_compare --bin vm_compare -- --batch-files 506093.bin.gz
+cargo run --release -p zksync_vm_compare --bin vm_compare -- --batch-files 84730.bin.gz
 ```
 
 Run the guest-host simulation for one batch:
 
 ```sh
 cargo airbender build --project guest
-cargo run --release -p eravm-prover-host -- --action run --batch-files 506093.bin.gz
+cargo run --release -p eravm-prover-host -- --action run --batch-files 84730.bin.gz
 ```
 
 Replay every fetched batch in compare mode:

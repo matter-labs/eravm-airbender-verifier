@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_BATCHES: 506093.bin.gz,506155.bin.gz,506169.bin.gz
+  CI_BATCHES: 84730.bin.gz,84731.bin.gz,84732.bin.gz
 
 jobs:
   lints:
@@ -465,10 +465,10 @@ jobs:
           ${SUDO} apt-get update
           ${SUDO} apt-get install -y git-lfs
 
-      - name: Pull batch 506093
+      - name: Pull batch 84730
         run: |
           git lfs install --local
-          ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+          ./scripts/fetch_lfs_batches.sh 84730.bin.gz
 
       - name: Download host integration test binary
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -495,7 +495,7 @@ jobs:
           IT_BATCHES_DIR: ${{ github.workspace }}/testdata/era_mainnet_batches/binary
           IT_FRI_VK: ${{ github.workspace }}/vks/fri_vk.bin
           IT_SNARK_VK: ${{ github.workspace }}/vks/snark_vk.json
-          IT_BATCH_FILE: 506093.bin.gz
+          IT_BATCH_FILE: 84730.bin.gz
           # libcudart and bellman-cuda's .so live in the staged dir.
           LD_LIBRARY_PATH: ${{ github.workspace }}/stage/cuda-libs
           RUST_BACKTRACE: 1

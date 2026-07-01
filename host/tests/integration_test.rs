@@ -77,7 +77,7 @@ fn batch_input(filename: &str) -> BatchInputFile {
 
 /// Default batch the proving/run tests use; override with `IT_BATCH_FILE`.
 fn default_batch_file() -> String {
-    std::env::var("IT_BATCH_FILE").unwrap_or_else(|_| "506093.bin.gz".to_owned())
+    std::env::var("IT_BATCH_FILE").unwrap_or_else(|_| "84730.bin.gz".to_owned())
 }
 
 // ---------------------------------------------------------------------------

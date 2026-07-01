@@ -128,6 +128,45 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput
     Ok(input)
 }
 
+/// Encode an `AirbenderVerifierInput` into the hex-text form stored on disk.
+///
+/// This is the exact inverse of [`load_batch`]'s parsing: the payload is
+/// bincode-encoded, prefixed with its big-endian `u32` length, zero-padded out
+/// to a 4-byte boundary, and finally hex-encoded (producing a multiple-of-8
+/// hex-character string). Callers persist the returned text as `<number>.bin`
+/// (optionally gzipped to `<number>.bin.gz`).
+///
+/// The payload is decoded again before returning so a serde/bincode mismatch is
+/// caught here rather than surfacing later when CI tries to load the batch.
+pub fn encode_batch(input: &AirbenderVerifierInput) -> Result<String> {
+    let payload = bincode::serde::encode_to_vec(input, bincode::config::standard())
+        .context("while attempting to bincode-encode the verifier input")?;
+
+    let payload_len =
+        u32::try_from(payload.len()).context("verifier input payload exceeds u32 length")?;
+
+    let mut framed = Vec::with_capacity(4 + payload.len() + 3);
+    framed.extend_from_slice(&payload_len.to_be_bytes());
+    framed.extend_from_slice(&payload);
+    // Pad to a 4-byte word so the hex text is a multiple of 8 characters, which
+    // `parse_hex_bytes` requires. The trailing zeros are dropped on load via the
+    // length prefix, so they never reach bincode.
+    while !framed.len().is_multiple_of(4) {
+        framed.push(0);
+    }
+
+    // Round-trip guard: re-decode exactly what we just framed.
+    let (decoded, decoded_len): (AirbenderVerifierInput, usize) =
+        bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+            .context("while verifying the freshly encoded payload decodes")?;
+    anyhow::ensure!(
+        decoded_len == payload.len() && &decoded == input,
+        "encode_batch produced a payload that does not round-trip"
+    );
+
+    Ok(hex::encode(framed))
+}
+
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
     let entries = std::fs::read_dir(batches_dir)
         .with_context(|| format!("while attempting to read {}", batches_dir.display()))?;

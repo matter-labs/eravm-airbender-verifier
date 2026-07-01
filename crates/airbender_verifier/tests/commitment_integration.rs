@@ -66,11 +66,11 @@ fn run_commitment_test(batch_number: u64) {
 }
 
 #[test]
-fn test_batch_506093_commitment() {
-    run_commitment_test(506093);
+fn test_batch_84730_commitment() {
+    run_commitment_test(84730);
 }
 
 #[test]
-fn test_batch_506169_commitment() {
-    run_commitment_test(506169);
+fn test_batch_84731_commitment() {
+    run_commitment_test(84731);
 }
