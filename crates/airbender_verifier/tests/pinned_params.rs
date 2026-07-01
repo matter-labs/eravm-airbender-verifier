@@ -18,6 +18,14 @@ fn load_506093() -> Option<zksync_airbender_verifier::types::V1AirbenderVerifier
             .map(|m| m.len() < 1000)
             .unwrap_or(true)
     {
+        // This is a security regression, so under CI a missing fixture must fail
+        // the job, not silently skip — otherwise a missing-LFS misconfiguration
+        // would disable the check while still reporting green. Locally we skip for
+        // convenience (the default `cargo test` doesn't fetch LFS).
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "batch 506093 fixture missing under CI — run ./scripts/fetch_lfs_batches.sh before `cargo test`"
+        );
         eprintln!("Skipping: batch 506093 fixture missing (run ./scripts/fetch_lfs_batches.sh)");
         return None;
     }
