@@ -1034,7 +1034,7 @@ mod tests {
         let err = execute_vm(
             vec![],
             vm,
-            PubdataParams::default(),
+            PubdataParams::genesis(),
             ProtocolVersionId::latest(),
         )
         .unwrap_err();
