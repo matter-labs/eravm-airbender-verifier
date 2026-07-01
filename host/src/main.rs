@@ -63,9 +63,9 @@ enum Command {
     /// running `prove-snark`. Skips the download if the file already exists.
     DownloadTrustedSetup(DownloadTrustedSetupArgs),
     /// Generate the FRI and SNARK verification keys into a directory. The
-    /// server only loads VKs from disk, so this is how committed VK files in
-    /// `vks/` get refreshed when the guest binary or wrapper recursion
-    /// changes. CI re-runs this and `git diff --exit-code`s the output.
+    /// server only loads VKs from disk; the release-artifacts workflow runs this
+    /// to produce the `fri_vk.bin` / `snark_vk.json` assets attached to each
+    /// GitHub release. Run it locally to regenerate them for development.
     #[command(name = "gen-vks")]
     GenerateVks(GenerateVksArgs),
 }
