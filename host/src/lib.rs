@@ -88,7 +88,7 @@ pub fn run_batches(batch_inputs: &[BatchInputFile], jit: bool) -> Result<()> {
 
 /// Generates the FRI verification key for the current guest binary and
 /// writes it to `output_path`, overwriting any previous file. Used by the
-/// `gen-vks` host subcommand and the CI VK-check job.
+/// `gen-vks` host subcommand and the release-artifacts VK build.
 pub fn generate_fri_vk(output_path: &Path, security: SecurityLevel) -> Result<()> {
     if output_path.exists() {
         std::fs::remove_file(output_path).with_context(|| {

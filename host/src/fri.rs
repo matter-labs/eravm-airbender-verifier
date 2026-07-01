@@ -12,8 +12,9 @@ use zksync_airbender_verifier::Verify;
 /// Resolves the guest binary inside a dist dir. We build the verifier/prover/
 /// transpiler directly from `app.bin` rather than via `Program::load` (which
 /// also requires the unused `app.elf` / `manifest.toml`). The transpiler
-/// additionally reads the sibling `app.text`; both `app.bin` and `app.text` are
-/// committed under `guest/dist/app/`.
+/// additionally reads the sibling `app.text`. `app.bin` and `app.text` are not
+/// committed: they are built reproducibly and published as GitHub release assets
+/// (`cargo airbender build` writes them under `guest/dist/app/` locally).
 pub(crate) fn app_bin_path(dist_dir: &Path) -> PathBuf {
     dist_dir.join("app.bin")
 }
@@ -266,7 +267,8 @@ pub fn load_vk_from_disk(path: &Path, expected_security: SecurityLevel) -> Resul
     if !path.exists() {
         anyhow::bail!(
             "FRI verification key file does not exist: {}. \
-             Generate it with `cargo run -p eravm-prover-host -- gen-vks` and commit the result.",
+             Download it from a GitHub release (asset `fri_vk.bin`) or regenerate \
+             it with `cargo run -p eravm-prover-host -- gen-vks`.",
             path.display()
         );
     }
@@ -332,9 +334,10 @@ pub fn dist_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest/dist/app")
 }
 
-/// Repo-relative default location for the FRI verification key. The server
-/// resolves this against the project workspace at compile time; the Docker
-/// image overrides the path via `--fri-vk` / `FRI_VK`.
+/// Workspace-relative default location for the FRI verification key, baked in at
+/// compile time. The key is not committed — it's a release asset downloaded into
+/// place (or regenerated via `gen-vks`); deployments override the path via
+/// `--fri-vk` / `FRI_VK`.
 pub fn default_fri_vk_path() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vks/fri_vk.bin")
 }
