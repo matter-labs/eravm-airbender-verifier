@@ -134,6 +134,18 @@ impl VmExecutionState {
     }
 }
 
+/// Canonical account-validation gas limit for the Airbender proving path. The
+/// producer hardcodes `u32::MAX` (unlimited) for every batch — see
+/// zksync-era `airbender_request_processor.rs` (`validation_computational_gas_limit
+/// = u32::MAX`). The field is operator-supplied and bound by no commitment, yet
+/// it gates account-abstraction validation accept/reject: a smaller value would
+/// OOG-fail validations that pass under the canonical (unlimited) limit, yielding
+/// a different valid batch. Pin it.
+///
+/// (Note: this is *not* the state-keeper `StateKeeperConfig` default of 300_000;
+/// the witness generator deliberately disables the limit for proving.)
+const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
+
 /// Run the VM, verify the new state root via merkle proofs, and return the
 /// intermediate state needed to compute the batch commitment.
 ///
@@ -179,6 +191,17 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         input.system_env.execution_mode == TxExecutionMode::VerifyExecute,
         "system_env.execution_mode must be VerifyExecute for proving, got {:?}",
         input.system_env.execution_mode,
+    );
+    // `default_validation_computational_gas_limit` is operator-supplied and bound
+    // by no commitment, but it gates account-abstraction validation accept/reject.
+    // Pin it to the canonical Era value so a non-canonical limit can't yield a
+    // different valid batch.
+    anyhow::ensure!(
+        input.system_env.default_validation_computational_gas_limit
+            == VALIDATION_COMPUTATIONAL_GAS_LIMIT,
+        "system_env.default_validation_computational_gas_limit {} does not match the canonical Era value {}",
+        input.system_env.default_validation_computational_gas_limit,
+        VALIDATION_COMPUTATIONAL_GAS_LIMIT,
     );
     // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
     // populated by the witness generator for the legacy proving path and are not
