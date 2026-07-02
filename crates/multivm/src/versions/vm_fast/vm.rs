@@ -1,5 +1,7 @@
 use std::{collections::HashMap, fmt, mem, rc::Rc};
 
+use circuit_sequencer_api::sort_storage_access::sort_storage_access_queries;
+
 use zk_evm_1_5_2::{
     aux_structures::{LogQuery, Timestamp},
     zkevm_opcode_defs::system_params::{INITIAL_FRAME_FORMAL_EH_LOCATION, STORAGE_AUX_BYTE},
@@ -104,6 +106,12 @@ pub struct Vm<S, Tr = (), Val = FastValidationTracer> {
     snapshot: Option<VmSnapshot>,
     vm_version: FastVmVersion,
     skip_signature_verification: bool,
+    /// Mirrors the inner `WorldDiff`'s recording mode (vm2 has no getter).
+    /// `true` (the default) means the per-access storage log trace is kept and
+    /// `get_current_execution_state` derives the deduplicated set from it;
+    /// `reserve_capacities` flips it to `false` (skip mode), switching the
+    /// derivation to vm2's rollback-aware maps. See `get_current_execution_state`.
+    record_storage_logs: bool,
     #[cfg(test)]
     enforced_state_diffs: Option<Vec<StateDiffRecord>>,
 }
@@ -177,6 +185,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
             snapshot: None,
             vm_version,
             skip_signature_verification: false,
+            record_storage_logs: true,
             #[cfg(test)]
             enforced_state_diffs: None,
         };
@@ -199,6 +208,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
         // path exists to save (~270 MiB on large batches). vm2 defaults to
         // recording on for Boojum-style consumers.
         wd.set_record_storage_logs(false);
+        self.record_storage_logs = false;
         self.inner
             .reserve_dynamic_heap_capacity(hints.dynamic_heap_groups);
     }
@@ -412,11 +422,21 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
 
         CurrentExecutionState {
             events,
-            deduplicated_storage_logs: {
-                // Derive deduplicated storage logs directly from vm2's
-                // rollback-aware maps instead of accumulating a per-access Vec
-                // and sorting it. Slots that appear in the dedup output are
-                // exactly:
+            deduplicated_storage_logs: if self.record_storage_logs {
+                // Recording mode (the vm2 default): the per-access trace is
+                // available, so deduplicate it the canonical way — identical to
+                // the legacy VM and to `sort_storage_access_queries`. The
+                // map-derived shortcut below is *only* valid in skip mode, where
+                // the `SLOT_COMMITTED_READ_Z0` bookkeeping is populated; without
+                // it the derivation would silently drop every protective read.
+                let (_, deduped) =
+                    sort_storage_access_queries(world_diff.storage_log_queries().iter().copied());
+                deduped.into_iter().map(GlueInto::glue_into).collect()
+            } else {
+                // Skip mode (memory-optimized verifier path): the trace was not
+                // recorded. Derive deduplicated storage logs directly from vm2's
+                // rollback-aware maps instead. Slots that appear in the dedup
+                // output are exactly:
                 //   storage_changes ∪ committed_reads_at_depth_zero
                 // mirroring the dedup's emit-or-skip rule (emit a slot iff
                 // `did_read_at_depth_zero` OR `changes_stack` non-empty).
@@ -425,7 +445,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                 // witness uses, so the downstream zip in
                 // `generate_tree_instructions` lines up.
                 //
-                // Savings vs the previous path:
+                // Savings vs the recording path:
                 //   - ~220 MiB: no per-access storage_logs Vec
                 //   - ~50 MiB: no rollback_storage_logs Vec
                 //   - ~330M cycles: no global sort, no full-trace walk
