@@ -480,7 +480,12 @@ pub fn verify_commitment(
             zkporter_is_available: state.zk_porter_available,
             bootloader_code_hash: state.bootloader_code_hash,
             default_aa_code_hash: state.default_aa_code_hash,
-            evm_emulator_code_hash: state.evm_emulator_code_hash,
+            // For an emulator-disabled chain, commit an explicit `bytes32(0)` to
+            // match L1. A bare `None` is not equivalent: `L1BatchMetaParameters::
+            // to_bytes` substitutes `default_aa_code_hash` for `None`, which would
+            // diverge from L1 and reject the honest proof. A chain with an emulator
+            // passes its hash through unchanged.
+            evm_emulator_code_hash: Some(state.evm_emulator_code_hash.unwrap_or_default()),
             protocol_version: Some(state.protocol_version),
         },
         auxiliary_output: L1BatchAuxiliaryOutput::PostBoojum {
@@ -829,6 +834,33 @@ mod tests {
         let mut paths = WitnessInputMerklePaths::new(1);
         paths.push_merkle_path(meta(key(0x3002), false, true, 0, H256::zero()));
         assert!(get_bowp(paths).is_err());
+    }
+
+    #[test]
+    fn absent_evm_emulator_commits_zero_not_default_aa() {
+        // For an emulator-disabled chain, `verify_commitment` sets the metadata's
+        // EVM-emulator hash to an explicit zero (`Some(state.evm_emulator_code_hash
+        // .unwrap_or_default())` when the state's value is `None` —
+        // `H256::default() == H256::zero()`). `L1BatchMetaParameters::to_bytes` must
+        // then serialize zero — matching L1 — and NOT fall back to
+        // `default_aa_code_hash` (its behavior for a bare `None`).
+        let default_aa = H256::repeat_byte(0xAB);
+        let meta = L1BatchMetaParameters {
+            zkporter_is_available: false,
+            bootloader_code_hash: H256::repeat_byte(0x11),
+            default_aa_code_hash: default_aa,
+            // What `verify_commitment` emits when `state.evm_emulator_code_hash` is `None`.
+            evm_emulator_code_hash: Some(H256::zero()),
+            protocol_version: Some(ProtocolVersionId::Version27), // post-1.5.0
+        };
+        let bytes = meta.to_bytes();
+        let slot = &bytes[bytes.len() - 32..];
+        assert_eq!(slot, [0u8; 32], "absent emulator must serialize as zero");
+        assert_ne!(
+            slot,
+            default_aa.as_bytes(),
+            "must not fall back to default_aa"
+        );
     }
 
     #[test]
