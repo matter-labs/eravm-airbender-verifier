@@ -1,7 +1,10 @@
-//! Storage-view soundness regressions: slot values come only from `merkle_paths`,
-//! and slots it omits (writes the batch fully rolled back) are served empty rather
-//! than from the operator. Forging an operator-supplied value must never change the
-//! committed output.
+//! Storage-view soundness regressions: slot pre-state comes only from `merkle_paths`
+//! (proven against `old_root_hash`), never from operator-supplied values. A slot the
+//! VM reads but `merkle_paths` omits is served empty, and a `merkle_paths` entry must
+//! bind to the slot the VM actually touched. Each test tampers the ordinary `84730`
+//! corpus and asserts the verifier ignores the forged operator value or fails closed
+//! — no synthetic fixture required (see `omitted_merkle_path_read_cannot_inject_prestate`
+//! for why an honest gap is unreachable on v31).
 
 use std::{collections::HashSet, path::Path};
 
@@ -47,82 +50,80 @@ fn merkle_path_keys(
         .collect()
 }
 
-/// Batch number of the synthetic gap fixture (see `tools/gap-fixture` and
-/// `testdata/.../README.md`): a v31 batch containing a `GapMaker.makeGaps` tx that
-/// writes previously-empty storage slots and, in the same committed transaction,
-/// writes them back to their original value. The net change is zero so
-/// `merkle_paths` omits each slot, yet the VM accessed them — the "gap" this test
-/// needs. (Set to the batch the fixture landed in; update when regenerated.)
-const GAP_BATCH: u64 = 85348;
-
-/// The gap fixture has (at least) one slot `merkle_paths` omits: a write the batch
-/// rolled back. It is served empty, so the batch verifies, and forging the
-/// operator's value for it yields the same commitment — confirming that pre-state
-/// cannot influence the committed output.
+/// Storage-soundness regression: the operator cannot inject a slot's pre-state by
+/// **omitting its `merkle_paths` proof**. Slot values come only from `merkle_paths`
+/// (proven against `old_root_hash`); a slot the VM reads but that `merkle_paths`
+/// omits is served empty (`None`) by the fallback in `execute`, never the
+/// operator's `read_storage_key` value. So forging that value cannot smuggle a
+/// pre-state into the committed output — the batch fails closed instead.
 ///
-/// Ignored until the fixture lands: the low-activity mainnet corpus has no
-/// rolled-back write, and the original mainnet batch (506155) can't be re-fetched
-/// in the v31 format. Produce `{GAP_BATCH}.bin.gz` with the zksync-era harness
-/// documented in the corpus README (deploy `GapMaker`, call the revert-write
-/// method, seal + export the `AirbenderVerifierInput`), commit it, then delete the
-/// `#[ignore]`.
+/// This began as an *honest* rolled-back-write fixture (mainnet batch 506155,
+/// pre-v31): a write the batch fully rolled back left a slot the VM cold-read but
+/// that `merkle_paths` legitimately omitted, served empty and harmless. That shape
+/// is **unreachable on v31** — the fast-VM witness pipeline proves every accessed
+/// slot (a committed net-zero write becomes a protective read; a reverted write
+/// vanishes entirely), so `read_storage_key` always equals `merkle_paths` (verified
+/// empirically on batches 85348/85366/86161 produced by a purpose-built `GapMaker`
+/// contract; see `tools/gap-fixture`). We therefore test the underlying security
+/// property adversarially — synthesize the gap by deleting a proven read's
+/// `merkle_paths` entry and forging its operator value — which needs no fixture.
 #[test]
-#[ignore = "needs the synthetic gap fixture (GAP_BATCH); produce it per the corpus README, then un-ignore"]
-fn rolled_back_write_gap_is_harmless() {
-    let Some(path) = batch_path(GAP_BATCH) else {
+fn omitted_merkle_path_read_cannot_inject_prestate() {
+    let Some(path) = batch_path(84730) else {
         return;
     };
     let v1 = load_batch(&BatchInputFile {
-        number: GAP_BATCH,
+        number: 84730,
         path,
     })
     .expect("load");
+    v1.clone().verify().expect("84730 verifies untouched");
 
-    let honest = v1
-        .clone()
-        .verify()
-        .expect("gap fixture should verify (gap slot served empty)")
-        .commitment;
+    // Take a proven read (is_write == false) and drop its `merkle_paths` entry, so
+    // its slot is still read by the VM but no longer proven — an operator-forged
+    // "gap". Then forge that slot's operator-supplied `read_storage_key` value.
+    let read_entry = v1
+        .merkle_paths
+        .merkle_paths
+        .iter()
+        .find(|m| !m.is_write)
+        .expect("84730 has a proven read")
+        .clone();
 
-    let mp = merkle_path_keys(&v1);
-    let gap: Vec<_> = v1
+    let mut tampered = v1;
+    tampered
+        .merkle_paths
+        .merkle_paths
+        .retain(|m| m.leaf_hashed_key != read_entry.leaf_hashed_key);
+
+    let mut key_le = [0u8; 32];
+    read_entry.leaf_hashed_key.to_little_endian(&mut key_le);
+    let hashed = H256(key_le);
+    let mut forged_any = false;
+    for (k, v) in tampered
         .vm_run_data
         .witness_block_state
         .read_storage_key
-        .keys()
-        .filter(|k| !mp.contains(&k.hashed_key()))
-        .cloned()
-        .collect();
-    eprintln!(
-        "gap fixture {GAP_BATCH} gap reads (read, not in merkle_paths): {}",
-        gap.len()
-    );
-    assert!(
-        !gap.is_empty(),
-        "expected gap fixture {GAP_BATCH} to have at least one gap slot (cold read of a rolled-back write)"
-    );
-
-    // Forge every gap read's value; the committed output must be unchanged.
-    let mut forged = v1;
-    for key in &gap {
-        if let Some(v) = forged
-            .vm_run_data
-            .witness_block_state
-            .read_storage_key
-            .get_mut(key)
-        {
+        .iter_mut()
+    {
+        if k.hashed_key() == hashed {
             *v = H256(std::array::from_fn(|i| v.0[i] ^ 0xff));
+            forged_any = true;
         }
     }
-    let forged_commitment = forged
-        .verify()
-        .expect("forged-gap run should still verify")
-        .commitment;
-
-    assert_eq!(
-        honest, forged_commitment,
-        "gap-read value must not influence the committed output"
+    assert!(
+        forged_any,
+        "the dropped read's slot should have an operator value to forge"
     );
+
+    // The forged operator value must never be used: the slot is served empty, so the
+    // re-run diverges from the proven execution and the batch is rejected.
+    match tampered.verify() {
+        Ok(_) => panic!(
+            "omitting a read's merkle_paths proof must fail closed, not trust the operator value"
+        ),
+        Err(err) => eprintln!("omitted-proof gap rejected (fail-closed): {err}"),
+    }
 }
 
 /// Forging the operator's `read_storage_key` value for a slot that IS in
