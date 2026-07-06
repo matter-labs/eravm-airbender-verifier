@@ -63,28 +63,13 @@ The import script intentionally stages only the batch payloads. It does not auto
 ## Storage-Soundness Regressions (no synthetic fixture needed)
 
 `crates/airbender_verifier/tests/fail_closed.rs` guards the verifier's storage-view
-soundness against the ordinary `84730` corpus — all three regressions run without a
-special fixture.
+soundness against the ordinary `84730` corpus. All three regressions tamper `84730`
+directly and need no special fixture; none is ignored.
 
-One of them, `omitted_merkle_path_read_cannot_inject_prestate`, guards the "gap"
-fallback: slot pre-state comes only from `merkle_paths` (proven against
-`old_root_hash`); a slot the VM reads but that `merkle_paths` omits is served empty
-(`None`), never the operator's `read_storage_key` value. So an operator cannot inject
-pre-state by dropping a proof — the batch fails closed instead.
-
-An *honest* gap (a legitimately-omitted read) existed pre-v31 as a fully rolled-back
-write (mainnet batch 506155). **That shape is unreachable on v31**: the fast-VM
-witness pipeline proves every accessed slot — a committed net-zero write becomes a
-protective read, a reverted write vanishes entirely — so `read_storage_key` always
-equals `merkle_paths`. This was confirmed empirically by minting v31 batches whose
-transactions attempt the shape (write-then-revert and committed net-zero writes);
-none produced a gap. The test therefore synthesizes the adversarial gap by deleting
-a proven read's `merkle_paths` entry and asserting the verifier rejects it — no
-fixture required.
-
-> The companion tests `committed_read_bound_to_merkle_paths` and
-> `merkle_path_key_bound_to_vm_key` likewise need no synthetic fixture; they tamper
-> `84730` directly. None of the three is ignored.
+`omitted_merkle_path_read_cannot_inject_prestate` originally relied on an honest gap
+batch (a fully rolled-back write, mainnet batch 506155, pre-v31). We could not
+regenerate that batch on v31 — the batches we produced don't reproduce the gap — so
+the test synthesizes the gap adversarially instead.
 
 ## Running Tools Against This Corpus
 
