@@ -143,10 +143,24 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+    // Pin the protocol version to the single one this verifier is built for.
+    // `protocol_version` is operator-supplied and only *gates* commitment fields
+    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
+    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
+    // malicious witness could substitute a behavior-compatible version undetectably.
+    // The verifier ships one guest binary + VK set tied to `latest()`.
+    anyhow::ensure!(
+        input.system_env.version == ProtocolVersionId::latest(),
+        "unsupported protocol version {:?}; this verifier supports only {:?}",
+        input.system_env.version,
+        ProtocolVersionId::latest(),
+    );
+    // Redundant with the version pin (`latest()` is always FastVM-supported), kept as
+    // an explicit guard so the FastVM requirement is asserted at the boundary.
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
-        "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.system_env.version
+        "protocol version {:?} is not supported by the FastVM verifier",
+        input.system_env.version,
     );
 
     let old_root_hash = input
@@ -158,6 +172,14 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
 
+    // `enforced_base_fee` is an `eth_call`/`estimateGas` simulation override; the
+    // batch-execution path always leaves it `None`. Pin it here so the verifier is
+    // fail-closed locally rather than relying on the bootloader's base-fee assert.
+    anyhow::ensure!(
+        input.l1_batch_env.enforced_base_fee.is_none(),
+        "enforced_base_fee must be None for a proved batch; got {:?}",
+        input.l1_batch_env.enforced_base_fee,
+    );
     // `vm_run_data` carries operator-supplied copies of values the verifier also
     // derives from the canonical batch/system env. Bind the redundant copies that
     // have an authoritative counterpart so a malicious witness cannot disagree with
@@ -1336,6 +1358,38 @@ mod tests {
         assert_eq!(input, decoded);
     }
 
+    #[test]
+    fn execute_rejects_non_target_protocol_version() {
+        let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+        // A non-target version must be rejected by the version pin, which is the
+        // first thing `execute` does — so the otherwise-minimal input is never run.
+        input.system_env.version = ProtocolVersionId::Version27;
+        // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the version pin to reject Version27"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("unsupported protocol version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn execute_rejects_enforced_base_fee() {
+        let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+        // A proved batch must leave `enforced_base_fee` None; `Some(_)` is rejected.
+        input.l1_batch_env.enforced_base_fee = Some(42);
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the enforced_base_fee pin to reject Some(_)"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("enforced_base_fee must be None"),
+            "unexpected error: {err}"
+        );
+    }
+
     /// Pins the host↔guest channel wire: inputs cross into the guest encoded
     /// with `AirbenderCodecV0`.
     #[test]
@@ -1348,25 +1402,10 @@ mod tests {
         assert_eq!(input, deserialized);
     }
 
-    /// Pre-medium-interop bootloader encoding requires an address-shaped
-    /// validator; `execute` must reject the mismatch instead of panicking in
-    /// bootloader memory construction.
-    #[test]
-    fn test_execute_rejects_commitment_scheme_pre_medium_interop() {
-        let payload = sample_payload(
-            ProtocolVersionId::Version29,
-            L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
-        );
-        let err = match execute(payload) {
-            Ok(_) => panic!("execute accepted a pre-medium-interop CommitmentScheme validator"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("incompatible with L2 pubdata validator"),
-            "unexpected: {err}"
-        );
-    }
+    // A pre-medium-interop version paired with a `CommitmentScheme` validator is now
+    // caught earlier by the protocol-version pin (`execute_rejects_non_target_protocol_version`),
+    // so the pre-medium branch of the pubdata-validator guard is unreachable via
+    // `execute`. Only the post-medium direction below remains reachable.
 
     /// The opposite mismatch panics too (`l2_da_commitment_scheme().expect`
     /// in the post-interop bootloader branch) and is reachable through the
@@ -1389,11 +1428,10 @@ mod tests {
         );
     }
 
-    /// Minimal input on a FastVM-supported version, valid enough to reach the
-    /// early `system_env` checks in `execute()` (it errors out there, before any
-    /// VM run, so the otherwise-empty witness is fine). The validator/protocol
-    /// combination is kept consistent so the earlier pubdata-validator guard
-    /// passes and execution reaches the `execution_mode` check.
+    /// Minimal input on the target version, valid enough to reach the early
+    /// `system_env` checks in `execute()` (it errors out there, before any VM run,
+    /// so the otherwise-empty witness is fine). The validator/protocol combination
+    /// is kept consistent so the pubdata-validator guard passes.
     fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> AirbenderVerifierInput {
         let mut input = sample_payload(
             ProtocolVersionId::latest(),
