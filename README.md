@@ -44,19 +44,19 @@ git lfs install
 Fetch one compressed mainnet batch from Git LFS:
 
 ```sh
-./scripts/fetch_lfs_batches.sh 506093.bin.gz
+./scripts/fetch_lfs_batches.sh 84730.bin.gz
 ```
 
 Compare legacy and fast VM execution on that batch:
 
 ```sh
-cargo run --release -p zksync_vm_compare --bin vm_compare -- --batch-files 506093.bin.gz
+cargo run --release -p zksync_vm_compare --bin vm_compare -- --batch-files 84730.bin.gz
 ```
 
 Run host execution:
 
 ```sh
-cargo run --release -p eravm-prover-host -- --action run --batch-files 506093.bin.gz
+cargo run --release -p eravm-prover-host -- --action run --batch-files 84730.bin.gz
 ```
 
 Run host proving:
@@ -97,7 +97,7 @@ git lfs install
 Fetch the same curated batches that CI uses:
 
 ```sh
-./scripts/fetch_lfs_batches.sh 506093.bin.gz,506155.bin.gz,506169.bin.gz
+./scripts/fetch_lfs_batches.sh 84730.bin.gz,84731.bin.gz,84732.bin.gz
 ```
 
 Fetch every tracked batch:
@@ -167,20 +167,20 @@ cargo run --release -p eravm-prover-host --features gpu_snark -- download-truste
 ulimit -s unlimited
 
 # Generate FRI proof
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-fri --batch-files 506093.bin.gz --output-dir ./artifacts/proofs
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-fri --batch-files 84730.bin.gz --output-dir ./artifacts/proofs
 
 # Generate SNARK proof
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-84730/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key
 ```
 
 If you need to save intermediate SNARK artifacts:
 
 ```bash
 # On CPU
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup.key --save-intermediates
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host -- prove-snark --proof-files ./artifacts/proofs/batch-84730/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup.key --save-intermediates
 
 # On GPU
-RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-506093/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key --save-intermediates
+RUST_BACKTRACE=1 RUST_LOG=info cargo run --release -p eravm-prover-host --features gpu_snark -- prove-snark --proof-files ./artifacts/proofs/batch-84730/fri_proof.json  --output-dir ./artifacts/proofs --trusted-setup setup_gpu.key --save-intermediates
 ```
 
 Note: `--features gpu_snark` is not technically required, it enables GPU SNARK proving, without it FRI proving will still be done on GPU, but SNARK wrapping will be done on CPU. If you use CPU, don't forget to use the correct CRS key.
