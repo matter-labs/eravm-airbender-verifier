@@ -81,6 +81,19 @@ pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
 }
 
+/// Emit an Airbender cycle-marker boundary when the `cycle-markers` feature is
+/// enabled; a no-op otherwise. The offline cycle-cost calibration harness turns
+/// the feature on for its bench guest build only — markers must never ship in a
+/// proved guest. The fixed sequence of calls (start, then the three phase
+/// boundaries, then end = 5 markers over one `verify()`) is the contract the
+/// host uses to attribute per-phase cycles; keep it in lockstep with the
+/// harness's `phase_labels()`.
+#[inline(always)]
+fn phase_marker() {
+    #[cfg(feature = "cycle-markers")]
+    airbender::guest::cycle_marker();
+}
+
 impl Verify for AirbenderVerifierInput {
     /// Unwrap the V1 payload and verify it. The reserved `V0` marker has no
     /// payload, so it produces an error.
@@ -252,6 +265,7 @@ impl V1AirbenderVerifierInput {
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+    phase_marker(); // marker 0: begin `setup`
     input.validate_basic()?;
 
     let old_root_hash = input
@@ -359,6 +373,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
+    phase_marker(); // marker 1: end `setup`, begin `vm_execution`
     let vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
 
     let mut vm_out = execute_vm(
@@ -387,6 +402,7 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
         "VM output is missing final_bootloader_memory — required for the bootloader heap commitment",
     )?;
 
+    phase_marker(); // marker 2: end `vm_execution`, begin `merkle_verification`
     let (block_output_with_proofs, leaf_keys) = get_bowp(input.merkle_paths)?;
 
     let instructions: Vec<TreeInstruction> = generate_tree_instructions(
@@ -441,6 +457,7 @@ pub fn verify_commitment(
     state: VmExecutionState,
     commitment_input: CommitmentInput,
 ) -> anyhow::Result<VerificationResult> {
+    phase_marker(); // marker 3: end `merkle_verification`, begin `commitment`
     anyhow::ensure!(
         state.zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
         "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
@@ -560,6 +577,7 @@ pub fn verify_commitment(
         hashes.commitment,
     );
 
+    phase_marker(); // marker 4: end `commitment`
     Ok(VerificationResult {
         value_hash: state.new_root_hash,
         batch_number: state.batch_number,
