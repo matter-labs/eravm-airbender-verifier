@@ -114,12 +114,9 @@ impl L2DACommitmentScheme {
     }
 }
 
-// `BlobsZksyncOS = 4` is a zksync-os-only variant: reachable as a Rust value
-// and via the derived `serde::Deserialize` (which reads the tag directly),
-// even though `TryFrom<u8>` and `FromStr` reject it. Because the verifier passes
-// the scheme straight into bootloader memory without pattern-matching on it, a
-// hostile variant-4 payload is kept out at the `PubdataParams::new` invariant
-// (which every deserialize routes through), alongside `None`.
+// `BlobsZksyncOS = 4` is zksync-os-only, so `TryFrom<u8>` and `FromStr` reject
+// it. The derived `serde::Deserialize` still reads the tag directly, so wire
+// payloads are gated at the `PubdataParams::new` invariant instead.
 impl TryFrom<u8> for L2DACommitmentScheme {
     type Error = &'static str;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -189,10 +186,10 @@ impl L2PubdataValidator {
 }
 
 // `Serialize` is derived; `Deserialize` is hand-rolled below to route through
-// `PubdataParams::new` so the wire layer also enforces the invariant that
-// `CommitmentScheme(None)` is rejected. Field names and order must stay in
-// lockstep with the `Repr` helper below — a reorder here will break wire
-// compatibility without breaking the bincode round-trip test.
+// `PubdataParams::new`, so the wire layer also enforces its invalid-scheme
+// invariant. Field names and order must stay in lockstep with the `Repr` helper
+// below — a reorder here will break wire compatibility without breaking the
+// bincode round-trip test.
 #[derive(Copy, Debug, Clone, PartialEq, Serialize)]
 pub struct PubdataParams {
     pubdata_validator: L2PubdataValidator,
@@ -243,13 +240,10 @@ impl PubdataParams {
         pubdata_validator: L2PubdataValidator,
         pubdata_type: PubdataType,
     ) -> anyhow::Result<Self> {
-        // Reject commitment schemes that are not valid for an Era batch. The derived
-        // `Deserialize` on `L2DACommitmentScheme` can produce `None` (0) and the
-        // zksync-os-only `BlobsZksyncOS` (4) from a hostile wire tag even though
-        // `TryFrom<u8>`/`FromStr` refuse them. Routing every `PubdataParams`
-        // through this invariant keeps those out of the bootloader memory the
-        // scheme is written into, instead of relying on a downstream commitment
-        // mismatch to catch them.
+        // Reject commitment schemes invalid for an Era batch. The scheme is written
+        // straight into bootloader memory, and the derived `Deserialize` can read
+        // the `None` (0) and zksync-os-only `BlobsZksyncOS` (4) tags that
+        // `TryFrom`/`FromStr` refuse — so every `PubdataParams` is gated here.
         if let L2PubdataValidator::CommitmentScheme(scheme) = pubdata_validator {
             match scheme {
                 L2DACommitmentScheme::None | L2DACommitmentScheme::BlobsZksyncOS => {
