@@ -1,4 +1,7 @@
 /// Error codes returned by the bootloader.
+///
+/// Variants are declared in the same order as the numeric codes mapped by the
+/// `From<u8>` impl below; keep the two in sync if either changes.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BootloaderErrorCode {
@@ -8,11 +11,11 @@ pub enum BootloaderErrorCode {
     FromIsNotAnAccount,
     FailedToCheckAccount,
     UnacceptableGasPrice,
+    FailedToSetPrevBlockHash,
     PayForTxFailed,
     PrePaymasterPreparationFailed,
     PaymasterValidationFailed,
     FailedToSendFeesToTheOperator,
-    FailedToSetPrevBlockHash,
     UnacceptablePubdataPrice,
     TxValidationError,
     MaxPriorityFeeGreaterThanMaxFee,
