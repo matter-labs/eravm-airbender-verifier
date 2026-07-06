@@ -82,7 +82,7 @@ build_one() {
         # already computed from .cargo/config.toml.
         CARGO_TARGET_DIR="${target_dir}" \
         RUSTC_WRAPPER="${WRAPPER}" \
-        cargo build --release 2> "${log}" > /dev/null
+        cargo build --release > "${log}"
     )
 
     echo "==> [${name}] extracting airbender_* items"
