@@ -13,3 +13,8 @@ testdata/era_mainnet_batches/binary/*.bin
 .DS_Store
 # Cycle-cost calibration outputs
 artifacts/
+
+# Python caches (cycle_model scripts)
+__pycache__/
+.pytest_cache/
+*.pyc
