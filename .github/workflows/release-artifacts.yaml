@@ -51,6 +51,15 @@ jobs:
         working-directory: ./guest
         run: cargo airbender build
 
+      # Same instruction-set gate as ci-check's guest-build: the released
+      # artifact must contain only provable RV32IM code (see the script header).
+      - name: Check guest instruction set
+        working-directory: ./guest
+        run: |
+          bash ../scripts/check_guest_riscv_code.sh dist/app/app.elf \
+            --baseline ../scripts/guest_softfloat_baseline.txt \
+            --min-insns 500000
+
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
