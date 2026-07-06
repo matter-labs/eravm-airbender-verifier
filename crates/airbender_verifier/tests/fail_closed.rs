@@ -1,10 +1,6 @@
-//! Storage-view soundness regressions: slot pre-state comes only from `merkle_paths`
-//! (proven against `old_root_hash`), never from operator-supplied values. A slot the
-//! VM reads but `merkle_paths` omits is served empty, and a `merkle_paths` entry must
-//! bind to the slot the VM actually touched. Each test tampers the ordinary `84730`
-//! corpus and asserts the verifier ignores the forged operator value or fails closed
-//! — no synthetic fixture required (see `omitted_merkle_path_read_cannot_inject_prestate`
-//! for why an honest gap is unreachable on v31).
+//! Storage-view soundness regressions. Each tampers the `84730` corpus and asserts
+//! the verifier ignores the forged operator value or fails closed. No synthetic
+//! fixture required.
 
 use std::{collections::HashSet, path::Path};
 
@@ -50,23 +46,14 @@ fn merkle_path_keys(
         .collect()
 }
 
-/// Storage-soundness regression: the operator cannot inject a slot's pre-state by
-/// **omitting its `merkle_paths` proof**. Slot values come only from `merkle_paths`
-/// (proven against `old_root_hash`); a slot the VM reads but that `merkle_paths`
-/// omits is served empty (`None`) by the fallback in `execute`, never the
-/// operator's `read_storage_key` value. So forging that value cannot smuggle a
-/// pre-state into the committed output — the batch fails closed instead.
+/// The operator cannot inject a slot's pre-state by omitting its `merkle_paths`
+/// proof: an omitted read is served empty, not the operator's value, so the batch
+/// fails closed.
 ///
-/// This began as an *honest* rolled-back-write fixture (mainnet batch 506155,
-/// pre-v31): a write the batch fully rolled back left a slot the VM cold-read but
-/// that `merkle_paths` legitimately omitted, served empty and harmless. That shape
-/// is **unreachable on v31** — the fast-VM witness pipeline proves every accessed
-/// slot (a committed net-zero write becomes a protective read; a reverted write
-/// vanishes entirely), so `read_storage_key` always equals `merkle_paths` (verified
-/// empirically by minting v31 batches whose transactions attempt the shape; none
-/// produced a gap). We therefore test the underlying security property
-/// adversarially — synthesize the gap by deleting a proven read's `merkle_paths`
-/// entry and forging its operator value — which needs no fixture.
+/// This originally used an honest rolled-back-write gap (mainnet batch 506155,
+/// pre-v31). We could not regenerate that batch on v31 — the batches we produced
+/// don't reproduce the gap — so we synthesize it adversarially instead, by dropping
+/// a proven read's `merkle_paths` entry and forging its operator value.
 #[test]
 fn omitted_merkle_path_read_cannot_inject_prestate() {
     let Some(path) = batch_path(84730) else {
@@ -116,8 +103,7 @@ fn omitted_merkle_path_read_cannot_inject_prestate() {
         "the dropped read's slot should have an operator value to forge"
     );
 
-    // The forged operator value must never be used: the slot is served empty, so the
-    // re-run diverges from the proven execution and the batch is rejected.
+    // The forged value must never be used; the batch must be rejected.
     match tampered.verify() {
         Ok(_) => panic!(
             "omitting a read's merkle_paths proof must fail closed, not trust the operator value"
@@ -172,22 +158,10 @@ fn committed_read_bound_to_merkle_paths() {
     );
 }
 
-/// A `merkle_paths` entry's `leaf_hashed_key` must match the slot the VM actually
-/// touched. Re-keying an entry (keeping its valid path/value/index for the real
-/// slot, but pointing `leaf_hashed_key` elsewhere) would let the proof bind one
-/// slot's pre-state while the VM was fed a different value for it — so it must be
-/// rejected.
-///
-/// Re-keying a given write entry can be rejected two ways, and which one depends on
-/// the slot: re-keying a system slot (e.g. one the bootloader reads during block
-/// setup) makes the re-run diverge or panic *before* the binding check, while
-/// re-keying a slot whose served pre-state doesn't steer execution re-runs cleanly
-/// and is caught by the `leaf_hashed_key`/VM-key binding check itself. Both are
-/// fail-closed. Rather than depend on which entry the corpus happens to surface
-/// first, re-key every write entry independently and assert two invariants: no
-/// re-key is ever silently accepted, and at least one is rejected *specifically* by
-/// the binding check — proving that check is load-bearing, not shadowed by the
-/// earlier execution-divergence rejections.
+/// A `merkle_paths` entry's `leaf_hashed_key` must match the slot the VM touched;
+/// re-keying it elsewhere must be rejected. Re-key every write entry and assert two
+/// invariants: none is ever silently accepted, and at least one is rejected by the
+/// `leaf_hashed_key` binding check specifically (not only by execution divergence).
 #[test]
 fn merkle_path_key_bound_to_vm_key() {
     let Some(path) = batch_path(84730) else {
@@ -217,12 +191,9 @@ fn merkle_path_key_bound_to_vm_key() {
 
     for idx in write_idxs {
         let v = v1.clone();
-        // Some slots make the re-keyed re-run *panic* (a re-keyed bootloader slot
-        // fails block setup) rather than return an error; catch it — a panic is
-        // still a fail-closed rejection, just not the binding-check one we count.
-        // Expect a "thread panicked" line on stderr for such an entry; the test
-        // still passes. `AssertUnwindSafe` because the captured input isn't
-        // `UnwindSafe`; we never observe post-panic state, only re-run per entry.
+        // Some entries make the re-run panic rather than return an error; a panic is
+        // still fail-closed, just not the binding-check rejection we count. Catch it
+        // so the loop continues (expect a "thread panicked" line on stderr).
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             let mut tampered = v;
             tampered.merkle_paths.merkle_paths[idx].leaf_hashed_key = U256::MAX;
