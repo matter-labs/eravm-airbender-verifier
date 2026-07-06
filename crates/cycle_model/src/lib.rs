@@ -4,5 +4,7 @@
 //! features with ground-truth Airbender RISC-V guest cycles, so the sequencer
 //! can later predict a batch's proving cost without any RISC-V execution.
 pub mod features;
+pub mod tracer;
 
 pub use features::{FeatureId, FeatureVector};
+pub use tracer::CycleFeatureTracer;
