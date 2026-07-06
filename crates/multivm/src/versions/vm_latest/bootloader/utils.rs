@@ -227,8 +227,7 @@ fn bootloader_memory_input(
             ethabi::Token::Address(
                 pubdata_builder
                     .l2_da_validator()
-                    .expect("For pre-interop, L2 DA validator must be set"),
-            ),
+                    .expect("For pre-medium-interop, L2 DA validator must be set"),
             ethabi::Token::Bytes(operator_input),
         ])
     } else {
