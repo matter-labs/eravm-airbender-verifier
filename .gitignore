@@ -11,3 +11,5 @@ vks/*.bin
 vks/*.json
 testdata/era_mainnet_batches/binary/*.bin
 .DS_Store
+# Cycle-cost calibration outputs
+artifacts/

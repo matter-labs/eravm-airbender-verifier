@@ -19,5 +19,13 @@ serde_json.workspace = true
 zksync_vm2.workspace = true
 zksync_airbender_verifier.workspace = true
 zksync_vm_compare.workspace = true
+zksync_cli_utils.workspace = true
 airbender-host.workspace = true
 anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "cycle_bench"
+path = "src/bin/cycle_bench.rs"
