@@ -63,10 +63,10 @@ fn merkle_path_keys(
 /// is **unreachable on v31** — the fast-VM witness pipeline proves every accessed
 /// slot (a committed net-zero write becomes a protective read; a reverted write
 /// vanishes entirely), so `read_storage_key` always equals `merkle_paths` (verified
-/// empirically on batches 85348/85366/86161 produced by a purpose-built `GapMaker`
-/// contract; see `tools/gap-fixture`). We therefore test the underlying security
-/// property adversarially — synthesize the gap by deleting a proven read's
-/// `merkle_paths` entry and forging its operator value — which needs no fixture.
+/// empirically by minting v31 batches whose transactions attempt the shape; none
+/// produced a gap). We therefore test the underlying security property
+/// adversarially — synthesize the gap by deleting a proven read's `merkle_paths`
+/// entry and forging its operator value — which needs no fixture.
 #[test]
 fn omitted_merkle_path_read_cannot_inject_prestate() {
     let Some(path) = batch_path(84730) else {
