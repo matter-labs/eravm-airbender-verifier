@@ -1,6 +1,17 @@
 [advisories]
 unmaintained = "none" # This usually create a lot of non-actionable noise.
-ignore = []
+ignore = [
+    # DoS advisories in quick-xml < 0.41 (RUSTSEC-2026-0194: quadratic time on
+    # duplicate start-tag attribute names; RUSTSEC-2026-0195: unbounded
+    # namespace-declaration allocation in `NsReader`). Pulled only transitively
+    # via `riscv_transpiler` -> `inferno` (flamegraph/profiling tooling in the
+    # Airbender build toolchain) — not on the verifier's runtime or any
+    # attacker-facing path, and never fed untrusted XML. No fix is reachable yet:
+    # the latest `inferno` (0.12.6) still pins `quick-xml` below 0.40, so the
+    # patched `>= 0.41` cannot be selected. Revisit once `inferno` upgrades.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 [bans]
 multiple-versions = "warn"
