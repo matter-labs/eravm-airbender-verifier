@@ -19,9 +19,11 @@ pub struct L1BatchEnv {
 
     /// The fee input into the batch. It contains information such as L1 gas price, L2 fair gas price, etc.
     pub fee_input: BatchFeeInput,
-    /// Introduced in v31. `#[serde(default)]` tolerates a JSON payload that
-    /// omits the field, filling `0`.
-    #[serde(default)]
+    /// Introduced in v31. Written into a commitment-relevant bootloader memory
+    /// slot, so a payload that omits it must fail closed rather than silently
+    /// default to `0` (which would build different bootloader memory than a batch
+    /// whose real `interop_fee` was nonzero). Required on the wire, like
+    /// `settlement_layer` — no serde default.
     pub interop_fee: U256,
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,

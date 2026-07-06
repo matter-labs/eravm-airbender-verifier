@@ -115,11 +115,11 @@ impl L2DACommitmentScheme {
 }
 
 // `BlobsZksyncOS = 4` is a zksync-os-only variant: reachable as a Rust value
-// but intentionally rejected by `TryFrom<u8>` and `FromStr`. Note this only
-// gates external constructors — a hostile `serde::Deserialize` payload can
-// still produce variant 4 since the derived impl reads the tag directly. The
-// verifier never pattern-matches on the scheme, only passes it through to
-// the bootloader, so the residual surface is benign here.
+// and via the derived `serde::Deserialize` (which reads the tag directly),
+// even though `TryFrom<u8>` and `FromStr` reject it. Because the verifier passes
+// the scheme straight into bootloader memory without pattern-matching on it, a
+// hostile variant-4 payload is kept out at the `PubdataParams::new` invariant
+// (which every deserialize routes through), alongside `None`.
 impl TryFrom<u8> for L2DACommitmentScheme {
     type Error = &'static str;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -243,9 +243,25 @@ impl PubdataParams {
         pubdata_validator: L2PubdataValidator,
         pubdata_type: PubdataType,
     ) -> anyhow::Result<Self> {
-        if L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::None) == pubdata_validator {
-            anyhow::bail!("L2DACommitmentScheme::None is not allowed as a legit pubdata parameter");
-        };
+        // Reject commitment schemes that are not valid for an Era batch. The derived
+        // `Deserialize` on `L2DACommitmentScheme` can produce `None` (0) and the
+        // zksync-os-only `BlobsZksyncOS` (4) from a hostile wire tag even though
+        // `TryFrom<u8>`/`FromStr` refuse them. Routing every `PubdataParams`
+        // through this invariant keeps those out of the bootloader memory the
+        // scheme is written into, instead of relying on a downstream commitment
+        // mismatch to catch them.
+        if let L2PubdataValidator::CommitmentScheme(scheme) = pubdata_validator {
+            match scheme {
+                L2DACommitmentScheme::None | L2DACommitmentScheme::BlobsZksyncOS => {
+                    anyhow::bail!(
+                        "L2DACommitmentScheme::{scheme} is not a valid pubdata parameter for an Era batch"
+                    );
+                }
+                L2DACommitmentScheme::EmptyNoDA
+                | L2DACommitmentScheme::PubdataKeccak256
+                | L2DACommitmentScheme::BlobsAndPubdataKeccak256 => {}
+            }
+        }
 
         Ok(PubdataParams {
             pubdata_validator,
@@ -295,6 +311,22 @@ mod tests {
         assert!(
             err.to_string().contains("None"),
             "expected None-rejection error, got: {err}"
+        );
+    }
+
+    /// The derived `Deserialize` on `L2DACommitmentScheme` can read the `BlobsZksyncOS`
+    /// (4) tag even though it's zksync-os-only and rejected by `TryFrom`/`FromStr`;
+    /// `PubdataParams::new` must reject it so it never reaches bootloader memory.
+    #[test]
+    fn pubdata_params_deserialize_rejects_zksync_os_scheme() {
+        let invalid = serde_json::json!({
+            "pubdata_validator": { "CommitmentScheme": "BlobsZksyncOS" },
+            "pubdata_type": "Rollup",
+        });
+        let err = serde_json::from_value::<PubdataParams>(invalid).unwrap_err();
+        assert!(
+            err.to_string().contains("BlobsZksyncOS"),
+            "expected BlobsZksyncOS-rejection error, got: {err}"
         );
     }
 
