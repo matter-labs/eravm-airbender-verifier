@@ -236,7 +236,7 @@ fn bootloader_memory_input(
             ethabi::Token::Uint(
                 (pubdata_builder
                     .l2_da_commitment_scheme()
-                    .expect("For post-interop, L2 DA commitment scheme must be set")
+                    .expect("For post-medium-interop, L2 DA commitment scheme must be set")
                     as u64)
                     .into(),
             ),
