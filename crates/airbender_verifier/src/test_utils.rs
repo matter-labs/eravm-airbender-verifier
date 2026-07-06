@@ -26,7 +26,7 @@ use zksync_types::{
 };
 
 use crate::commitment::{compute_commitment, compute_pass_through_data_hash};
-use crate::types::{CommitmentInput, V1AirbenderVerifierInput, TOTAL_BLOBS_IN_COMMITMENT};
+use crate::types::{AirbenderVerifierInput, CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 use crate::VerificationResult;
 
 /// Replace `input.commitment_input` with a **synthetic, self-consistent** value
@@ -44,8 +44,8 @@ use crate::VerificationResult;
 /// See the module-level docs for why this is **not** L1-settlement-equivalent.
 /// Only use this for testing the verifier pipeline.
 pub fn augment_with_synthetic_commitment(
-    mut input: V1AirbenderVerifierInput,
-) -> anyhow::Result<V1AirbenderVerifierInput> {
+    mut input: AirbenderVerifierInput,
+) -> anyhow::Result<AirbenderVerifierInput> {
     // We need the VM's pubdata to derive synthetic blob hashes. The rest of
     // the execution state is discarded; the caller's `verify()` re-runs
     // `execute` end-to-end on the augmented input.
@@ -126,7 +126,7 @@ pub fn compute_blob_opening_data(pubdata: &[u8]) -> (Vec<H256>, Vec<BlobHash>) {
 /// rather than encoding bugs.
 pub fn crosscheck_commitment(
     result: &VerificationResult,
-    input: &V1AirbenderVerifierInput,
+    input: &AirbenderVerifierInput,
 ) -> anyhow::Result<()> {
     let protocol_version = input.system_env.version;
     let base = &input.system_env.base_system_smart_contracts;

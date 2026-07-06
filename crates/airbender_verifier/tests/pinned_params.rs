@@ -3,16 +3,17 @@
 //! value can't yield a different valid batch.
 //!
 //! Requires the test batch fetched via Git LFS:
-//!   ./scripts/fetch_lfs_batches.sh 506093.bin.gz
+//!   ./scripts/fetch_lfs_batches.sh 84730.bin.gz
 
 use std::path::Path;
 
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 
-fn load_506093() -> Option<zksync_airbender_verifier::types::V1AirbenderVerifierInput> {
+fn load_batch_84730() -> Option<AirbenderVerifierInput> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../testdata/era_mainnet_batches/binary/506093.bin.gz");
+        .join("../../testdata/era_mainnet_batches/binary/84730.bin.gz");
     if !path.exists()
         || std::fs::metadata(&path)
             .map(|m| m.len() < 1000)
@@ -24,19 +25,17 @@ fn load_506093() -> Option<zksync_airbender_verifier::types::V1AirbenderVerifier
         // convenience (the default `cargo test` doesn't fetch LFS).
         assert!(
             std::env::var_os("CI").is_none(),
-            "batch 506093 fixture missing under CI — run ./scripts/fetch_lfs_batches.sh before `cargo test`"
+            "batch 84730 fixture missing under CI — run ./scripts/fetch_lfs_batches.sh before `cargo test`"
         );
-        eprintln!("Skipping: batch 506093 fixture missing (run ./scripts/fetch_lfs_batches.sh)");
+        eprintln!("Skipping: batch 84730 fixture missing (run ./scripts/fetch_lfs_batches.sh)");
         return None;
     }
     Some(
         load_batch(&BatchInputFile {
-            number: 506093,
+            number: 84730,
             path,
         })
-        .expect("load")
-        .into_v1()
-        .expect("v1"),
+        .expect("load"),
     )
 }
 
@@ -45,7 +44,7 @@ fn load_506093() -> Option<zksync_airbender_verifier::types::V1AirbenderVerifier
 /// is rejected.
 #[test]
 fn validation_gas_limit_pinned_to_canonical() {
-    let Some(v1) = load_506093() else {
+    let Some(v1) = load_batch_84730() else {
         return;
     };
 
@@ -57,7 +56,7 @@ fn validation_gas_limit_pinned_to_canonical() {
         u32::MAX,
         "real mainnet batch should carry the canonical (unlimited) validation gas limit"
     );
-    v1.clone().verify().expect("506093 verifies untouched");
+    v1.clone().verify().expect("84730 verifies untouched");
 
     // A non-canonical (smaller) value is rejected.
     let mut tampered = v1;

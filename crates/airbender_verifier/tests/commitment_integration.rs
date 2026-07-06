@@ -36,20 +36,18 @@ fn run_commitment_test(batch_number: u64) {
     // The corpus ships with a baked-in synthetic `commitment_input` (fake
     // blob/prev-batch data — see `test_utils` module docs), so we can verify
     // directly. Not L1-settlement-equivalent.
-    let v1 = load_batch(&BatchInputFile {
+    let avi = load_batch(&BatchInputFile {
         number: batch_number,
         path: batch_path.clone(),
     })
-    .expect("failed to load batch")
-    .into_v1()
-    .expect("expected V1 payload");
+    .expect("failed to load batch");
 
     println!(
         "Running verification for batch {}...",
-        v1.l1_batch_env.number
+        avi.l1_batch_env.number
     );
-    let result = v1.clone().verify().expect("verification failed");
-    crosscheck_commitment(&result, &v1).expect("crosscheck failed");
+    let result = avi.clone().verify().expect("verification failed");
+    crosscheck_commitment(&result, &avi).expect("crosscheck failed");
 
     assert_ne!(
         result.commitment,
@@ -68,11 +66,11 @@ fn run_commitment_test(batch_number: u64) {
 }
 
 #[test]
-fn test_batch_506093_commitment() {
-    run_commitment_test(506093);
+fn test_batch_84730_commitment() {
+    run_commitment_test(84730);
 }
 
 #[test]
-fn test_batch_506169_commitment() {
-    run_commitment_test(506169);
+fn test_batch_84731_commitment() {
+    run_commitment_test(84731);
 }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use zksync_types::{fee_model::BatchFeeInput, Address, L1BatchNumber, H256};
+use zksync_types::{
+    fee_model::BatchFeeInput, settlement::SettlementLayer, Address, L1BatchNumber, H256, U256,
+};
 
 use super::L2BlockEnv;
 
@@ -17,7 +19,16 @@ pub struct L1BatchEnv {
 
     /// The fee input into the batch. It contains information such as L1 gas price, L2 fair gas price, etc.
     pub fee_input: BatchFeeInput,
+    /// Introduced in v31. Written into a commitment-relevant bootloader memory
+    /// slot, so a payload that omits it must fail closed rather than silently
+    /// default to `0` (which would build different bootloader memory than a batch
+    /// whose real `interop_fee` was nonzero). Required on the wire, like
+    /// `settlement_layer` — no serde default.
+    pub interop_fee: U256,
     pub fee_account: Address,
     pub enforced_base_fee: Option<u64>,
     pub first_l2_block: L2BlockEnv,
+    /// Introduced in v31. Required on the wire — no serde default, so a missing
+    /// `settlement_layer` is a hard decode error.
+    pub settlement_layer: SettlementLayer,
 }
