@@ -17,3 +17,6 @@ categories.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 zksync_vm2.workspace = true
+zksync_airbender_verifier.workspace = true
+zksync_vm_compare.workspace = true
+anyhow.workspace = true
