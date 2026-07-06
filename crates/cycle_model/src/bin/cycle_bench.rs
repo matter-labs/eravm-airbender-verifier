@@ -44,9 +44,10 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
-    let batches_dir = args.batches_dir.canonicalize().with_context(|| {
-        format!("resolving batches dir {}", args.batches_dir.display())
-    })?;
+    let batches_dir = args
+        .batches_dir
+        .canonicalize()
+        .with_context(|| format!("resolving batches dir {}", args.batches_dir.display()))?;
     let inputs = resolve_batch_inputs(&batches_dir, args.batch_files.as_deref(), args.all_batches)
         .context("resolving batch inputs")?;
 
@@ -67,11 +68,7 @@ fn main() -> anyhow::Result<()> {
         let guest = run_guest(&args.app_bin_dir, &envelope)
             .with_context(|| format!("running guest for batch {}", bf.number))?;
 
-        tracing::info!(
-            batch = bf.number,
-            raw_cycles = guest.raw_cycles,
-            "measured"
-        );
+        tracing::info!(batch = bf.number, raw_cycles = guest.raw_cycles, "measured");
         rows.push(DatasetRow {
             batch_number: bf.number,
             features,

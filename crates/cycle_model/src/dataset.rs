@@ -113,7 +113,11 @@ mod tests {
         let dir = std::env::temp_dir().join("cycle_model_test_write");
         write_dataset(&rows, &dir).unwrap();
         let csv = std::fs::read_to_string(dir.join("dataset.csv")).unwrap();
-        assert!(csv.lines().next().unwrap().starts_with("batch_number,raw_cycles,f_"));
+        assert!(csv
+            .lines()
+            .next()
+            .unwrap()
+            .starts_with("batch_number,raw_cycles,f_"));
         assert!(csv.contains("42,100,"));
         assert!(dir.join("dataset.json").exists());
         std::fs::remove_dir_all(&dir).ok();

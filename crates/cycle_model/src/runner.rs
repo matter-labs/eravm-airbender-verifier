@@ -62,7 +62,11 @@ pub fn run_guest(
         phase_cycles: phases_from_markers(&markers, &phase_labels()),
         // `delegation_counter` is a HashMap; collect into a BTreeMap for a
         // stable, deterministic column order in the dataset.
-        delegations: markers.delegation_counter.iter().map(|(&k, &v)| (k, v)).collect(),
+        delegations: markers
+            .delegation_counter
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect(),
     })
 }
 
