@@ -53,10 +53,13 @@ jobs:
 
       # Same instruction-set gate as ci-check's guest-build: the released
       # artifact must contain only provable RV32IM code (see the script header).
+      # Scans the build ELF (the source of dist's app.bin/app.text objcopies) —
+      # dist/app/app.elf has .text stripped (-R .text) and holds no code.
       - name: Check guest instruction set
         working-directory: ./guest
         run: |
-          bash ../scripts/check_guest_riscv_code.sh dist/app/app.elf \
+          bash ../scripts/check_guest_riscv_code.sh \
+            ../target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
             --baseline ../scripts/guest_softfloat_baseline.txt \
             --min-insns 500000
 
