@@ -10,6 +10,15 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["circuit_tracer"]
+# The sequencer-only `CircuitsTracer` (it drives batch sealing by circuit
+# capacity). Enabled by default. The re-execution verifier drops
+# `circuit_statistic`, so proving (guest) builds turn this off
+# (`default-features = false`) to skip per-opcode circuit accounting and the f32
+# ratio math in-circuit.
+circuit_tracer = []
+
 [dependencies]
 zk_evm_1_5_2.workspace = true
 # zk_evm_1_5_0.workspace = true

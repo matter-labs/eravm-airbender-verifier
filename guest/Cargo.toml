@@ -9,4 +9,8 @@ license.workspace = true
 
 [dependencies]
 airbender = { workspace = true, features = ["std"] }
-zksync_airbender_verifier.workspace = true
+# Explicit path dep (not `workspace = true`) so `default-features = false` is
+# honored — Cargo ignores that override on workspace-inherited deps. This drops
+# the sequencer-only circuit tracer: the proving guest never reads
+# `circuit_statistic`, so it saves in-circuit cycles.
+zksync_airbender_verifier = { path = "../crates/airbender_verifier", default-features = false }

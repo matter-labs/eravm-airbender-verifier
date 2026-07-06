@@ -10,10 +10,21 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["circuit_tracer"]
+# Forwards to `zksync_multivm/circuit_tracer`. Enabled by default; the guest
+# (proving) build sets `default-features = false` to compile out the
+# sequencer-only circuit tracer the verifier never reads.
+circuit_tracer = ["zksync_multivm/circuit_tracer"]
+
 [dependencies]
 zksync_crypto_primitives.workspace = true
 zksync_merkle_tree = { workspace = true, default-features = false }
-zksync_multivm.workspace = true
+# Explicit path dep (not `workspace = true`) so `default-features = false` is
+# honored — Cargo ignores that override on workspace-inherited deps. Disabling
+# it lets this crate's own `circuit_tracer` feature control multivm's, so the
+# guest build (which turns this crate's feature off) compiles out the tracer.
+zksync_multivm = { path = "../multivm", default-features = false }
 zksync_system_constants.workspace = true
 zksync_types.workspace = true
 zksync_vm_interface.workspace = true
