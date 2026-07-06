@@ -1,5 +1,28 @@
 # Changelog
 
+## [29.9.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v29.8.0...v29.9.0) (2026-07-06)
+
+
+### Features
+
+* **v31:** wire-format compatibility with zksync-era v31 ([#76](https://github.com/matter-labs/eravm-airbender-verifier/issues/76)) ([be8e91e](https://github.com/matter-labs/eravm-airbender-verifier/commit/be8e91ecf307b7868869de0d433a95455c86935e))
+
+
+### Bug Fixes
+
+* **types:** reject &gt;u16::MAX initial writes in compress_state_diffs ([#69](https://github.com/matter-labs/eravm-airbender-verifier/issues/69)) ([15b87f6](https://github.com/matter-labs/eravm-airbender-verifier/commit/15b87f623f4eb2db338373c7c6d96b90f904919a))
+* **verifier:** bind committed storage reads to merkle_paths ([#57](https://github.com/matter-labs/eravm-airbender-verifier/issues/57)) ([91e3618](https://github.com/matter-labs/eravm-airbender-verifier/commit/91e3618ae5abf3a9c8414d299099026e364a0971))
+* **verifier:** commit zero EVM-emulator hash for emulator-disabled chains ([#65](https://github.com/matter-labs/eravm-airbender-verifier/issues/65)) ([4c1e53e](https://github.com/matter-labs/eravm-airbender-verifier/commit/4c1e53e3d206618c3714d1efbf16ba3bd8661e79))
+* **verifier:** pin default_validation_computational_gas_limit ([#63](https://github.com/matter-labs/eravm-airbender-verifier/issues/63)) ([d6ff5a7](https://github.com/matter-labs/eravm-airbender-verifier/commit/d6ff5a7730907b87eb42591f7285d04f47a43d6b))
+* **verifier:** pin system_env.execution_mode to VerifyExecute ([#62](https://github.com/matter-labs/eravm-airbender-verifier/issues/62)) ([5e1d6e8](https://github.com/matter-labs/eravm-airbender-verifier/commit/5e1d6e88b20d2fa8e44f7337d646ba81a74ef57a))
+* **verifier:** reject batches/txs whose execution Halted ([#68](https://github.com/matter-labs/eravm-airbender-verifier/issues/68)) ([8fffbd9](https://github.com/matter-labs/eravm-airbender-verifier/commit/8fffbd97464898c7b630754af6cecd76b9830e95))
+* **vm_interface:** reject oversized revert-reason words instead of panicking ([#64](https://github.com/matter-labs/eravm-airbender-verifier/issues/64)) ([e3ca953](https://github.com/matter-labs/eravm-airbender-verifier/commit/e3ca9537ee118d3d8a4ae96a1eba17f57bd2ecbb))
+
+
+### Performance Improvements
+
+* **guest:** compile out the circuit tracer in proving mode ([#72](https://github.com/matter-labs/eravm-airbender-verifier/issues/72)) ([42b8bb0](https://github.com/matter-labs/eravm-airbender-verifier/commit/42b8bb0d9a02d7d3b2870a110ad35d7729fc119a))
+
 ## [29.8.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v29.7.1...v29.8.0) (2026-06-19)
 
 
