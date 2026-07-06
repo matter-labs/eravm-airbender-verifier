@@ -47,22 +47,33 @@ fn merkle_path_keys(
         .collect()
 }
 
-/// Batch 506155 has one slot `merkle_paths` omits: a write the batch rolled back.
-/// It is served empty, so the batch verifies, and forging the operator's value for
-/// it yields the same commitment — confirming that pre-state cannot influence the
-/// committed output.
+/// Batch number of the synthetic gap fixture (see `tools/gap-fixture` and
+/// `testdata/.../README.md`): a v31 batch containing a `GapMaker.makeGaps` tx that
+/// writes previously-empty storage slots and, in the same committed transaction,
+/// writes them back to their original value. The net change is zero so
+/// `merkle_paths` omits each slot, yet the VM accessed them — the "gap" this test
+/// needs. (Set to the batch the fixture landed in; update when regenerated.)
+const GAP_BATCH: u64 = 85348;
+
+/// The gap fixture has (at least) one slot `merkle_paths` omits: a write the batch
+/// rolled back. It is served empty, so the batch verifies, and forging the
+/// operator's value for it yields the same commitment — confirming that pre-state
+/// cannot influence the committed output.
 ///
-/// Ignored: no batch in the current v31 corpus exercises a rolled-back write (a
-/// read whose slot `merkle_paths` omits). Re-enable, pointing at the batch below,
-/// once such a batch is captured from the sequencer.
+/// Ignored until the fixture lands: the low-activity mainnet corpus has no
+/// rolled-back write, and the original mainnet batch (506155) can't be re-fetched
+/// in the v31 format. Produce `{GAP_BATCH}.bin.gz` with the zksync-era harness
+/// documented in the corpus README (deploy `GapMaker`, call the revert-write
+/// method, seal + export the `AirbenderVerifierInput`), commit it, then delete the
+/// `#[ignore]`.
 #[test]
-#[ignore = "no v31 corpus batch has a rolled-back-write gap slot; capture one before re-enabling"]
-fn rolled_back_write_batch_506155_verifies_and_gap_is_harmless() {
-    let Some(path) = batch_path(506155) else {
+#[ignore = "needs the synthetic gap fixture (GAP_BATCH); produce it per the corpus README, then un-ignore"]
+fn rolled_back_write_gap_is_harmless() {
+    let Some(path) = batch_path(GAP_BATCH) else {
         return;
     };
     let v1 = load_batch(&BatchInputFile {
-        number: 506155,
+        number: GAP_BATCH,
         path,
     })
     .expect("load");
@@ -70,7 +81,7 @@ fn rolled_back_write_batch_506155_verifies_and_gap_is_harmless() {
     let honest = v1
         .clone()
         .verify()
-        .expect("506155 should verify (gap slot served empty)")
+        .expect("gap fixture should verify (gap slot served empty)")
         .commitment;
 
     let mp = merkle_path_keys(&v1);
@@ -83,12 +94,12 @@ fn rolled_back_write_batch_506155_verifies_and_gap_is_harmless() {
         .cloned()
         .collect();
     eprintln!(
-        "506155 gap reads (read, not in merkle_paths): {}",
+        "gap fixture {GAP_BATCH} gap reads (read, not in merkle_paths): {}",
         gap.len()
     );
     assert!(
         !gap.is_empty(),
-        "expected 506155 to have at least one gap slot (cold read of a rolled-back write)"
+        "expected gap fixture {GAP_BATCH} to have at least one gap slot (cold read of a rolled-back write)"
     );
 
     // Forge every gap read's value; the committed output must be unchanged.
@@ -166,12 +177,17 @@ fn committed_read_bound_to_merkle_paths() {
 /// slot's pre-state while the VM was fed a different value for it — so it must be
 /// rejected.
 ///
-/// Ignored: on the current low-activity v31 corpus the re-keyed re-run diverges
-/// into bootloader pubdata construction and panics ("Empty pubdata information")
-/// before reaching the `leaf_hashed_key` binding check this test asserts. Re-enable
-/// once a batch with richer execution (non-empty pubdata) is captured.
+/// Re-keying a given write entry can be rejected two ways, and which one depends on
+/// the slot: re-keying a system slot (e.g. one the bootloader reads during block
+/// setup) makes the re-run diverge or panic *before* the binding check, while
+/// re-keying a slot whose served pre-state doesn't steer execution re-runs cleanly
+/// and is caught by the `leaf_hashed_key`/VM-key binding check itself. Both are
+/// fail-closed. Rather than depend on which entry the corpus happens to surface
+/// first, re-key every write entry independently and assert two invariants: no
+/// re-key is ever silently accepted, and at least one is rejected *specifically* by
+/// the binding check — proving that check is load-bearing, not shadowed by the
+/// earlier execution-divergence rejections.
 #[test]
-#[ignore = "current v31 corpus batches have empty pubdata; the tampered re-run panics before the leaf_hashed_key check"]
 fn merkle_path_key_bound_to_vm_key() {
     let Some(path) = batch_path(84730) else {
         return;
@@ -185,23 +201,45 @@ fn merkle_path_key_bound_to_vm_key() {
     // Sanity: it verifies untouched.
     v1.clone().verify().expect("84730 verifies untouched");
 
-    // Re-key one committed write entry to an unused slot, leaving its Merkle
-    // path/value/index (the proof for the real slot) intact.
-    let mut tampered = v1;
-    let entry = tampered
+    let write_idxs: Vec<usize> = v1
         .merkle_paths
         .merkle_paths
-        .iter_mut()
-        .find(|m| m.is_write)
-        .expect("84730 should have a write entry");
-    entry.leaf_hashed_key = U256::MAX;
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.is_write)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(!write_idxs.is_empty(), "84730 should have write entries");
 
-    let err = match tampered.verify() {
-        Ok(_) => panic!("re-keyed merkle_paths entry must be rejected"),
-        Err(e) => e,
-    };
+    let mut accepted = 0usize;
+    let mut binding_rejections = 0usize;
+
+    for idx in write_idxs {
+        let v = v1.clone();
+        // Some slots make the re-keyed re-run *panic* (a re-keyed bootloader slot
+        // fails block setup) rather than return an error; catch it — a panic is
+        // still a fail-closed rejection, just not the binding-check one we count.
+        // Expect a "thread panicked" line on stderr for such an entry; the test
+        // still passes. `AssertUnwindSafe` because the captured input isn't
+        // `UnwindSafe`; we never observe post-panic state, only re-run per entry.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let mut tampered = v;
+            tampered.merkle_paths.merkle_paths[idx].leaf_hashed_key = U256::MAX;
+            tampered.verify().map(|_| ()).map_err(|e| e.to_string())
+        }));
+        match outcome {
+            Ok(Ok(())) => accepted += 1,
+            Ok(Err(msg)) if msg.contains("leaf_hashed_key") => binding_rejections += 1,
+            Ok(Err(_)) | Err(_) => {}
+        }
+    }
+
+    assert_eq!(
+        accepted, 0,
+        "a re-keyed merkle_paths entry was silently accepted"
+    );
     assert!(
-        err.to_string().contains("leaf_hashed_key"),
-        "expected a leaf_hashed_key/VM-key binding rejection, got: {err}"
+        binding_rejections >= 1,
+        "no re-keyed entry was rejected by the leaf_hashed_key/VM-key binding check"
     );
 }

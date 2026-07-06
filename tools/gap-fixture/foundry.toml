@@ -1,0 +1,11 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.24"
+
+# Compile with the zksync (EraVM) backend. Requires foundry-zksync
+# (https://github.com/matter-labs/foundry-zksync); the `--zksync` CLI flag also
+# enables it per-invocation.
+[profile.default.zksync]
+compile = true

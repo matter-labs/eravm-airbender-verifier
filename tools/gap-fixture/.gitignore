@@ -1,0 +1,7 @@
+out/
+cache/
+lib/
+broadcast/
+zkout/
+foundry.lock
+.gitmodules

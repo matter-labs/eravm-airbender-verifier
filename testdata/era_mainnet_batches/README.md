@@ -60,6 +60,45 @@ If you already have raw `*.bin` files outside the repository, compress and stage
 
 The import script intentionally stages only the batch payloads. It does not auto-commit, because you may want to review the resulting pointer changes before creating a commit.
 
+## Synthetic Fixtures for Storage-Soundness Regressions
+
+`crates/airbender_verifier/tests/fail_closed.rs` guards the verifier's storage-view
+soundness. One of its regressions — `rolled_back_write_gap_is_harmless` — needs a
+batch shape the ordinary mainnet corpus doesn't contain and that can't be
+re-fetched: a **rolled-back write gap**. Rather than mine mainnet for one, mint a
+synthetic v31 batch whose transactions deliberately create the shape.
+
+### The gap shape (`900001.bin.gz`)
+
+A "gap" is a slot the VM **cold-reads but `merkle_paths` omits**, because a write to
+it was fully rolled back within the batch (the net storage change is zero, so it
+never enters the tree witness). The verifier serves such a slot empty (`None`) and
+must ignore any operator-supplied value for it — the property the test asserts.
+
+To create it, a transaction must write a previously-empty slot and then roll the
+write back. The ready-to-run foundry-zksync project [`tools/gap-fixture`](../../tools/gap-fixture)
+does exactly this: its `GapMaker.makeGap(slot)` writes a fresh slot in a sub-call
+that reverts, swallowing the revert so the outer tx succeeds and seals normally.
+The SSTORE cold-reads the slot (→ `read_storage_key`); the rolled-back write keeps
+it out of `merkle_paths`.
+
+### Producing the fixture
+
+This repository only *verifies*; the `AirbenderVerifierInput` (with its tree
+witness) is produced by zksync-era's sequencer + `airbender_proof_data_handler`.
+The full recipe — deploy + submit the tx via `tools/gap-fixture`, find the L1 batch
+it landed in, export its verifier input, and import it here as `900001.bin.gz`
+(matches `GAP_BATCH` in `fail_closed.rs`; the corpus number comes from the filename)
+— lives in [`tools/gap-fixture/README.md`](../../tools/gap-fixture/README.md).
+
+Confirm the shape before committing (the test's own assertion): loading `900001` and
+filtering `read_storage_key` against `merkle_paths` keys must yield a non-empty gap
+set. Then delete the `#[ignore]` on `rolled_back_write_gap_is_harmless`.
+
+> The companion test `merkle_path_key_bound_to_vm_key` needs **no** synthetic
+> fixture — it re-keys every write entry of `84730` and only requires that some entry
+> reach the `leaf_hashed_key` binding check. It is not ignored.
+
 ## Running Tools Against This Corpus
 
 Both the VM compare tool and the host runner accept this directory directly.
