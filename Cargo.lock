@@ -6051,8 +6051,6 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "flate2",
- "hex",
- "serde_json",
  "tracing",
  "tracing-subscriber",
  "zksync_airbender_verifier",

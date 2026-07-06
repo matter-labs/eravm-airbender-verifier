@@ -76,11 +76,11 @@ An *honest* gap (a legitimately-omitted read) existed pre-v31 as a fully rolled-
 write (mainnet batch 506155). **That shape is unreachable on v31**: the fast-VM
 witness pipeline proves every accessed slot — a committed net-zero write becomes a
 protective read, a reverted write vanishes entirely — so `read_storage_key` always
-equals `merkle_paths`. This was confirmed empirically by minting batches with a
-purpose-built `GapMaker` contract (write-then-revert and committed net-zero writes);
-none produced a gap (batches 85348 / 85366 / 86161). The test therefore synthesizes
-the adversarial gap by deleting a proven read's `merkle_paths` entry and asserting
-the verifier rejects it — no fixture required.
+equals `merkle_paths`. This was confirmed empirically by minting v31 batches whose
+transactions attempt the shape (write-then-revert and committed net-zero writes);
+none produced a gap. The test therefore synthesizes the adversarial gap by deleting
+a proven read's `merkle_paths` entry and asserting the verifier rejects it — no
+fixture required.
 
 > The companion tests `committed_read_bound_to_merkle_paths` and
 > `merkle_path_key_bound_to_vm_key` likewise need no synthetic fixture; they tamper
