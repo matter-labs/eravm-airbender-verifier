@@ -146,6 +146,105 @@ impl VmExecutionState {
 /// the witness generator deliberately disables the limit for proving.)
 const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 
+impl V1AirbenderVerifierInput {
+    /// Validate the operator-supplied environment fields that carry no commitment
+    /// binding, before any VM work. Every check here only *rejects* a non-canonical
+    /// or inconsistent input — none change the committed batch format — so the
+    /// verifier is fail-closed at its own boundary (cf. PRs #62/#63).
+    fn validate_basic(&self) -> anyhow::Result<()> {
+        // Pin the protocol version to the single one this verifier is built for.
+        // `protocol_version` is operator-supplied and only *gates* commitment fields
+        // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed
+        // into the commitment (see `L1BatchMetaParameters::to_bytes`). Without this
+        // pin a malicious witness could substitute a behavior-compatible version
+        // undetectably. The verifier ships one guest binary + VK set tied to
+        // `latest()`, so accepting anything else is never correct.
+        anyhow::ensure!(
+            self.system_env.version == ProtocolVersionId::latest(),
+            "unsupported protocol version {:?}; this verifier supports only {:?}",
+            self.system_env.version,
+            ProtocolVersionId::latest(),
+        );
+        // Redundant with the version pin above (`latest()` is always FastVM-supported),
+        // kept as an explicit, independent guard so the FastVM requirement is asserted
+        // at the boundary rather than left implicit in the pinned version.
+        anyhow::ensure!(
+            is_supported_by_fast_vm(self.system_env.version),
+            "protocol version {:?} is not supported by the FastVM verifier",
+            self.system_env.version,
+        );
+
+        // `enforced_base_fee` is an `eth_call`/`estimateGas` simulation override (set
+        // only by the API call path when a caller supplies an explicit gas price); the
+        // batch-execution path always leaves it `None`. In a proved batch it must be
+        // `None` so the base fee is derived from `fee_input`. Pinning it here keeps the
+        // verifier fail-closed locally rather than relying on the proved-batch
+        // bootloader's base-fee assert.
+        anyhow::ensure!(
+            self.l1_batch_env.enforced_base_fee.is_none(),
+            "enforced_base_fee must be None for a proved batch; got {:?}",
+            self.l1_batch_env.enforced_base_fee,
+        );
+
+        // `vm_run_data` carries operator-supplied copies of values the verifier also
+        // derives from the canonical batch/system env. Bind the redundant copies that
+        // have an authoritative counterpart so a malicious witness cannot disagree with
+        // the environment the VM actually executes against.
+        anyhow::ensure!(
+            self.vm_run_data.l1_batch_number == self.l1_batch_env.number,
+            "vm_run_data.l1_batch_number {:?} does not match l1_batch_env.number {:?}",
+            self.vm_run_data.l1_batch_number,
+            self.l1_batch_env.number,
+        );
+        anyhow::ensure!(
+            self.vm_run_data.protocol_version == self.system_env.version,
+            "vm_run_data.protocol_version {:?} does not match system_env.version {:?}",
+            self.vm_run_data.protocol_version,
+            self.system_env.version,
+        );
+        // The verifier proves a settled batch, which the sequencer executed in
+        // `VerifyExecute`. `EstimateFee` ignores AA-validation errors and `EthCall`
+        // uses mimic-calls (no signature checks), so an operator-chosen mode could
+        // prove transactions that bypass validation. `execution_mode` is
+        // operator-supplied and not otherwise bound — pin it.
+        anyhow::ensure!(
+            self.system_env.execution_mode == TxExecutionMode::VerifyExecute,
+            "system_env.execution_mode must be VerifyExecute for proving, got {:?}",
+            self.system_env.execution_mode,
+        );
+        // `default_validation_computational_gas_limit` is operator-supplied and bound
+        // by no commitment, but it gates account-abstraction validation accept/reject.
+        // Pin it to the canonical Era value so a non-canonical limit can't yield a
+        // different valid batch.
+        anyhow::ensure!(
+            self.system_env.default_validation_computational_gas_limit
+                == VALIDATION_COMPUTATIONAL_GAS_LIMIT,
+            "system_env.default_validation_computational_gas_limit {} does not match the canonical Era value {}",
+            self.system_env.default_validation_computational_gas_limit,
+            VALIDATION_COMPUTATIONAL_GAS_LIMIT,
+        );
+        // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
+        // populated by the witness generator for the legacy proving path and are not
+        // consumed here: the verifier recomputes the bootloader heap it commits to from
+        // VM execution and derives refunds/pubdata itself. They are intentionally left
+        // unconstrained — real witnesses carry non-empty values for these fields.
+
+        if let Some(first) = self.l2_blocks_execution_data.first() {
+            let canonical = &self.l1_batch_env.first_l2_block;
+            anyhow::ensure!(
+                first.number.0 == canonical.number
+                    && first.timestamp == canonical.timestamp
+                    && first.prev_block_hash == canonical.prev_block_hash
+                    && first.virtual_blocks == canonical.max_virtual_blocks_to_create
+                    && first.interop_roots == canonical.interop_roots,
+                "l2_blocks_execution_data[0] metadata must equal l1_batch_env.first_l2_block",
+            );
+        }
+
+        Ok(())
+    }
+}
+
 /// Run the VM, verify the new state root via merkle proofs, and return the
 /// intermediate state needed to compute the batch commitment.
 ///
@@ -153,11 +252,7 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
-    anyhow::ensure!(
-        is_supported_by_fast_vm(input.system_env.version),
-        "Protocol version {:?} is not supported by FastVM tee verifier",
-        input.system_env.version
-    );
+    input.validate_basic()?;
 
     let old_root_hash = input
         .l1_batch_env
@@ -167,59 +262,6 @@ pub fn execute(input: V1AirbenderVerifierInput) -> anyhow::Result<VmExecutionSta
     let batch_number = input.l1_batch_env.number;
     let protocol_version = input.system_env.version;
     let zk_porter_available = input.system_env.zk_porter_available;
-
-    // `vm_run_data` carries operator-supplied copies of values the verifier also
-    // derives from the canonical batch/system env. Bind the redundant copies that
-    // have an authoritative counterpart so a malicious witness cannot disagree with
-    // the environment the VM actually executes against.
-    anyhow::ensure!(
-        input.vm_run_data.l1_batch_number == batch_number,
-        "vm_run_data.l1_batch_number {:?} does not match l1_batch_env.number {batch_number:?}",
-        input.vm_run_data.l1_batch_number,
-    );
-    anyhow::ensure!(
-        input.vm_run_data.protocol_version == protocol_version,
-        "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
-        input.vm_run_data.protocol_version,
-    );
-    // The verifier proves a settled batch, which the sequencer executed in
-    // `VerifyExecute`. `EstimateFee` ignores AA-validation errors and `EthCall`
-    // uses mimic-calls (no signature checks), so an operator-chosen mode could
-    // prove transactions that bypass validation. `execution_mode` is
-    // operator-supplied and not otherwise bound — pin it.
-    anyhow::ensure!(
-        input.system_env.execution_mode == TxExecutionMode::VerifyExecute,
-        "system_env.execution_mode must be VerifyExecute for proving, got {:?}",
-        input.system_env.execution_mode,
-    );
-    // `default_validation_computational_gas_limit` is operator-supplied and bound
-    // by no commitment, but it gates account-abstraction validation accept/reject.
-    // Pin it to the canonical Era value so a non-canonical limit can't yield a
-    // different valid batch.
-    anyhow::ensure!(
-        input.system_env.default_validation_computational_gas_limit
-            == VALIDATION_COMPUTATIONAL_GAS_LIMIT,
-        "system_env.default_validation_computational_gas_limit {} does not match the canonical Era value {}",
-        input.system_env.default_validation_computational_gas_limit,
-        VALIDATION_COMPUTATIONAL_GAS_LIMIT,
-    );
-    // `vm_run_data.{initial_heap_content, storage_refunds, pubdata_costs}` are
-    // populated by the witness generator for the legacy proving path and are not
-    // consumed here: the verifier recomputes the bootloader heap it commits to from
-    // VM execution and derives refunds/pubdata itself. They are intentionally left
-    // unconstrained — real witnesses carry non-empty values for these fields.
-
-    if let Some(first) = input.l2_blocks_execution_data.first() {
-        let canonical = &input.l1_batch_env.first_l2_block;
-        anyhow::ensure!(
-            first.number.0 == canonical.number
-                && first.timestamp == canonical.timestamp
-                && first.prev_block_hash == canonical.prev_block_hash
-                && first.virtual_blocks == canonical.max_virtual_blocks_to_create
-                && first.interop_roots == canonical.interop_roots,
-            "l2_blocks_execution_data[0] metadata must equal l1_batch_env.first_l2_block",
-        );
-    }
 
     // Source all metadata-bound code hashes from system_env.base_system_smart_contracts.
     // That's what the VM actually loads — verifying any other copy (vm_run_data's
@@ -1233,59 +1275,43 @@ mod tests {
     }
 
     #[test]
-    fn test_serialization_roundtrip() {
-        let v1 = V1AirbenderVerifierInput {
-            vm_run_data: VMRunWitnessInputData {
-                l1_batch_number: Default::default(),
-                used_bytecodes: Default::default(),
-                initial_heap_content: vec![],
-                protocol_version: Default::default(),
-                bootloader_code: vec![],
-                default_account_code_hash: Default::default(),
-                evm_emulator_code_hash: Some(Default::default()),
-                storage_refunds: vec![],
-                pubdata_costs: vec![],
-                witness_block_state: Default::default(),
-            },
-            merkle_paths: WitnessInputMerklePaths::new(0),
-            l2_blocks_execution_data: vec![],
-            l1_batch_env: L1BatchEnv {
-                previous_batch_hash: Some(H256([1; 32])),
-                number: Default::default(),
-                timestamp: 0,
-                fee_input: Default::default(),
-                fee_account: Default::default(),
-                enforced_base_fee: None,
-                first_l2_block: L2BlockEnv {
-                    number: 0,
-                    timestamp: 0,
-                    prev_block_hash: H256([1; 32]),
-                    max_virtual_blocks_to_create: 0,
-                    interop_roots: vec![],
-                },
-            },
-            system_env: SystemEnv {
-                zk_porter_available: false,
-                version: Default::default(),
-                base_system_smart_contracts: BaseSystemContracts {
-                    bootloader: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    default_aa: SystemContractCode {
-                        code: vec![1; 32],
-                        hash: H256([1; 32]),
-                    },
-                    evm_emulator: None,
-                },
-                bootloader_gas_limit: 0,
-                execution_mode: TxExecutionMode::VerifyExecute,
-                default_validation_computational_gas_limit: 0,
-                chain_id: Default::default(),
-            },
-            pubdata_params: Default::default(),
-            commitment_input: None,
+    fn execute_rejects_non_target_protocol_version() {
+        let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+        // `Version27` is still FastVM-supported (the old check would have passed
+        // it), but it is not the version this verifier targets, so the pin must
+        // reject it. The version check is the first thing `execute` does, so the
+        // otherwise-minimal input never gets exercised.
+        input.system_env.version = ProtocolVersionId::Version27;
+        // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the version pin to reject Version27"),
+            Err(err) => err,
         };
+        assert!(
+            err.to_string().contains("unsupported protocol version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn execute_rejects_enforced_base_fee() {
+        let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+        // `enforced_base_fee` is an eth_call/estimateGas override; a proved batch
+        // must leave it `None`. A `Some(_)` value must be rejected at the boundary.
+        input.l1_batch_env.enforced_base_fee = Some(42);
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the enforced_base_fee pin to reject Some(_)"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("enforced_base_fee must be None"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let v1 = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
         let avi = AirbenderVerifierInput::V1(v1);
         let serialized =
             AirbenderCodecV0::encode(&avi).expect("Failed to serialize AirbenderVerifierInput.");
@@ -1295,9 +1321,12 @@ mod tests {
         assert_eq!(avi, deserialized);
     }
 
-    /// Minimal input on a FastVM-supported version, valid enough to reach the
-    /// early `system_env` checks in `execute()` (it errors out there, before any
-    /// VM run, so the otherwise-empty witness is fine).
+    /// Minimal, structurally-valid `V1AirbenderVerifierInput` on the target protocol
+    /// version (`latest()`), carrying the canonical operator-supplied env values so it
+    /// passes `validate_basic()` for `mode == VerifyExecute`. Valid enough to reach the
+    /// early `system_env` checks in `execute()` (it errors out there, before any VM
+    /// run, so the otherwise-empty witness is fine). `mode` lets callers exercise the
+    /// `execution_mode` pin.
     fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> V1AirbenderVerifierInput {
         let version = ProtocolVersionId::latest();
         V1AirbenderVerifierInput {
@@ -1308,7 +1337,13 @@ mod tests {
                 protocol_version: version,
                 bootloader_code: vec![],
                 default_account_code_hash: Default::default(),
-                evm_emulator_code_hash: None,
+                // Must be `Some` to survive a bincode roundtrip: the field is
+                // `#[serde(default, skip_serializing_if = "Option::is_none")]`, so a
+                // `None` is written as zero bytes but still read back by the
+                // non-self-describing codec, desynchronizing the stream (see
+                // `test_serialization_roundtrip`). Unused by the early-exit `execute`
+                // tests, which reject before this field is consumed.
+                evm_emulator_code_hash: Some(Default::default()),
                 storage_refunds: vec![],
                 pubdata_costs: vec![],
                 witness_block_state: Default::default(),
@@ -1346,7 +1381,7 @@ mod tests {
                 },
                 bootloader_gas_limit: 0,
                 execution_mode: mode,
-                default_validation_computational_gas_limit: 0,
+                default_validation_computational_gas_limit: u32::MAX,
                 chain_id: Default::default(),
             },
             pubdata_params: Default::default(),
