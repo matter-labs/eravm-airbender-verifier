@@ -1012,7 +1012,7 @@ dependencies = [
 [[package]]
 name = "circuit_mersenne_field"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=dev#13e89107b2852e3c4d9bc7154520a5c60868f3b5"
+source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=fix%2Faux-params-drop-unified-fold-dev#a5a4446c85a9acb10c49fd4729a68bc708fb51ab"
 dependencies = [
  "boojum",
  "field",
@@ -2947,7 +2947,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5901,7 +5901,7 @@ dependencies = [
 [[package]]
 name = "zkos-wrapper"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=dev#13e89107b2852e3c4d9bc7154520a5c60868f3b5"
+source = "git+https://github.com/matter-labs/zkos-wrapper/?branch=fix%2Faux-params-drop-unified-fold-dev#a5a4446c85a9acb10c49fd4729a68bc708fb51ab"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",

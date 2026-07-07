@@ -97,7 +97,7 @@ zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksyn
 # doesn't collide with `security_100` — airbender-host's `SecurityLevel`
 # defaults to `Bits100`, which produces two unified proofs; the wrapper must
 # expect the same number.
-zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "dev", default-features = false, features = ["security_100"] } # TODO: Must be pinned before merge
+zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "fix/aux-params-drop-unified-fold-dev", default-features = false, features = ["security_100"] } # DIAG: test aux_params fix (zkos-wrapper#74)
 zksync_vm2 = { git = "https://github.com/matter-labs/vm2", rev = "4d110657a22025d4a49a563a7e119d754551b715" } # TODO: pin to a tag before merge
 
 # Local dependencies in this workspace
