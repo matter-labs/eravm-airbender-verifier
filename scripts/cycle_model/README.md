@@ -81,12 +81,15 @@ python scripts/cycle_model/eval_holdout.py \
     --dataset artifacts/holdout/dataset.json --out artifacts/holdout
 ```
 
-To confirm the **Rust** estimator reproduces those numbers (guards Rust/Python
-drift):
+CI guards against regressions with a frozen snapshot: the
+`model_regression` test in `crates/cycle_estimator` asserts the embedded model
+still predicts a committed set of measured batches within tolerance (no corpus
+needed). When you ship a new model, run it and — only if the guest/verifier moved
+real cycle counts — refresh the fixture:
 
 ```sh
-CYCLE_MODEL_DATASET="$PWD/artifacts/holdout/dataset.json" \
-  cargo test -p zksync_cycle_model --test estimator_holdout -- --ignored --nocapture
+cargo test -p zksync-era-airbender-cycles-estimator --test model_regression
+# refresh fixture (rarely): regenerate from a fresh measured dataset.json
 ```
 
 ## Using the estimator (Rust API)
