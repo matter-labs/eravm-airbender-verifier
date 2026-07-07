@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::features::{FeatureId, FeatureVector};
+use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
 
 /// The committed cost table, embedded at compile time.
 const EMBEDDED_COST_TABLE: &str = include_str!("../model/cost_table.json");
@@ -83,6 +83,25 @@ impl CostModel {
         self.phases
             .iter()
             .map(|(name, m)| (name.clone(), m.predict(fv)))
+            .collect()
+    }
+
+    /// Safety-critical precompile/crypto features (see
+    /// [`SAFETY_CRITICAL_FEATURES`]) the batch actually uses but that this model
+    /// prices at ~0 (no coefficient in the aggregate predictor). A non-empty
+    /// result means the prediction omits that precompile's cost and is therefore
+    /// an under-estimate — the caller must not trust it (fail safe).
+    ///
+    /// This catches precompiles the calibration corpus never exercised (e.g.
+    /// ec_pairing, modexp): the model can't price what it never saw, and no
+    /// safety multiplier rescues a coefficient of zero.
+    pub fn unpriced_used(&self, fv: &FeatureVector) -> Vec<FeatureId> {
+        SAFETY_CRITICAL_FEATURES
+            .iter()
+            .copied()
+            .filter(|id| {
+                fv.get(*id) > 0 && self.total.features.get(id).copied().unwrap_or(0.0) <= 0.0
+            })
             .collect()
     }
 }

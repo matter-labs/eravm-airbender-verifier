@@ -50,15 +50,40 @@ pub struct BatchContext {
 #[derive(Debug, Clone)]
 pub struct CycleEstimate {
     /// Predicted total guest cycles (`raw_cycles`), incl. guest prologue/epilogue.
+    /// This is the model's raw output — apply [`Self::conservative`] before
+    /// comparing to a hard limit.
     pub total: u64,
     /// Predicted cycles per verify() phase.
     pub phases: BTreeMap<String, u64>,
+    /// Safety-critical precompiles the batch used that the model does not price
+    /// (see [`CostModel::unpriced_used`]). Non-empty ⇒ `total` omits real work
+    /// and is an under-estimate; treat the estimate as unusable.
+    pub unpriced: Vec<FeatureId>,
 }
 
 impl CycleEstimate {
-    /// Whether the estimate fits under a per-proof cycle `limit`.
-    pub fn fits(&self, limit: u64) -> bool {
-        self.total <= limit
+    /// True when every safety-critical precompile the batch used is priced by the
+    /// model. When false, `total` is a lower bound, not an estimate.
+    pub fn is_reliable(&self) -> bool {
+        self.unpriced.is_empty()
+    }
+
+    /// `total` scaled by a safety `margin` and rounded up — the number to compare
+    /// against the per-proof limit. The model systematically under-predicts by a
+    /// couple of percent, so a `margin` of ~1.05–1.10 is a reasonable cushion for
+    /// ordinary variance (pick per your risk tolerance; a bigger cushion trades
+    /// throughput for safety). A margin does NOT compensate for unpriced
+    /// precompiles — see [`Self::is_reliable`].
+    pub fn conservative(&self, margin: f64) -> u64 {
+        ((self.total as f64) * margin.max(1.0)).ceil() as u64
+    }
+
+    /// Whether the batch fits under `limit` after applying `margin`. **Fails
+    /// safe**: an unreliable estimate (unpriced precompiles) never reports a fit,
+    /// so a precompile the model can't price forces the caller to reject/split
+    /// rather than silently ship an over-limit batch.
+    pub fn fits(&self, limit: u64, margin: f64) -> bool {
+        self.is_reliable() && self.conservative(margin) <= limit
     }
 }
 
@@ -119,6 +144,7 @@ pub fn estimate_with_model(
     CycleEstimate {
         total: model.predict_total(&fv),
         phases: model.predict_phases(&fv),
+        unpriced: model.unpriced_used(&fv),
     }
 }
 
@@ -168,7 +194,47 @@ mod tests {
         for phase in ["setup", "vm_execution", "merkle_verification", "commitment"] {
             assert!(est.phases.contains_key(phase));
         }
-        assert!(est.fits(u64::MAX));
-        assert!(!est.fits(0));
+        assert!(est.is_reliable(), "no unpriced precompiles used");
+        assert!(est.fits(u64::MAX, 1.10));
+        assert!(!est.fits(0, 1.0));
+    }
+
+    #[test]
+    fn conservative_margin_scales_and_never_shrinks() {
+        let est = CycleEstimate {
+            total: 1_000_000,
+            phases: BTreeMap::new(),
+            unpriced: vec![],
+        };
+        assert_eq!(est.conservative(1.10), 1_100_000);
+        assert_eq!(est.conservative(1.0), 1_000_000);
+        // a margin below 1.0 is clamped — the safe value is never below `total`.
+        assert_eq!(est.conservative(0.5), 1_000_000);
+    }
+
+    #[test]
+    fn unpriced_precompile_fails_safe() {
+        // A batch that runs an ec_pairing (which the embedded model prices at 0)
+        // must be flagged unreliable and never report a fit — even under a huge
+        // limit and no margin.
+        let tracer = CycleFeatureTracer::new();
+        tracer_add(&tracer, FeatureId::EcPairingCycles, 5);
+        let est = estimate(&tracer, 0, 0, &BatchContext::default());
+        assert!(!est.is_reliable());
+        assert_eq!(est.unpriced, vec![FeatureId::EcPairingCycles]);
+        assert!(
+            !est.fits(u64::MAX, 1.0),
+            "unpriced precompile must fail safe"
+        );
+    }
+
+    #[test]
+    fn priced_precompile_is_reliable() {
+        // keccak IS priced (size-scaled), so using it does not trip the guard.
+        let tracer = CycleFeatureTracer::new();
+        tracer_add(&tracer, FeatureId::Keccak256Cycles, 100_000);
+        let est = estimate(&tracer, 0, 0, &BatchContext::default());
+        assert!(est.is_reliable());
+        assert!(est.total > 0);
     }
 }

@@ -19,6 +19,6 @@ pub mod tracer;
 pub use estimator::{
     estimate, estimate_with_model, features_for_estimate, BatchContext, CycleEstimate,
 };
-pub use features::{FeatureId, FeatureVector};
+pub use features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
 pub use model::{CostModel, LinearModel};
 pub use tracer::CycleFeatureTracer;

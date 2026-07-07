@@ -123,8 +123,12 @@ let est = estimate(
     finished.state_diffs.map_or(0, |s| s.len() as u64),
     &ctx,
 );
-if !est.fits(PER_PROOF_CYCLE_LIMIT) { /* seal early / split the batch */ }
-// est.total = predicted raw guest cycles; est.phases = per-phase breakdown.
+
+// 3. Decide — fail safe. `fits` rejects the batch if it used a precompile the
+//    model can't price (e.g. ec_pairing/modexp), and applies a safety margin.
+if !est.is_reliable() { /* unpriced precompile — reject/split, don't trust `total` */ }
+if !est.fits(PER_PROOF_CYCLE_LIMIT, /*margin*/ 1.10) { /* seal early / split */ }
+// est.total = raw prediction; est.conservative(m) = margin-padded; est.phases = breakdown.
 ```
 
 Notes:
@@ -135,6 +139,40 @@ Notes:
 - `merkle_leaf_count` is the distinct-slots-touched count (the witness does not
   exist yet at sequencing time) — an estimate of the calibrated witness
   quantity, so validate the deployed path on real batches.
+
+## Staying on the safe side
+
+Under-estimating is the costly failure (an over-limit batch that can't be
+proved), so the estimate is used conservatively:
+
+1. **Coverage guard** — `is_reliable()` / `fits()` fail safe when the batch uses
+   a `SAFETY_CRITICAL_FEATURES` precompile the model prices at ~0 (a coefficient
+   the corpus never constrained, e.g. ec_pairing/modexp). A margin can't rescue a
+   zero coefficient, so such a batch is rejected outright rather than trusted.
+2. **Safety margin** — `conservative(margin)` / `fits(limit, margin)` pad the
+   prediction. The model systematically under-predicts a couple of percent
+   (hold-out: 43/49 batches, worst −1.83%), so ~1.05–1.10 covers ordinary
+   variance; pick per risk tolerance.
+3. **Pin precompile costs** (below) so the priced set is sound and complete — the
+   real fix behind the coverage guard.
+
+### Pinning precompile costs (microbenchmarks)
+
+keccak256/sha256/ecrecover are size-scaled from the trace, but their fitted
+coefficients are in-sample/collinear, and secp256r1/modexp/ec_add/ec_mul/
+ec_pairing are unpriced (absent from the corpus). To price them soundly, measure
+each precompile's guest cycles per unit directly and pin them:
+
+- Build a synthetic batch that runs N of one precompile (varying input size),
+  measure guest cycles with the marker guest (`cycle_bench`), and divide by the
+  feature count to get cycles-per-unit.
+- Record results in a `pinned.json` (see `pinned.example.json`) and pass
+  `--pinned pinned.json` to `fit_cost_model.py`. Features the corpus never
+  exercised have no dataset column, so their pinned cost must be written into the
+  committed `cost_table.json` directly (they are not fit).
+
+Until pinned, the coverage guard is what keeps unpriced precompiles from silently
+producing an under-estimate.
 
 ## Model shape & current accuracy
 
