@@ -5927,7 +5927,7 @@ dependencies = [
 
 [[package]]
 name = "zksync-era-airbender-cycles-estimator"
-version = "29.8.0"
+version = "29.9.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -6107,7 +6107,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_cycle_model"
-version = "29.8.0"
+version = "29.9.0"
 dependencies = [
  "airbender-host",
  "anyhow",
