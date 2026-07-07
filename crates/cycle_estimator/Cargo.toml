@@ -10,10 +10,10 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Deliberately lean: only the vm2 tracer interface + serde. No verifier,
-# airbender-host, or vm_compare — so a sequencer (zksync-era) can depend on this
-# to estimate proving cost during batch building without pulling the proving
-# stack. The offline calibration crate (`zksync_cycle_model`) builds on top.
+# Deliberately lean: the vm2 tracer interface + serde/serde_json/anyhow only. No
+# verifier, airbender-host, or vm_compare — so a sequencer (zksync-era) can depend
+# on this to estimate proving cost during batch building without pulling the
+# proving stack. The offline calibration crate (`zksync_cycle_model`) builds on top.
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

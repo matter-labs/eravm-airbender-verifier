@@ -7,7 +7,7 @@
 //! binary via `include_str!`, so a deployed sequencer needs no model file on disk.
 //!
 //! To ship a new model: refit, drop the resulting `cost_table.json` into
-//! `crates/cycle_model/model/`, and rebuild (see `scripts/cycle_model/README.md`).
+//! `crates/cycle_estimator/model/`, and rebuild (see `scripts/cycle_model/README.md`).
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
