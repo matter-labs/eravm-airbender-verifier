@@ -23,13 +23,21 @@
 #     final binary — things listed may still be stripped by the linker. It is
 #     however a tight *lower bound* on the API surface your workspace touches
 #     transitively, which is what you asked for.
-#   - The "--compare" side is an approximate parse of `pub fn|struct|enum|
-#     trait|type|const|static` from the airbender crates' source. Items
-#     declared inside macros, behind `#[cfg]`, or re-exported under a
-#     different name will not match perfectly. Treat the "unused" list as a
-#     starting point to eyeball, not a proof.
+#   - The "--compare" side is an approximate, heuristic parse of
+#     `pub fn|struct|enum|trait|type|const|static|union` from the airbender
+#     crates' source. Inherent- and trait-`impl` methods ARE handled: the
+#     enclosing `impl <Type>` block is tracked with a best-effort brace-depth
+#     scan so a method is emitted as `mod::Type::method` (the path MONO_ITEM
+#     actually carries) rather than `mod::method` — otherwise the majority of
+#     the API (associated methods) would be spuriously reported as unused.
+#     This is still a heuristic, NOT a Rust parser: items declared inside
+#     macros, behind `#[cfg]`, re-exported under a different name, or in impl
+#     blocks whose opening `{` is not on the `impl ...` header line will not
+#     match perfectly. Treat the "unused" list as a starting point to eyeball,
+#     not a proof.
 
 set -euo pipefail
+export LC_ALL=C
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SELF_DIR="${ROOT}/scripts/airbender_usage"
@@ -42,8 +50,8 @@ keep_target=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --target)       mode_target="$2"; shift 2 ;;
-        --compare)      compare_path="$2"; shift 2 ;;
+        --target)  [[ $# -ge 2 && -n "${2:-}" ]] || { echo "--target requires a value" >&2; exit 2; }; mode_target="$2"; shift 2 ;;
+        --compare) [[ $# -ge 2 && -n "${2:-}" ]] || { echo "--compare requires a value" >&2; exit 2; }; compare_path="$2"; shift 2 ;;
         --keep-target)  keep_target=true; shift ;;
         -h|--help)
             sed -n '2,30p' "$0"
@@ -60,6 +68,9 @@ esac
 
 chmod +x "${WRAPPER}"
 mkdir -p "${OUT_DIR}"
+# Only this run's targets should contribute to the combined reachable set;
+# drop any per-target lists left over from a previous invocation.
+rm -f "${OUT_DIR}"/reachable-*.txt
 
 AIRBENDER_CRATE_PREFIX='airbender[a-zA-Z0-9_]*'
 AIRBENDER_PATH_RE="${AIRBENDER_CRATE_PREFIX}(::[A-Za-z_][A-Za-z0-9_]*)+"
@@ -91,8 +102,8 @@ build_one() {
     #   MONO_ITEM fn std::ptr::drop_in_place::<airbender_host::runner::ExecutionResult> @@ ...
     # We grab every identifier chain starting with airbender*.
     grep -E '^MONO_ITEM ' "${log}" \
-        | grep -oE "${AIRBENDER_PATH_RE}" \
-        | sort -u > "${list}"
+        | grep -oE "\b${AIRBENDER_PATH_RE}" \
+        | sort -u > "${list}" || true
 
     echo "    reachable items: $(wc -l < "${list}" | tr -d ' ')  (see ${list})"
 }
@@ -124,6 +135,14 @@ decl = re.compile(
 )
 mod_decl = re.compile(r'^\s*pub(?:\(crate\))?\s+mod\s+([A-Za-z_][A-Za-z0-9_]*)')
 
+# Match an `impl` header and capture the SELF type (the token after `for` for a
+# trait impl, otherwise the only type). Best-effort: nested generics that
+# contain `>` and impl headers whose `{` is on a later line are not handled.
+impl_decl = re.compile(
+    r'^\s*(?:default\s+|unsafe\s+)*impl(?:\s*<[^>]*>)?\s+'
+    r'(?:.+\s+for\s+)?([A-Za-z_][A-Za-z0-9_]*)'
+)
+
 def module_prefix(crate_name_snake: str, src_root: str, file_path: str) -> str:
     rel = os.path.relpath(file_path, src_root)
     parts = rel[:-3].split(os.sep)  # strip ".rs"
@@ -134,10 +153,13 @@ def module_prefix(crate_name_snake: str, src_root: str, file_path: str) -> str:
     return "::".join([crate_name_snake, *parts])
 
 items = set()
+scanned = 0
 for crate in crates:
     src_root = os.path.join(root, "crates", crate, "src")
     if not os.path.isdir(src_root):
+        sys.stderr.write(f"    warning: crate source dir not found, skipping: {src_root}\n")
         continue
+    scanned += 1
     crate_name = crate.replace("-", "_")
     # airbender-sdk re-exports as `airbender` (see its [lib] name).
     lib_name = "airbender" if crate == "airbender-sdk" else crate_name
@@ -146,21 +168,38 @@ for crate in crates:
             if not fname.endswith(".rs"):
                 continue
             mod_prefix = module_prefix(lib_name, src_root, os.path.join(dirpath, fname))
+            # Best-effort tracking of the enclosing `impl <Type>` block so that
+            # inherent/trait methods are emitted as `mod::Type::method` (the
+            # path MONO_ITEM actually carries) instead of a bare `mod::method`.
+            # This is a heuristic brace-depth scan, not a real Rust parser.
+            depth = 0
+            impl_stack = []  # list of (open_depth, type_name)
             with open(os.path.join(dirpath, fname), encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     m = decl.match(line)
                     if m:
-                        items.add(f"{mod_prefix}::{m.group(2)}")
-                        continue
-                    m = mod_decl.match(line)
-                    if m:
-                        items.add(f"{mod_prefix}::{m.group(1)}")
+                        if impl_stack:
+                            items.add(f"{mod_prefix}::{impl_stack[-1][1]}::{m.group(2)}")
+                        else:
+                            items.add(f"{mod_prefix}::{m.group(2)}")
+                    else:
+                        m = mod_decl.match(line)
+                        if m:
+                            # `pub mod` is always at module level.
+                            items.add(f"{mod_prefix}::{m.group(1)}")
+                        else:
+                            im = impl_decl.match(line)
+                            if im and "{" in line:
+                                impl_stack.append((depth, im.group(1)))
+                    depth += line.count("{") - line.count("}")
+                    while impl_stack and depth <= impl_stack[-1][0]:
+                        impl_stack.pop()
 
 with open(out, "w") as fh:
     for it in sorted(items):
         fh.write(it + "\n")
 
-print(f"    defined items: {len(items)} (from {len(crates)} crates)")
+print(f"    defined items: {len(items)} (from {scanned}/{len(crates)} crates)")
 PY
 }
 
@@ -181,6 +220,7 @@ if [[ -n "${compare_path}" ]]; then
     DEFINED="${OUT_DIR}/defined.txt"
     UNUSED="${OUT_DIR}/unused.txt"
     enumerate_defined "${compare_path}" "${DEFINED}"
+    [[ -s "${DEFINED}" ]] || { echo "no defined items parsed from ${compare_path} — not an airbender-platform checkout? refusing to emit an 'unused' verdict" >&2; exit 2; }
     comm -23 "${DEFINED}" "${REACHABLE_ALL}" > "${UNUSED}"
     echo "==> unused (defined & not reachable): $(wc -l < "${UNUSED}" | tr -d ' ')  (${UNUSED})"
     echo

@@ -148,6 +148,7 @@ jobs:
       # Scans the build ELF (the source of dist's app.bin/app.text objcopies) —
       # dist/app/app.elf has .text stripped (-R .text) and holds no code.
       - name: Check guest instruction set
+        # keep in sync with the identical 'Check guest instruction set' step in release-artifacts.yaml
         working-directory: ./guest
         run: |
           bash ../scripts/check_guest_riscv_code.sh \

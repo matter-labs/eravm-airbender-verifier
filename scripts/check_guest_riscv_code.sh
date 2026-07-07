@@ -68,7 +68,7 @@ ALLOWED_CSRS=(0x7c0 0x7c7 0x7cb)
 # (__addsf3), comparison (__eqsf2, __unordsf2), float<->int conversion
 # (__fixsfsi, __floatunsidf), float<->float conversion (__extendsfdf2,
 # __truncdfhf2), and __powisf2. s/d/h/t/x cover f32/f64/f16/f128/x87 widths.
-SOFT_FLOAT_SYMBOL_RE='^__(add|sub|mul|div|neg|eq|ne|lt|le|gt|ge|unord|powi)[sdhtx]f[23]?$|^__fix(uns)?[sdhtx]f[dst]i$|^__float(un)?[dst]i[sdhtx]f$|^__(extend|trunc)[sdhtx]f[sdhtx]f2?$'
+SOFT_FLOAT_SYMBOL_RE='^__(add|sub|mul|div|neg|eq|ne|lt|le|gt|ge|unord|cmp|powi)[sdhtx]f[23]?$|^__fix(uns)?[sdhtx]f[dst]i$|^__float(un)?[dst]i[sdhtx]f$|^__(extend|trunc)[sdhtx]f[sdhtx]f2?$|^__gnu_[fh]2[hf]_ieee$|^__(mul|div)[sdx]c3$'
 
 usage() {
   sed -n '/^# Usage:/,/^# Exit codes/p' "$0" | sed 's/^# \{0,1\}//'
@@ -117,19 +117,32 @@ done
 [[ "$MIN_INSNS" =~ ^[0-9]+$ ]] || die "--min-insns must be a non-negative integer"
 
 # --- Tool discovery -----------------------------------------------------------
-# Prefer the llvm-tools of the repo-pinned Rust toolchain (rust-toolchain.toml,
-# present in the cargo-airbender image) so the disassembler version is as
-# reproducible as the build itself. rustup resolves the toolchain from the
-# working directory, so anchor resolution to this script's own directory —
+# Prefer the llvm-tools of the toolchain that BUILT the guest ELF
+# (guest/rust-toolchain.toml, present in the cargo-airbender image) so the
+# disassembler version is as reproducible as the build itself. That file — not
+# the repo-root rust-toolchain.toml — declares the llvm-tools-preview component,
+# and rustup auto-installs a toolchain's declared components on invocation, so
+# anchoring resolution there both avoids version skew and, on a fresh machine,
+# actively installs the tool. rustup resolves the toolchain from the working
+# directory, so we cd to a fixed anchor (the guest dir, else this script's dir) —
 # the invoker's cwd must not change which toolchain answers.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 find_llvm_tool() {
   local tool="$1"
+  # Anchor to the guest toolchain (the one that built the ELF, and the only file
+  # declaring llvm-tools-preview); fall back to this script's dir for a
+  # standalone run without a sibling guest/rust-toolchain.toml.
+  local guest_dir="$SCRIPT_DIR/../guest" anchor
+  if [[ -f "$guest_dir/rust-toolchain.toml" ]]; then
+    anchor="$guest_dir"
+  else
+    anchor="$SCRIPT_DIR"
+  fi
   if command -v rustc >/dev/null 2>&1; then
     local sysroot host candidate
-    sysroot="$(cd "$SCRIPT_DIR" && rustc --print sysroot)"
-    host="$(cd "$SCRIPT_DIR" && rustc -vV | sed -n 's/^host: //p')"
+    sysroot="$(cd "$anchor" && rustc --print sysroot)"
+    host="$(cd "$anchor" && rustc -vV | sed -n 's/^host: //p')"
     candidate="$sysroot/lib/rustlib/$host/bin/$tool"
     if [[ -x "$candidate" ]]; then
       echo "$candidate"
@@ -171,6 +184,9 @@ FAILURES=0
 allowed_re="$(IFS='|'; echo "${ALLOWED_MNEMONICS[*]}")"
 allowed_csr_re="$(IFS='|'; echo "${ALLOWED_CSRS[*]}")"
 
+# Cap on individually-listed violation lines (awk print cap + bash tail math).
+MAX_SHOWN=50
+
 # The awk program prints at most MAX_SHOWN violation lines itself (avoiding a
 # SIGPIPE-prone `| head` under pipefail) plus TOTAL/BAD counters at the end.
 disasm_report="$(
@@ -179,7 +195,7 @@ disasm_report="$(
     "$ELF" \
   | awk -v allowed_re="^(${allowed_re})\$" \
         -v allowed_csr_re="^(${allowed_csr_re}),?\$" \
-        -v max_shown=50 '
+        -v max_shown="$MAX_SHOWN" '
       function report(section, addr, symbol,    i, rest) {
         bad++
         if (bad > max_shown) return
@@ -220,7 +236,7 @@ bad_insns="$(sed -n 's/^BAD //p' <<<"$disasm_report")"
 [[ -n "$total_insns" && -n "$bad_insns" ]] \
   || die "failed to parse disassembly summary — llvm-objdump output format changed?"
 
-if (( total_insns < MIN_INSNS )); then
+if (( total_insns < 10#$MIN_INSNS )); then
   echo "error: decoded only $total_insns instruction(s) (< --min-insns $MIN_INSNS);" \
        "the disassembly is empty or the output format changed — refusing to pass vacuously" >&2
   exit 2
@@ -229,7 +245,7 @@ fi
 if (( bad_insns > 0 )); then
   echo "FAIL: $bad_insns instruction(s) outside the RV32IM allowlist (of $total_insns decoded):"
   sed -n 's/^VIOLATION /  /p' <<<"$disasm_report"
-  (( bad_insns > 50 )) && echo "  ... and $((bad_insns - 50)) more"
+  (( bad_insns > MAX_SHOWN )) && echo "  ... and $((bad_insns - MAX_SHOWN)) more"
   FAILURES=1
 else
   echo "OK: all $total_insns decoded instructions are within the RV32IM allowlist"
@@ -246,6 +262,7 @@ if [[ -n "$BASELINE" ]]; then
   current="$(grep -E "$SOFT_FLOAT_SYMBOL_RE" <<<"$symbols" | sort -u || true)"
 
   if (( UPDATE_BASELINE )); then
+    if (( FAILURES > 0 )); then die "refusing to regenerate the baseline: the instruction-allowlist check failed above — fix the guest first"; fi
     {
       echo "# Soft-float intrinsics linked into the guest (see check_guest_riscv_code.sh)."
       echo "# Regenerate with: scripts/check_guest_riscv_code.sh <app.elf> --baseline <this file> --update-baseline"
@@ -268,8 +285,10 @@ if [[ -n "$BASELINE" ]]; then
       echo "OK: no soft-float intrinsics beyond the baseline ($(sed '/^$/d' <<<"$current" | grep -c . || true) present)"
     fi
     if [[ -n "$gone_symbols" ]]; then
-      echo "note: baseline entries no longer present (consider tightening $BASELINE):"
+      echo "FAIL: $BASELINE lists soft-float intrinsic(s) no longer present in the guest:"
       sed 's/^/  /' <<<"$gone_symbols"
+      echo "  A stale baseline superset silently pre-authorizes these intrinsics; regenerate it with --update-baseline."
+      FAILURES=1
     fi
   fi
 fi
