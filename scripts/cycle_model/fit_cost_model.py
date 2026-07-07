@@ -5,9 +5,12 @@ Two complementary fits:
   * **Per-phase** — regress each measured guest phase against the features that
     drive it, giving isolated, interpretable coefficients:
       - vm_execution      ~ opcode-family + crypto features
-      - merkle_verification ~ merkle_leaf_count   (Merkle-tree overhead per slot)
-      - setup             ~ merkle_leaf_count + transaction_count
+      - merkle_verification ~ merkle_leaf_count + state_diff_count
+                             (leaf-proof + tree-update work per slot / state change)
+      - setup             ~ used_bytecode_bytes/-count + storage_key_count
+                             + merkle_leaf_count + transaction_count (bytecode hashing)
       - commitment        ~ pubdata_bytes
+    The authoritative mapping is `PHASE_FEATURES` / `TOTAL_EXCLUDE` below.
     The phase split matters: it prices Merkle-tree work (driven by the number of
     proven storage slots, not by SSTORE opcode count) separately from VM
     execution, free of opcode collinearity.
@@ -53,10 +56,11 @@ PHASE_FEATURES = {
     "merkle_verification": ["merkle_leaf_count", "state_diff_count"],
     # Setup hashes every used bytecode and builds the storage view + initial heap
     # before the VM runs; these are its real cost drivers (leaf/tx counts were
-    # only loose proxies).
+    # only loose proxies). initial_heap_words is deliberately excluded — it is a
+    # witness-only quantity the online estimator cannot supply (see TOTAL_EXCLUDE).
     "setup": [
         "merkle_leaf_count", "transaction_count", "used_bytecode_bytes",
-        "used_bytecode_count", "storage_key_count", "initial_heap_words",
+        "used_bytecode_count", "storage_key_count",
     ],
     # Commitment is near-constant (base + pubdata blob hashing). State-diff /
     # system-log counts were tried but overfit the tiny in-sample variance and
@@ -64,6 +68,16 @@ PHASE_FEATURES = {
     # left out — the base term already captures the fixed keccak/blake work.
     "commitment": ["pubdata_bytes"],
 }
+
+# Features excluded from the aggregate TOTAL fit because the ONLINE estimator
+# cannot supply them, so pricing them would create a train/serve skew (the model
+# would expect a value the sequencer never provides → systematic under-estimate):
+#   - system_log_count: near-constant; the total NNLS otherwise hands it a huge
+#     coefficient as a pseudo-intercept, which the online path (which omits it)
+#     silently drops.
+#   - initial_heap_words: a witness-only quantity, unavailable at sequencing time.
+# The base term absorbs their (near-constant) contribution instead.
+TOTAL_EXCLUDE = {"system_log_count", "initial_heap_words"}
 
 
 def fit(X: np.ndarray, y: np.ndarray):
@@ -144,7 +158,9 @@ def main():
     df = load_dataset(Path(args.dataset))
     feature_cols = [
         c for c in df.columns
-        if c not in ("batch_number", "raw_cycles") and not c.startswith("phase_")
+        if c not in ("batch_number", "raw_cycles")
+        and not c.startswith("phase_")
+        and c not in TOTAL_EXCLUDE
     ]
     pinned = json.loads(Path(args.pinned).read_text()) if args.pinned else {}
 

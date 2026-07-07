@@ -39,11 +39,10 @@
         "merkle_leaf_count": 2057.0363542379155,
         "transaction_count": 0.0,
         "used_bytecode_bytes": 62.87954071302192,
-        "used_bytecode_count": 6050.856020896605,
-        "storage_key_count": 3859.065732284991,
-        "initial_heap_words": 0.0
+        "used_bytecode_count": 6050.85602089668,
+        "storage_key_count": 3859.0657322849925
       },
-      "base": 15220052.627711141,
+      "base": 15220052.62771114,
       "r2": 0.9999990146293445
     },
     "commitment": {
@@ -56,35 +55,33 @@
   },
   "total": {
     "features": {
-      "rich_addressing_op": 73.8727418805959,
+      "rich_addressing_op": 73.8727418805963,
       "average_op": 0.0,
-      "storage_read": 10356.665099557476,
-      "storage_write": 43661.28815790521,
+      "storage_read": 10356.665099557498,
+      "storage_write": 43661.288157905234,
       "transient_storage_read": 0.0,
       "transient_storage_write": 0.0,
       "event": 0.0,
-      "precompile_call": 28766.188639556203,
-      "decommit": 312878.2993326011,
-      "far_call": 15135.908290980184,
-      "uma_write": 2941.492609711417,
-      "uma_read": 76.72298904838769,
-      "keccak256_cycles": 9552.037069655642,
+      "precompile_call": 28766.188639556392,
+      "decommit": 312878.2993325998,
+      "far_call": 15135.908290980338,
+      "uma_write": 2941.4926097113957,
+      "uma_read": 76.72298904838959,
+      "keccak256_cycles": 9552.037069655282,
       "sha256_cycles": 0.0,
-      "ec_recover_cycles": 11540628.487375986,
+      "ec_recover_cycles": 11540628.487375997,
       "decommit_cycles": 0.0,
       "storage_application": 0.0,
-      "transaction_count": 26269.734606087855,
+      "transaction_count": 26269.734606086542,
       "near_call_count": 0.0,
-      "pubdata_bytes": 4529.0777600342235,
-      "merkle_leaf_count": 147063.77444543372,
-      "used_bytecode_bytes": 152.24213369200942,
+      "pubdata_bytes": 4529.077760034237,
+      "merkle_leaf_count": 147063.7744454361,
+      "used_bytecode_bytes": 152.2421336920091,
       "used_bytecode_count": 0.0,
-      "storage_key_count": 143318.5364496956,
-      "initial_heap_words": 0.0,
-      "state_diff_count": 111072.89179225411,
-      "system_log_count": 111275551.3335075
+      "storage_key_count": 143318.5364496934,
+      "state_diff_count": 111072.8917922552
     },
-    "base": 0.0,
+    "base": 1001479962.0015677,
     "r2": 0.9999735017366963
   }
 }
