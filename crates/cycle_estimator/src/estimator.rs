@@ -238,4 +238,19 @@ mod tests {
         assert!(est.is_reliable());
         assert!(est.total > 0);
     }
+
+    #[test]
+    fn calibrated_but_zero_coeff_feature_is_reliable() {
+        // sha256 is calibrated (present in the corpus) but the fit found it
+        // cheap/near-constant → zero coefficient. It must NOT be flagged unpriced,
+        // otherwise every real batch (all use a little sha256) is falsely rejected.
+        // Guards the guard's presence-not-sign semantics.
+        let tracer = CycleFeatureTracer::new();
+        tracer_add(&tracer, FeatureId::Sha256Cycles, 2_000);
+        let est = estimate(&tracer, 0, 0, &BatchContext::default());
+        assert!(
+            est.is_reliable(),
+            "sha256 is calibrated (present-with-0); must not be flagged unpriced"
+        );
+    }
 }
