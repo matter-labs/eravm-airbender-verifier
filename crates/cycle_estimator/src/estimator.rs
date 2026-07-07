@@ -49,7 +49,8 @@ pub struct BatchContext {
 /// limit) plus a per-phase breakdown for insight.
 #[derive(Debug, Clone)]
 pub struct CycleEstimate {
-    /// Predicted total guest cycles (`raw_cycles`), incl. guest prologue/epilogue.
+    /// Predicted effective (native-computational) cycles — main RISC-V cycles +
+    /// weighted delegation-circuit cost; incl. guest prologue/epilogue.
     /// This is the model's raw output — apply [`Self::conservative`] before
     /// comparing to a hard limit.
     pub total: u64,

@@ -15,11 +15,17 @@ Two complementary fits:
     proven storage slots, not by SSTORE opcode count) separately from VM
     execution, free of opcode collinearity.
 
-  * **Total** — regress raw_cycles against all features, for a single aggregate
-    predictor. The sequencer can either sum the per-phase predictions or use this.
+  * **Total** — regress *effective* (native-computational) cycles against all
+    features, for a single aggregate predictor. This is the number to compare
+    against the per-proof budget.
 
-Target: effective guest cycles. First cut = raw `cycles_executed`; fold in
-Airbender per-delegation weights (recorded in the dataset) once pinned.
+Target: **effective/native cycles** = `cycles_executed` (main RISC-V trace) +
+Σ(delegation_count · weight). Airbender proves delegations (Blake2, U256/bigint,
+keccak) in separate circuits whose cost the main cycle count does not include;
+the Airbender/zksync-os native budget (`MAX_NATIVE_COMPUTATIONAL`) folds them in
+with per-type weights (see `DELEGATION_WEIGHTS`). The per-phase fits stay on raw
+phase cycles (delegations are only counted batch-wide), so they remain a
+raw-cycle breakdown for insight; the TOTAL predictor is the effective one.
 
 Inputs: vm2 features the sequencer can compute natively. Delegation counts and
 per-phase cycles are ground-truth measurements, never model inputs.
@@ -79,6 +85,18 @@ PHASE_FEATURES = {
 # The base term absorbs their (near-constant) contribution instead.
 TOTAL_EXCLUDE = {"system_log_count", "initial_heap_words"}
 
+# Native-computational weight per delegation, keyed by the airbender delegation
+# CSR id recorded in the guest's `delegation_counter` (NON_DETERMINISM_CSR=0x7c0
+# =1984 + offset). Values are zksync-os's `native_with_delegations!` coefficients
+# (basic_system/cost_constants.rs):
+#   1991 = Blake2 round function (+7)  -> BLAKE_DELEGATION_COEFFICIENT  = 16
+#   1995 = Keccak special5      (+11)  -> KECCAK_DELEGATION_COEFFICIENT = 4
+# The guest delegates keccak (1995), so keccak is NOT software here. The U256/
+# bigint delegation (1994, +10, weight 4) exists but does not appear in this
+# corpus. Any delegation id NOT in this map raises an error in load_dataset — a
+# fail-safe against silently under-counting a new/enabled delegation.
+DELEGATION_WEIGHTS = {"1991": 16, "1994": 4, "1995": 4}
+
 
 def fit(X: np.ndarray, y: np.ndarray):
     """Non-negative least squares with an intercept column.
@@ -125,6 +143,17 @@ def load_dataset(path: Path) -> pd.DataFrame:
     records = []
     for r in rows:
         rec = {"batch_number": r["batch_number"], "raw_cycles": r["raw_cycles"]}
+        # Effective (native-computational) cycles = main RISC-V cycles + the
+        # weighted delegation-circuit cost the main trace doesn't account for.
+        deleg_cost = 0
+        for did, cnt in r.get("delegations", {}).items():
+            if did not in DELEGATION_WEIGHTS:
+                raise ValueError(
+                    f"batch {r['batch_number']}: unknown delegation id {did!r} — add its "
+                    f"native weight to DELEGATION_WEIGHTS (see zksync-os cost_constants.rs)"
+                )
+            deleg_cost += DELEGATION_WEIGHTS[did] * cnt
+        rec["effective_cycles"] = r["raw_cycles"] + deleg_cost
         rec.update(r["features"]["counts"])
         for phase, cyc in r.get("phase_cycles", {}).items():
             rec[f"phase_{phase}"] = cyc
@@ -158,7 +187,7 @@ def main():
     df = load_dataset(Path(args.dataset))
     feature_cols = [
         c for c in df.columns
-        if c not in ("batch_number", "raw_cycles")
+        if c not in ("batch_number", "raw_cycles", "effective_cycles")
         and not c.startswith("phase_")
         and c not in TOTAL_EXCLUDE
     ]
@@ -168,7 +197,8 @@ def main():
     report = [
         "# Cycle cost model report\n",
         f"- batches: {len(df)}",
-        f"- target: raw guest cycles\n",
+        f"- total target: effective/native cycles (raw + weighted delegations);"
+        f" per-phase target: raw phase cycles\n",
     ]
 
     # Per-phase fits.
@@ -185,8 +215,10 @@ def main():
         for c in used:
             report.append(f"| {c} | {table[c]:,.2f} | {_confidence(df, c)} |")
 
-    # Total fit (all features -> raw_cycles), optionally with pinned crypto costs.
-    y = df["raw_cycles"].to_numpy(dtype=float)
+    # Total fit (all features -> EFFECTIVE/native cycles = raw + weighted
+    # delegations), optionally with pinned crypto costs. This is the predictor the
+    # sequencer compares against the per-proof native budget.
+    y = df["effective_cycles"].to_numpy(dtype=float)
     used = [c for c in feature_cols if c in df.columns]
     X = df[used].to_numpy(dtype=float)
     if pinned:

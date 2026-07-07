@@ -1,15 +1,16 @@
 //! CI guard: the embedded cost model must keep predicting a frozen set of real,
 //! measured batches within tolerance. Runs in normal CI — the ground-truth
-//! `raw_cycles` are baked into the committed fixture, so no batch corpus or guest
-//! execution is needed.
+//! effective cycles are baked into the committed fixture, so no batch corpus or
+//! guest execution is needed.
 //!
 //! This is a regression tripwire, not a re-validation: it catches an accidental
 //! (or accuracy-worsening) change to `model/cost_table.json` or to the prediction
 //! code. Genuine model improvements still pass (thresholds, not exact pins).
 //!
 //! The fixture is a frozen snapshot of the 513xxx v31 hold-out set (features +
-//! measured raw guest cycles). Refresh it only when the guest/verifier changes
-//! enough to move real cycle counts (see `scripts/cycle_model/README.md`).
+//! measured effective/native cycles = raw + weighted delegations). Refresh it
+//! only when the guest/verifier changes enough to move real cycle counts (see
+//! `scripts/cycle_model/README.md`).
 
 use serde::Deserialize;
 use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
@@ -24,7 +25,9 @@ const MAX_SINGLE_ERR_PCT: f64 = 2.5;
 #[derive(Deserialize)]
 struct Row {
     batch_number: u64,
-    raw_cycles: u64,
+    /// Effective/native cycles = raw cycles + weighted delegation-circuit cost —
+    /// the target the TOTAL model predicts and the sequencer gates on.
+    effective_cycles: u64,
     features: FeatureVector,
 }
 
@@ -38,7 +41,7 @@ fn embedded_model_does_not_regress_on_frozen_holdout() {
     let mut worst = (0u64, 0.0_f64); // (batch, ape%)
     for r in &rows {
         let pred = model.predict_total(&r.features) as f64;
-        let ape = 100.0 * (pred - r.raw_cycles as f64).abs() / r.raw_cycles as f64;
+        let ape = 100.0 * (pred - r.effective_cycles as f64).abs() / r.effective_cycles as f64;
         sum_ape += ape;
         if ape > worst.1 {
             worst = (r.batch_number, ape);
