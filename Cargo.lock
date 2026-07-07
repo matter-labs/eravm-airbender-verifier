@@ -5926,6 +5926,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zksync-era-airbender-cycles-estimator"
+version = "29.8.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "zksync_vm2",
+]
+
+[[package]]
 name = "zksync-gpu-ffi"
 version = "0.156.0"
 source = "git+https://github.com/matter-labs/zksync-crypto-gpu.git?branch=oh_for_wrapper#845905b2aae49215e3d4ad0b71998b4a6b5abebf"
@@ -6107,12 +6117,11 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "zksync-era-airbender-cycles-estimator",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
  "zksync_types",
- "zksync_vm2",
  "zksync_vm_compare",
- "zksync_vm_interface",
 ]
 
 [[package]]

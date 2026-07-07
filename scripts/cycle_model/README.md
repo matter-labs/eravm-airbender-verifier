@@ -6,16 +6,17 @@ natively (a `zksync_vm2` execution trace) — **without** running RISC-V during
 sequencing. The sequencer uses this to predict whether a batch fits the
 per-proof cycle limit.
 
-Two halves, sharing one feature schema (`crates/cycle_model/src/features.rs`):
+Two halves, sharing one feature schema:
 
-- **Offline calibration** — measure real batches (features + ground-truth guest
-  cycles) and fit a cost table. Rust bench: `crates/cycle_model` (`cycle_bench`).
-  Python fit: this directory.
-- **Online estimator** — a Rust API (`zksync_cycle_model::estimate`) that applies
-  the committed cost table to a live `zksync_vm2` trace. See
-  [Using the estimator](#using-the-estimator-rust-api).
+- **Online estimator** (`crates/cycle_estimator`, crate
+  `zksync-era-airbender-cycles-estimator`) — a lean Rust API (`estimate`) the
+  sequencer calls to apply the committed cost table to a live `zksync_vm2` trace.
+  See [Using the estimator](#using-the-estimator-rust-api).
+- **Offline calibration** (`crates/cycle_model` + this directory) — measure real
+  batches (features + ground-truth guest cycles) and fit the cost table. Rust
+  bench: `cycle_bench`; Python fit: `fit_cost_model.py`.
 
-The committed, deployed model is `crates/cycle_model/model/cost_table.json`.
+The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
 
 ---
 
@@ -62,8 +63,8 @@ The committed, deployed model is `crates/cycle_model/model/cost_table.json`.
 The estimator compiles the cost table in via `include_str!`. To ship a new one:
 
 ```sh
-cp artifacts/cycle_model/cost_table.json crates/cycle_model/model/cost_table.json
-cargo test -p zksync_cycle_model            # unit tests re-parse the embedded table
+cp artifacts/cycle_model/cost_table.json crates/cycle_estimator/model/cost_table.json
+cargo test -p zksync-era-airbender-cycles-estimator   # re-parses the embedded table
 ```
 
 A malformed table or a feature name not in the `FeatureId` enum fails the build /
@@ -76,7 +77,7 @@ fitted* table with **no refitting** and report out-of-sample error:
 
 ```sh
 python scripts/cycle_model/eval_holdout.py \
-    --cost-table crates/cycle_model/model/cost_table.json \
+    --cost-table crates/cycle_estimator/model/cost_table.json \
     --dataset artifacts/holdout/dataset.json --out artifacts/holdout
 ```
 
@@ -90,20 +91,22 @@ CYCLE_MODEL_DATASET="$PWD/artifacts/holdout/dataset.json" \
 
 ## Using the estimator (Rust API)
 
-```rust
-use zksync_cycle_model::{estimate, BatchContext, CycleFeatureTracer};
+The estimator lives in the lean `zksync-era-airbender-cycles-estimator` crate
+(deps: `zksync_vm2` + serde only), so a sequencer can depend on it without the
+proving stack.
 
-// 1. Attach the passive tracer while executing the batch on the fast VM.
-//    It only observes (returns Continue, mutates nothing), so execution is
-//    identical to a proved run. Clone it per tx into the tracer dispatcher.
+```rust
+use zksync_era_airbender_cycles_estimator::{estimate, BatchContext, CycleFeatureTracer};
+
+// 1. Attach the passive tracer while executing the batch. Clone it per tx into
+//    the VM's tracer dispatcher; it only observes, so execution is unchanged.
 let tracer = CycleFeatureTracer::new();
 // ... run all transactions with `tracer.clone()` ...
 let finished = vm.finish_batch(pubdata_builder);
 
-// 2. Supply the batch-level drivers the opcode tracer cannot see — the
-//    sequencer already has these from its storage view and the bytecodes it
-//    is about to prove. (state_diff_count and pubdata_bytes are read from
-//    `finished` automatically.)
+// 2. Estimate — no RISC-V execution. Pass the two batch scalars from `finished`
+//    plus the batch-level drivers the opcode tracer can't see (from the storage
+//    view + the bytecodes being proved).
 let ctx = BatchContext {
     transaction_count,
     merkle_leaf_count,   // distinct storage slots touched = what the tree witnesses
@@ -111,19 +114,24 @@ let ctx = BatchContext {
     used_bytecode_bytes,
     used_bytecode_count,
 };
-
-// 3. Estimate — no RISC-V execution.
-let est = estimate(&tracer, &finished, &ctx);
-if !est.fits(PER_PROOF_CYCLE_LIMIT) {
-    // e.g. seal the batch early / split it
-}
+let est = estimate(
+    &tracer,
+    finished.pubdata_input.map_or(0, |p| p.len() as u64),
+    finished.state_diffs.map_or(0, |s| s.len() as u64),
+    &ctx,
+);
+if !est.fits(PER_PROOF_CYCLE_LIMIT) { /* seal early / split the batch */ }
 // est.total = predicted raw guest cycles; est.phases = per-phase breakdown.
 ```
 
-`estimate` uses the embedded model; `estimate_with_model` takes a candidate table.
-Note `merkle_leaf_count` is the count of distinct slots the batch touched (the
-witness does not exist yet at sequencing time), so it is an estimate of the
-calibrated witness quantity — validate the deployed path on real batches.
+Notes:
+- `estimate` uses the embedded model; `estimate_with_model` takes a candidate table.
+- `CycleFeatureTracer` is a **vm2 (fast VM)** tracer. The legacy VM has a
+  different tracer interface, so the legacy path needs a sibling tracer filling
+  the same `FeatureVector` (the model/estimator are VM-agnostic).
+- `merkle_leaf_count` is the distinct-slots-touched count (the witness does not
+  exist yet at sequencing time) — an estimate of the calibrated witness
+  quantity, so validate the deployed path on real batches.
 
 ## Model shape & current accuracy
 
@@ -142,5 +150,5 @@ calibrated witness quantity — validate the deployed path on real batches.
 
 ```sh
 python -m pytest scripts/cycle_model/test_fit_smoke.py   # fit on synthetic data
-cargo test -p zksync_cycle_model                          # schema + model + estimator
+cargo test -p zksync-era-airbender-cycles-estimator -p zksync_cycle_model
 ```

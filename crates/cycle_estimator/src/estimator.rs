@@ -2,33 +2,34 @@
 //!
 //! The sequencer attaches a [`CycleFeatureTracer`] while it executes a batch on
 //! the fast VM (it is passive — no VM-state mutation, so execution is identical
-//! to a proved run). After `finish_batch`, it calls [`estimate`] with the
-//! finished batch and a small [`BatchContext`] of quantities it already has, and
-//! gets a predicted guest cycle count to compare against the per-proof limit —
-//! **with no RISC-V execution**.
+//! to a proved run). After the batch finishes it calls [`estimate`] with two
+//! scalars from the batch output plus a small [`BatchContext`], and gets a
+//! predicted guest cycle count to compare against the per-proof limit — with no
+//! RISC-V execution.
+//!
+//! The API takes scalars rather than a `FinishedL1Batch` on purpose: it keeps
+//! this crate free of the VM-interface types (which are versioned per protocol),
+//! so a sequencer on any compatible version can call it by passing
+//! `pubdata_input.len()` and `state_diffs.len()` directly.
 //!
 //! Feature provenance:
-//! - `vm_execution` opcode/crypto features come from the tracer (exact).
-//! - `state_diff_count`, `pubdata_bytes` come from the [`FinishedL1Batch`] (exact).
-//! - `merkle_leaf_count`, `storage_key_count`, `used_bytecode_bytes/count`,
-//!   `transaction_count` come from [`BatchContext`] — the sequencer derives these
-//!   from its storage view and the bytecodes it is about to prove. At sequencing
-//!   time the merkle witness does not exist yet, so `merkle_leaf_count` is the
-//!   count of distinct storage slots the batch touched (what the tree will
-//!   witness); it is an estimate of the calibrated witness quantity, not a
-//!   byte-identical copy.
+//! - `vm_execution` opcode/crypto features — from the tracer (exact).
+//! - `pubdata_bytes`, `state_diff_count` — from the finished batch (exact).
+//! - the rest ([`BatchContext`]) — the sequencer derives these from its storage
+//!   view and the bytecodes it is about to prove. At sequencing time the merkle
+//!   witness does not exist yet, so `merkle_leaf_count` is the count of distinct
+//!   storage slots the batch touched (what the tree will witness) — an estimate
+//!   of the calibrated witness quantity, not a byte-identical copy.
 
 use std::collections::BTreeMap;
-
-use zksync_vm_interface::FinishedL1Batch;
 
 use crate::features::{FeatureId, FeatureVector};
 use crate::model::CostModel;
 use crate::tracer::CycleFeatureTracer;
 
 /// Batch-level model inputs the sequencer supplies from data it already holds
-/// (storage view + the bytecodes it will prove). Everything here is a driver of
-/// the setup / merkle phases that a vm2 opcode tracer cannot observe directly.
+/// (storage view + the bytecodes it will prove). These drive the setup / merkle
+/// phases and a vm2 opcode tracer cannot observe them directly.
 #[derive(Debug, Clone, Default)]
 pub struct BatchContext {
     /// Total transactions in the batch.
@@ -63,24 +64,11 @@ impl CycleEstimate {
 
 /// Assemble the full model feature vector from the passive tracer's counts plus
 /// the batch-level features the tracer cannot see. This is the online mirror of
-/// the offline `dataset::extract_features`, so the estimator consumes exactly the
-/// features the model was calibrated on.
+/// the offline `zksync_cycle_model::extract_features`, so the estimator consumes
+/// exactly the features the model was calibrated on. `pubdata_bytes` and
+/// `state_diff_count` come from the finished batch (`pubdata_input.len()` and
+/// `state_diffs.len()`).
 pub fn features_for_estimate(
-    tracer: &CycleFeatureTracer,
-    finished: &FinishedL1Batch,
-    ctx: &BatchContext,
-) -> FeatureVector {
-    let pubdata_bytes = finished
-        .pubdata_input
-        .as_ref()
-        .map_or(0, |p| p.len() as u64);
-    let state_diff_count = finished.state_diffs.as_ref().map_or(0, |s| s.len() as u64);
-    assemble_features(tracer, pubdata_bytes, state_diff_count, ctx)
-}
-
-/// Core feature assembly from already-extracted scalars, independent of the
-/// `FinishedL1Batch` type (so it is unit-testable without constructing one).
-fn assemble_features(
     tracer: &CycleFeatureTracer,
     pubdata_bytes: u64,
     state_diff_count: u64,
@@ -103,15 +91,19 @@ fn assemble_features(
 }
 
 /// Estimate guest cycles for a batch using the embedded cost model.
-///
-/// `tracer` is the [`CycleFeatureTracer`] driven through the batch; `finished` is
-/// the batch output; `ctx` carries the batch-level drivers (see [`BatchContext`]).
 pub fn estimate(
     tracer: &CycleFeatureTracer,
-    finished: &FinishedL1Batch,
+    pubdata_bytes: u64,
+    state_diff_count: u64,
     ctx: &BatchContext,
 ) -> CycleEstimate {
-    estimate_with_model(CostModel::embedded(), tracer, finished, ctx)
+    estimate_with_model(
+        CostModel::embedded(),
+        tracer,
+        pubdata_bytes,
+        state_diff_count,
+        ctx,
+    )
 }
 
 /// Like [`estimate`], but against a caller-supplied model (e.g. a candidate table
@@ -119,10 +111,11 @@ pub fn estimate(
 pub fn estimate_with_model(
     model: &CostModel,
     tracer: &CycleFeatureTracer,
-    finished: &FinishedL1Batch,
+    pubdata_bytes: u64,
+    state_diff_count: u64,
     ctx: &BatchContext,
 ) -> CycleEstimate {
-    let fv = features_for_estimate(tracer, finished, ctx);
+    let fv = features_for_estimate(tracer, pubdata_bytes, state_diff_count, ctx);
     CycleEstimate {
         total: model.predict_total(&fv),
         phases: model.predict_phases(&fv),
@@ -132,7 +125,6 @@ pub fn estimate_with_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::CostModel;
 
     fn tracer_add(t: &CycleFeatureTracer, id: FeatureId, n: u64) {
         // exercise the shared recorder without a live VM
@@ -150,7 +142,7 @@ mod tests {
             used_bytecode_bytes: 50_000,
             used_bytecode_count: 12,
         };
-        let fv = assemble_features(
+        let fv = features_for_estimate(
             &tracer, /*pubdata*/ 4096, /*state_diffs*/ 42, &ctx,
         );
         assert_eq!(fv.get(FeatureId::StorageWrite), 3); // tracer
@@ -171,12 +163,7 @@ mod tests {
             used_bytecode_count: 150,
             transaction_count: 50,
         };
-        let fv = assemble_features(&tracer, 10_000, 1500, &ctx);
-        let model = CostModel::embedded();
-        let est = CycleEstimate {
-            total: model.predict_total(&fv),
-            phases: model.predict_phases(&fv),
-        };
+        let est = estimate(&tracer, 10_000, 1500, &ctx);
         assert!(est.total > 0);
         for phase in ["setup", "vm_execution", "merkle_verification", "commitment"] {
             assert!(est.phases.contains_key(phase));
