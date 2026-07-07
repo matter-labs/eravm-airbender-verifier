@@ -38,6 +38,9 @@ pub struct SnarkPipeline {
     wrapper: SnarkWrapper,
     use_zk: bool,
     save_intermediates: bool,
+    // [aux-diag] retained so run_phases can recompute the binary commitment.
+    bin: PathBuf,
+    text: PathBuf,
 }
 
 impl SnarkPipeline {
@@ -67,6 +70,8 @@ impl SnarkPipeline {
             wrapper,
             use_zk: options.use_zk,
             save_intermediates: options.save_intermediates,
+            bin: options.bin.clone(),
+            text: options.text.clone(),
         })
     }
 
@@ -119,6 +124,27 @@ impl SnarkPipeline {
         raw_proof: RawFriProof,
         intermediates_dir: Option<&Path>,
     ) -> Result<SnarkWrapperProof> {
+        // [aux-diag] Pinpoint the phase-1 "register N != aux_params" failure by
+        // dumping BOTH sides of the check_aux_params comparison before it runs:
+        //   - expected: BinaryCommitment::from_base_binary(app.bin).aux_params
+        //   - actual:   the FRI proof's register_final_values[18..=25]
+        // If all 8 differ, the whole base->unrolled->unified chain diverges
+        // (security/binary/base-config); if only some differ, a specific layer does.
+        match (std::fs::read(&self.bin), std::fs::read(&self.text)) {
+            (Ok(bin), Ok(text)) => {
+                let bc = zkos_wrapper::circuits::BinaryCommitment::from_base_binary(&bin, &text);
+                let regs: Vec<u32> = (18..=25)
+                    .map(|i| raw_proof.register_final_values[i].value)
+                    .collect();
+                eprintln!(
+                    "[aux-diag] from_base_binary.aux_params          = {:08x?}",
+                    bc.aux_params
+                );
+                eprintln!("[aux-diag] proof.register_final_values[18..=25] = {regs:08x?}");
+            }
+            _ => eprintln!("[aux-diag] could not read bin/text for aux-param diagnostic"),
+        }
+
         let risc_wrapper_proof = self
             .wrapper
             .prove_risc_wrapper(raw_proof)
