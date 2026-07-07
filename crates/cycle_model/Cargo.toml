@@ -10,14 +10,14 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Dependencies are added incrementally as each task needs them (Task 1 only
-# needs serde for the FeatureVector schema; the vm2/multivm/airbender graph is
-# pulled in from Task 2 onward). This keeps early builds fast.
+# Offline calibration: measures real batches (fast VM + guest) and fits the cost
+# table. The feature schema, tracer, cost model, and estimator live in the lean
+# `zksync_cycle_estimator` crate (which the sequencer depends on); this crate
+# builds the dataset on top and pulls the heavy proving/VM stack it does not.
 [dependencies]
+zksync-era-airbender-cycles-estimator.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-zksync_vm2.workspace = true
-zksync_vm_interface.workspace = true
 zksync_airbender_verifier.workspace = true
 zksync_vm_compare.workspace = true
 zksync_cli_utils.workspace = true

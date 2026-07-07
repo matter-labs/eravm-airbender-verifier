@@ -1,23 +1,19 @@
-//! Airbender cycle-cost calibration harness + online estimator.
+//! Airbender cycle-cost calibration harness (offline).
 //!
-//! Two halves that share one feature schema:
-//! - **Offline calibration** ([`dataset`], [`runner`]): correlate cheap,
-//!   natively-computable vm2 execution features with ground-truth Airbender
-//!   RISC-V guest cycles, producing the fitted cost table.
-//! - **Online estimation** ([`model`], [`estimator`]): the sequencer attaches
-//!   [`CycleFeatureTracer`] while executing a batch and calls [`estimate`] to
-//!   predict the batch's proving cost — no RISC-V execution — using the cost
-//!   table committed at `model/cost_table.json`.
+//! Measures real batches — cheap `zksync_vm2` features paired with ground-truth
+//! Airbender RISC-V guest cycles — and produces the dataset the cost model is fit
+//! from. The feature schema, passive tracer, cost model, and online estimator
+//! live in the lean [`zksync_era_airbender_cycles_estimator`] crate (which the
+//! sequencer uses); this crate builds the labelled dataset on top of it.
 pub mod dataset;
-pub mod estimator;
-pub mod features;
-pub mod model;
 pub mod runner;
-pub mod tracer;
 
 pub use dataset::{extract_features, write_dataset, DatasetRow};
-pub use estimator::{estimate, features_for_estimate, BatchContext, CycleEstimate};
-pub use features::{FeatureId, FeatureVector};
-pub use model::{CostModel, LinearModel};
 pub use runner::{run_guest, GuestMeasurement};
-pub use tracer::CycleFeatureTracer;
+
+// Re-export the shared schema/model so existing `zksync_cycle_model::{FeatureId,
+// CostModel, ...}` paths keep working and callers need only this crate.
+pub use zksync_era_airbender_cycles_estimator::{
+    estimate, BatchContext, CostModel, CycleEstimate, CycleFeatureTracer, FeatureId, FeatureVector,
+    LinearModel,
+};
