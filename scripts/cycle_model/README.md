@@ -160,8 +160,12 @@ proved), so the estimate is used conservatively:
 
 keccak256/sha256/ecrecover are size-scaled from the trace, but their fitted
 coefficients are in-sample/collinear, and secp256r1/modexp/ec_add/ec_mul/
-ec_pairing are unpriced (absent from the corpus). To price them soundly, measure
-each precompile's guest cycles per unit directly and pin them:
+ec_pairing are unpriced (absent from the corpus).
+
+The fastest source is **zksync-os**, which already measured RISC-V-cycle native
+costs for every precompile against the same airbender delegations — see
+[`native_cost_conversion.md`](native_cost_conversion.md) for the derived costs in
+our units and the conversion factor. Alternatively, measure directly and pin:
 
 - Build a synthetic batch that runs N of one precompile (varying input size),
   measure guest cycles with the marker guest (`cycle_bench`), and divide by the
