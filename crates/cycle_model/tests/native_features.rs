@@ -4,27 +4,30 @@
 //! corpus — fetch it first:
 //!
 //! ```sh
-//! ./scripts/fetch_lfs_batches.sh 506077.bin.gz
+//! ./scripts/fetch_lfs_batches.sh 84730.bin.gz
 //! cargo test -p zksync_cycle_model --test native_features -- --ignored --nocapture
 //! ```
+//!
+//! The batch must decode at this repo's (v31) wire format. `84730` is a v31
+//! corpus batch; substitute any batch present in the testdata dir.
 use std::path::PathBuf;
 
 use zksync_cli_utils::{load_batch, resolve_batch_inputs};
 use zksync_cycle_model::{extract_features, FeatureId};
 
 #[test]
-#[ignore = "requires the LFS batch corpus (fetch 506077.bin.gz)"]
+#[ignore = "requires the LFS batch corpus (fetch a v31 batch, e.g. 84730.bin.gz)"]
 fn extract_features_on_real_batch() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../testdata/era_mainnet_batches/binary")
         .canonicalize()
         .expect("batches dir must exist");
-    let inputs = resolve_batch_inputs(&dir, Some(&[PathBuf::from("506077.bin.gz")]), false)
+    let inputs = resolve_batch_inputs(&dir, Some(&[PathBuf::from("84730.bin.gz")]), false)
         .expect("resolve batch");
-    let envelope = load_batch(&inputs[0]).expect("load batch 506077");
-    let v1 = envelope.into_v1().expect("v1 payload");
+    // v31 has no version envelope — load_batch returns the canonical input.
+    let input = load_batch(&inputs[0]).expect("load batch 84730");
 
-    let features = extract_features(&v1).expect("feature extraction");
+    let features = extract_features(&input).expect("feature extraction");
 
     let total: u64 = features.counts.values().sum();
     assert!(total > 0, "a real batch must execute opcodes");

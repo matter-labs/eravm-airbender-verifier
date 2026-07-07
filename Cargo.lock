@@ -6112,6 +6112,7 @@ dependencies = [
  "zksync_types",
  "zksync_vm2",
  "zksync_vm_compare",
+ "zksync_vm_interface",
 ]
 
 [[package]]

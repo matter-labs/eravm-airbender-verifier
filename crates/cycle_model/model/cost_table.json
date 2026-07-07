@@ -1,0 +1,90 @@
+{
+  "batches": 122,
+  "phases": {
+    "vm_execution": {
+      "features": {
+        "rich_addressing_op": 2.3048670830152,
+        "average_op": 0.0,
+        "storage_read": 11400.48110280341,
+        "storage_write": 44786.76805258805,
+        "transient_storage_read": 0.0,
+        "transient_storage_write": 0.0,
+        "event": 0.0,
+        "precompile_call": 8641.725710820794,
+        "decommit": 410177.7151939077,
+        "far_call": 22924.981952223814,
+        "uma_write": 2035.9610651352416,
+        "uma_read": 712.2941557381675,
+        "near_call_count": 0.0,
+        "keccak256_cycles": 26951.398998523448,
+        "sha256_cycles": 84950.22399999519,
+        "ec_recover_cycles": 11524968.49647119,
+        "decommit_cycles": 3708.9988879430434,
+        "storage_application": 33273.48658223204,
+        "transaction_count": 0.0
+      },
+      "base": 818988947.2378746,
+      "r2": 0.9999506327076458
+    },
+    "merkle_verification": {
+      "features": {
+        "merkle_leaf_count": 231382.17100235328,
+        "state_diff_count": 203476.51206983504
+      },
+      "base": 21022507.035435747,
+      "r2": 0.9999972132845248
+    },
+    "setup": {
+      "features": {
+        "merkle_leaf_count": 2057.0363542379155,
+        "transaction_count": 0.0,
+        "used_bytecode_bytes": 62.87954071302192,
+        "used_bytecode_count": 6050.856020896605,
+        "storage_key_count": 3859.065732284991,
+        "initial_heap_words": 0.0
+      },
+      "base": 15220052.627711141,
+      "r2": 0.9999990146293445
+    },
+    "commitment": {
+      "features": {
+        "pubdata_bytes": 252.1784561875586
+      },
+      "base": 137867018.12291804,
+      "r2": 0.8682501559645529
+    }
+  },
+  "total": {
+    "features": {
+      "rich_addressing_op": 73.8727418805959,
+      "average_op": 0.0,
+      "storage_read": 10356.665099557476,
+      "storage_write": 43661.28815790521,
+      "transient_storage_read": 0.0,
+      "transient_storage_write": 0.0,
+      "event": 0.0,
+      "precompile_call": 28766.188639556203,
+      "decommit": 312878.2993326011,
+      "far_call": 15135.908290980184,
+      "uma_write": 2941.492609711417,
+      "uma_read": 76.72298904838769,
+      "keccak256_cycles": 9552.037069655642,
+      "sha256_cycles": 0.0,
+      "ec_recover_cycles": 11540628.487375986,
+      "decommit_cycles": 0.0,
+      "storage_application": 0.0,
+      "transaction_count": 26269.734606087855,
+      "near_call_count": 0.0,
+      "pubdata_bytes": 4529.0777600342235,
+      "merkle_leaf_count": 147063.77444543372,
+      "used_bytecode_bytes": 152.24213369200942,
+      "used_bytecode_count": 0.0,
+      "storage_key_count": 143318.5364496956,
+      "initial_heap_words": 0.0,
+      "state_diff_count": 111072.89179225411,
+      "system_log_count": 111275551.3335075
+    },
+    "base": 0.0,
+    "r2": 0.9999735017366963
+  }
+}
