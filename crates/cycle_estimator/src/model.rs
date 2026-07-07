@@ -88,21 +88,24 @@ impl CostModel {
     }
 
     /// Safety-critical precompile/crypto features (see
-    /// [`SAFETY_CRITICAL_FEATURES`]) the batch actually uses but that this model
-    /// prices at ~0 (no coefficient in the aggregate predictor). A non-empty
-    /// result means the prediction omits that precompile's cost and is therefore
-    /// an under-estimate — the caller must not trust it (fail safe).
+    /// [`SAFETY_CRITICAL_FEATURES`]) the batch uses but that the model **never
+    /// calibrated** — i.e. absent from the aggregate predictor because the
+    /// corpus never exercised that precompile (e.g. ec_pairing, modexp). A
+    /// non-empty result means the prediction omits an unbounded, un-priced cost
+    /// and must not be trusted (fail safe); no safety multiplier rescues it.
     ///
-    /// This catches precompiles the calibration corpus never exercised (e.g.
-    /// ec_pairing, modexp): the model can't price what it never saw, and no
-    /// safety multiplier rescues a coefficient of zero.
+    /// A feature that IS in the model but with a zero coefficient is *not*
+    /// flagged: it was calibrated and found cheap/near-constant (e.g. sha256,
+    /// which the corpus contains at low volume), so the base already covers it.
+    /// Its only risk is linear extrapolation to volumes far beyond the corpus —
+    /// that is the safety-margin's job, not the unknown-op guard's. (Presence,
+    /// not coefficient sign, is the signal — else every batch, which all use a
+    /// little sha256, would be falsely rejected.)
     pub fn unpriced_used(&self, fv: &FeatureVector) -> Vec<FeatureId> {
         SAFETY_CRITICAL_FEATURES
             .iter()
             .copied()
-            .filter(|id| {
-                fv.get(*id) > 0 && self.total.features.get(id).copied().unwrap_or(0.0) <= 0.0
-            })
+            .filter(|id| fv.get(*id) > 0 && !self.total.features.contains_key(id))
             .collect()
     }
 }
