@@ -1,74 +1,71 @@
 # Pricing precompiles from zksync-os native costs
 
-zksync-os (`basic_system/src/cost_constants.rs`, branch `draft-0.4.0`) has
-RISC-V-cycle "native costs" for every precompile, measured via cycle markers,
-with delegations folded in: `native_with_delegations!(raw, bigint, blake) = raw +
-bigint*4 + blake*16` (keccak uses its own coeff 4). These are the sound,
-size-parameterized costs we lack for the precompiles our corpus never exercised.
+zksync-os (`basic_system/src/cost_constants.rs`, branch `draft-0.4.0`) gives each
+precompile as `native_with_delegations!(raw, bigint, blake)` — i.e. its **raw
+RISC-V cycles** plus its **delegation counts** (bigint / blake), measured via
+cycle markers. That decomposition is exactly what we need.
 
-## Why they transfer
+## Why the delegation counts transfer exactly
 
-Both worlds run on the airbender machine and route crypto through the same
-`airbender-crypto` delegations (keccak via `sha3/delegated`, bn254/modexp via
-`bigint_delegation`). zksync-protocol PR #209 ("Support airbender delegations in
-precompiles") wires vm2's precompiles to those same delegations behind the
-`airbender-precompile-delegations` feature. So a precompile's delegation cost is
-shared hardware — zksync-os's numbers are the right basis for ours.
+Our verifier's vm2 runs precompiles with `airbender-precompile-delegations`
+enabled (zksync-protocol `popzxc-airbender-precompiles`, PR #209), so they use
+the **same `airbender-crypto` delegations** zksync-os prices (keccak via
+`sha3/delegated`, bn254/modexp via `bigint_delegation`). So for any precompile
+the *number* of delegations it issues is identical in both worlds — zksync-os's
+`bigint`/`blake` args give us those counts directly, with no calibration.
 
-## Units and the conversion factor
+## The conversion
 
-Our `keccak256_cycles` / `sha256_cycles` features are the round counts vm2's
-precompiles return (`keccak256_rounds_function`, 136-byte chunks;
-`sha256_rounds_function`, 64-byte chunks) — identical to zksync-os's per-round
-unit. So they compare directly.
+    our_cost(op) ≈ raw(op) + delegations(op) · d      [+ precompile_call per invocation]
 
-Anchor on **keccak** (the only crypto op our corpus identifies well — present in
-every batch, "ok" confidence):
+- `raw(op)`, `delegations(op)` — from zksync-os's constant (transfer directly).
+- `d` — our guest's raw-cycles **per delegation dispatch**. This is the only
+  thing to calibrate, and it's a property of the machine, not the op.
 
-    k = our_fitted_keccak_per_round / zksync_os_keccak_native_per_round
-      = 26,951 / (649*4 + 1250) = 26,951 / 3,846 ≈ 7.0   [our raw_cycles per native unit]
+### Calibrating d
 
-sha256 and ecrecover imply k ≈ 20 and ≈ 31, but those fitted coefficients are
-collinearity artifacts (near-zero corpus variance), so keccak is the anchor. The
-~7× gap is the fast-VM interpreter/dispatch overhead our guest pays per round on
-top of the delegated work — see the caveat below.
+The corpus can't isolate `d` by regression — `raw_cycles` is dominated by
+non-delegation work (setup, merkle, non-crypto vm), so `raw_cycles ~ delegations`
+fits a nonsensical negative base, and the delegations/keccak-round ratio (≈704 +
+≈253 for ids 1991/1995) exceeds zksync-os's 649 because the guest also hashes
+outside the VM (merkle/commitment). The clean anchor is keccak per round:
 
-## Derived precompile costs (current guest, our raw_cycles units = k × native)
+    d = (our_keccak_per_round − zksync_os_keccak_raw_per_round) / keccak_delegations_per_round
+      = (26,951 − 1,250) / 649 ≈ 40 raw-cycles / delegation
 
-| precompile | zksync-os native | our units (×7.0) |
-|---|---:|---:|
-| ec_recover (per call) | 368,000 | 2,578,813 |
-| p256 / secp256r1 (per call) | 784,000 | 5,493,992 |
-| bn254 ec_add (per call) | 58,000 | 406,443 |
-| bn254 ec_mul (per call) | 811,000 | 5,683,199 |
-| bn254 pairing (base) | 6,244,000 | 43,755,729 |
-| bn254 pairing (per pair) | 6,908,000 | 48,408,805 |
-| modexp (base) | 20,000 | 140,152 |
-| modexp (per operand digit²) | 340 | 2,382 |
+**A controlled microbench should confirm `d`** (vary one precompile, measure
+Δraw_cycles vs Δdelegations) — corpus data alone is too confounded. Treat d ≈ 40
+as provisional.
 
-These move the five unpriced precompiles from **0** (silent under-estimate) to a
-physically-grounded, conservative value.
+## Per-op decomposition and provisional cost (our raw_cycles units, d ≈ 40)
 
-## Caveat: k is guest-backend-dependent
+| precompile | raw | delegations | ≈ our cost |
+|---|---:|---:|---:|
+| ec_recover / call | 240,000 | 32,000 | 1,520,000 |
+| p256 / call | 500,000 | 71,000 | 3,340,000 |
+| bn254 ec_add / call | 51,400 | 1,650 | 117,400 |
+| bn254 ec_mul / call | 647,000 | 41,000 | 2,287,000 |
+| bn254 pairing (base) | 6,244,000 | 0 | 6,244,000 |
+| bn254 pairing / pair | 5,572,000 | 334,000 | 18,932,000 |
+| modexp | given as total native units (no delegation split): 20,000 base + 340·digit² + 400·op — measure directly | | |
 
-k≈7 reflects our **current** guest, where keccak is delegated but the EC/modexp
-precompiles are the legacy (non-delegated) backend. Once the verifier guest
-enables `airbender-precompile-delegations` (PR #209):
-- the EC/modexp precompiles become delegated → bounded and matching zksync-os;
-- per-op cost drops toward zksync-os native (**k → ~1** for the delegated part,
-  plus the fixed per-call interpreter overhead already in `precompile_call`).
+The delegation counts are firm; the ≈-column moves with the calibrated `d` and
+each invocation also carries the fixed `precompile_call` fast-VM overhead.
 
-So **re-derive k after the guest adopts PR #209**, and treat the table above as a
-conservative interim basis. Until then, the coverage guard (which rejects any
-batch using an unpriced precompile) is the active protection.
+## Caveat
+
+- `d` is provisional (keccak-anchored, corpus can't isolate it) — pin it with a
+  microbench before trusting the ≈-column.
+- These move the five unpriced precompiles from **0** (silent under-estimate) to
+  grounded, size-parameterized values; conservative to round up.
+- keccak/sha256/ecrecover are already priced from the fit — don't replace them
+  with lower values (under-pricing is unsafe); refine via the same microbench.
 
 ## Applying it
 
-- keccak/sha256/ecrecover are already priced (per-round features exist). Do NOT
-  blindly replace their fitted coefficients with lower k×native values —
-  under-pricing is unsafe; refine them with a direct microbench instead.
-- EC/modexp/secp256r1 are per-call / per-pair / per-digit², which the current
-  `<op>_cycles` (CycleStats) features do not express. Pinning them needs a
-  featurization upgrade: have the tracer count invocations (and pairs / operand
-  size) so the cost applies as `base + per_pair·pairs`, etc. Write the resulting
-  coefficients into `cost_table.json` (they have no dataset column to fit).
+EC/modexp are per-call / per-pair / per-digit², which the current `<op>_cycles`
+(CycleStats) features don't express. Pinning them needs a featurization upgrade:
+have the tracer count invocations (+ pairs / operand size) so cost applies as
+`base + per_pair·pairs`, then write the coefficients into `cost_table.json` (they
+have no dataset column to fit). Until then the coverage guard rejects any batch
+using an unpriced precompile.
