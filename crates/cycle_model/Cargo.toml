@@ -20,9 +20,11 @@ zksync_vm2.workspace = true
 zksync_airbender_verifier.workspace = true
 zksync_vm_compare.workspace = true
 zksync_cli_utils.workspace = true
+zksync_types.workspace = true
 airbender-host.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+rayon.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
