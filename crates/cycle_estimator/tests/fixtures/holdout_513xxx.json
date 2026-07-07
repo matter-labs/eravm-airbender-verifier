@@ -2,6 +2,7 @@
  {
   "batch_number": 513601,
   "raw_cycles": 16649121486,
+  "effective_cycles": 17054407638,
   "features": {
    "counts": {
     "rich_addressing_op": 5322271,
@@ -37,6 +38,7 @@
  {
   "batch_number": 513602,
   "raw_cycles": 14582775603,
+  "effective_cycles": 14939349535,
   "features": {
    "counts": {
     "rich_addressing_op": 7023484,
@@ -72,6 +74,7 @@
  {
   "batch_number": 513603,
   "raw_cycles": 11870943954,
+  "effective_cycles": 12176113598,
   "features": {
    "counts": {
     "rich_addressing_op": 7359554,
@@ -107,6 +110,7 @@
  {
   "batch_number": 513604,
   "raw_cycles": 11528675943,
+  "effective_cycles": 11838067699,
   "features": {
    "counts": {
     "rich_addressing_op": 7420474,
@@ -142,6 +146,7 @@
  {
   "batch_number": 513605,
   "raw_cycles": 13938739597,
+  "effective_cycles": 14275618997,
   "features": {
    "counts": {
     "rich_addressing_op": 7099561,
@@ -177,6 +182,7 @@
  {
   "batch_number": 513606,
   "raw_cycles": 13882730571,
+  "effective_cycles": 14235706595,
   "features": {
    "counts": {
     "rich_addressing_op": 7099286,
@@ -212,6 +218,7 @@
  {
   "batch_number": 513607,
   "raw_cycles": 14084985980,
+  "effective_cycles": 14425723904,
   "features": {
    "counts": {
     "rich_addressing_op": 7117076,
@@ -247,6 +254,7 @@
  {
   "batch_number": 513608,
   "raw_cycles": 11486261653,
+  "effective_cycles": 11770587917,
   "features": {
    "counts": {
     "rich_addressing_op": 7448659,
@@ -282,6 +290,7 @@
  {
   "batch_number": 513609,
   "raw_cycles": 14657002050,
+  "effective_cycles": 15049927974,
   "features": {
    "counts": {
     "rich_addressing_op": 5257381,
@@ -317,6 +326,7 @@
  {
   "batch_number": 513610,
   "raw_cycles": 9904910396,
+  "effective_cycles": 10220659860,
   "features": {
    "counts": {
     "rich_addressing_op": 2578507,
@@ -352,6 +362,7 @@
  {
   "batch_number": 513611,
   "raw_cycles": 10209215036,
+  "effective_cycles": 10518401292,
   "features": {
    "counts": {
     "rich_addressing_op": 2485980,
@@ -387,6 +398,7 @@
  {
   "batch_number": 513612,
   "raw_cycles": 11675085100,
+  "effective_cycles": 12024526536,
   "features": {
    "counts": {
     "rich_addressing_op": 3581980,
@@ -422,6 +434,7 @@
  {
   "batch_number": 513613,
   "raw_cycles": 11266087207,
+  "effective_cycles": 11594610911,
   "features": {
    "counts": {
     "rich_addressing_op": 2853650,
@@ -457,6 +470,7 @@
  {
   "batch_number": 513614,
   "raw_cycles": 10955798609,
+  "effective_cycles": 11283818473,
   "features": {
    "counts": {
     "rich_addressing_op": 2955473,
@@ -492,6 +506,7 @@
  {
   "batch_number": 513615,
   "raw_cycles": 17104331611,
+  "effective_cycles": 17561271239,
   "features": {
    "counts": {
     "rich_addressing_op": 6577338,
@@ -527,6 +542,7 @@
  {
   "batch_number": 513616,
   "raw_cycles": 13571593483,
+  "effective_cycles": 13972925763,
   "features": {
    "counts": {
     "rich_addressing_op": 6946230,
@@ -562,6 +578,7 @@
  {
   "batch_number": 513617,
   "raw_cycles": 16171830590,
+  "effective_cycles": 16614698178,
   "features": {
    "counts": {
     "rich_addressing_op": 6568401,
@@ -597,6 +614,7 @@
  {
   "batch_number": 513618,
   "raw_cycles": 16304534280,
+  "effective_cycles": 16745715280,
   "features": {
    "counts": {
     "rich_addressing_op": 6568119,
@@ -632,6 +650,7 @@
  {
   "batch_number": 513619,
   "raw_cycles": 10935800212,
+  "effective_cycles": 11266702420,
   "features": {
    "counts": {
     "rich_addressing_op": 3074296,
@@ -667,6 +686,7 @@
  {
   "batch_number": 513620,
   "raw_cycles": 11084215637,
+  "effective_cycles": 11412569737,
   "features": {
    "counts": {
     "rich_addressing_op": 2992393,
@@ -702,6 +722,7 @@
  {
   "batch_number": 513621,
   "raw_cycles": 11190785752,
+  "effective_cycles": 11520822376,
   "features": {
    "counts": {
     "rich_addressing_op": 3781460,
@@ -737,6 +758,7 @@
  {
   "batch_number": 513622,
   "raw_cycles": 12485462476,
+  "effective_cycles": 12852203200,
   "features": {
    "counts": {
     "rich_addressing_op": 4012702,
@@ -772,6 +794,7 @@
  {
   "batch_number": 513623,
   "raw_cycles": 13401905599,
+  "effective_cycles": 13804329163,
   "features": {
    "counts": {
     "rich_addressing_op": 4164738,
@@ -807,6 +830,7 @@
  {
   "batch_number": 513624,
   "raw_cycles": 10666722421,
+  "effective_cycles": 11003430853,
   "features": {
    "counts": {
     "rich_addressing_op": 3096269,
@@ -842,6 +866,7 @@
  {
   "batch_number": 513625,
   "raw_cycles": 16230634125,
+  "effective_cycles": 16690477797,
   "features": {
    "counts": {
     "rich_addressing_op": 5981418,
@@ -877,6 +902,7 @@
  {
   "batch_number": 513626,
   "raw_cycles": 9743952484,
+  "effective_cycles": 10036546064,
   "features": {
    "counts": {
     "rich_addressing_op": 2934314,
@@ -912,6 +938,7 @@
  {
   "batch_number": 513627,
   "raw_cycles": 12762833550,
+  "effective_cycles": 13130407042,
   "features": {
    "counts": {
     "rich_addressing_op": 3938810,
@@ -947,6 +974,7 @@
  {
   "batch_number": 513628,
   "raw_cycles": 15916699649,
+  "effective_cycles": 16383063529,
   "features": {
    "counts": {
     "rich_addressing_op": 5439756,
@@ -982,6 +1010,7 @@
  {
   "batch_number": 513629,
   "raw_cycles": 12610175065,
+  "effective_cycles": 12991566857,
   "features": {
    "counts": {
     "rich_addressing_op": 3873081,
@@ -1017,6 +1046,7 @@
  {
   "batch_number": 513630,
   "raw_cycles": 13721959144,
+  "effective_cycles": 14123538324,
   "features": {
    "counts": {
     "rich_addressing_op": 4495545,
@@ -1052,6 +1082,7 @@
  {
   "batch_number": 513631,
   "raw_cycles": 10046082708,
+  "effective_cycles": 10363354228,
   "features": {
    "counts": {
     "rich_addressing_op": 2580713,
@@ -1087,6 +1118,7 @@
  {
   "batch_number": 513632,
   "raw_cycles": 12918423340,
+  "effective_cycles": 13309959956,
   "features": {
    "counts": {
     "rich_addressing_op": 4702153,
@@ -1122,6 +1154,7 @@
  {
   "batch_number": 513633,
   "raw_cycles": 11158279059,
+  "effective_cycles": 11532532347,
   "features": {
    "counts": {
     "rich_addressing_op": 4157193,
@@ -1157,6 +1190,7 @@
  {
   "batch_number": 513634,
   "raw_cycles": 11971135717,
+  "effective_cycles": 12325957433,
   "features": {
    "counts": {
     "rich_addressing_op": 4207332,
@@ -1192,6 +1226,7 @@
  {
   "batch_number": 513635,
   "raw_cycles": 9360108841,
+  "effective_cycles": 9668101453,
   "features": {
    "counts": {
     "rich_addressing_op": 2735397,
@@ -1227,6 +1262,7 @@
  {
   "batch_number": 513636,
   "raw_cycles": 13360523953,
+  "effective_cycles": 13747275089,
   "features": {
    "counts": {
     "rich_addressing_op": 3972499,
@@ -1262,6 +1298,7 @@
  {
   "batch_number": 513637,
   "raw_cycles": 12518787447,
+  "effective_cycles": 12873136207,
   "features": {
    "counts": {
     "rich_addressing_op": 3469642,
@@ -1297,6 +1334,7 @@
  {
   "batch_number": 513638,
   "raw_cycles": 12522347451,
+  "effective_cycles": 12895711423,
   "features": {
    "counts": {
     "rich_addressing_op": 3685379,
@@ -1332,6 +1370,7 @@
  {
   "batch_number": 513639,
   "raw_cycles": 10175717169,
+  "effective_cycles": 10502639757,
   "features": {
    "counts": {
     "rich_addressing_op": 3240040,
@@ -1367,6 +1406,7 @@
  {
   "batch_number": 513640,
   "raw_cycles": 8781975955,
+  "effective_cycles": 9064584531,
   "features": {
    "counts": {
     "rich_addressing_op": 2360852,
@@ -1402,6 +1442,7 @@
  {
   "batch_number": 513641,
   "raw_cycles": 10922257901,
+  "effective_cycles": 11263140837,
   "features": {
    "counts": {
     "rich_addressing_op": 3257439,
@@ -1437,6 +1478,7 @@
  {
   "batch_number": 513642,
   "raw_cycles": 16141028082,
+  "effective_cycles": 16578425526,
   "features": {
    "counts": {
     "rich_addressing_op": 6669414,
@@ -1472,6 +1514,7 @@
  {
   "batch_number": 513643,
   "raw_cycles": 16463572382,
+  "effective_cycles": 16908849174,
   "features": {
    "counts": {
     "rich_addressing_op": 6487928,
@@ -1507,6 +1550,7 @@
  {
   "batch_number": 513644,
   "raw_cycles": 15787708386,
+  "effective_cycles": 16196557734,
   "features": {
    "counts": {
     "rich_addressing_op": 6804033,
@@ -1542,6 +1586,7 @@
  {
   "batch_number": 513645,
   "raw_cycles": 16851082959,
+  "effective_cycles": 17278427071,
   "features": {
    "counts": {
     "rich_addressing_op": 6611848,
@@ -1577,6 +1622,7 @@
  {
   "batch_number": 513646,
   "raw_cycles": 15211198716,
+  "effective_cycles": 15621833048,
   "features": {
    "counts": {
     "rich_addressing_op": 4529006,
@@ -1612,6 +1658,7 @@
  {
   "batch_number": 513647,
   "raw_cycles": 18358479934,
+  "effective_cycles": 18834914650,
   "features": {
    "counts": {
     "rich_addressing_op": 6410789,
@@ -1647,6 +1694,7 @@
  {
   "batch_number": 513648,
   "raw_cycles": 14898708916,
+  "effective_cycles": 15334877704,
   "features": {
    "counts": {
     "rich_addressing_op": 5175301,
@@ -1682,6 +1730,7 @@
  {
   "batch_number": 513649,
   "raw_cycles": 14756665345,
+  "effective_cycles": 15148614889,
   "features": {
    "counts": {
     "rich_addressing_op": 4656645,

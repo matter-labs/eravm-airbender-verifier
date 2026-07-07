@@ -42,7 +42,7 @@ impl LinearModel {
     }
 }
 
-/// The full fitted cost model: an aggregate `total` predictor over `raw_cycles`
+/// The full fitted cost model: an aggregate `total` predictor over effective cycles
 /// plus a per-phase predictor for each verify() phase.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CostModel {
@@ -69,10 +69,11 @@ impl CostModel {
         })
     }
 
-    /// Aggregate prediction of total guest cycles (`raw_cycles`), including the
-    /// guest prologue/epilogue the per-phase models don't cover (absorbed by the
-    /// total model's base). This is the number to compare against the per-proof
-    /// cycle limit.
+    /// Aggregate prediction of **effective (native-computational) cycles** — the
+    /// main RISC-V trace plus the weighted delegation-circuit cost (Blake2 ×16,
+    /// keccak/bigint ×4) that the raw cycle count omits. Includes the guest
+    /// prologue/epilogue (absorbed by the base). This is the number to compare
+    /// against the per-proof native budget.
     pub fn predict_total(&self, fv: &FeatureVector) -> u64 {
         self.total.predict(fv)
     }

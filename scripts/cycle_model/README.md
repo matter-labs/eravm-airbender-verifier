@@ -128,7 +128,7 @@ let est = estimate(
 //    model can't price (e.g. ec_pairing/modexp), and applies a safety margin.
 if !est.is_reliable() { /* unpriced precompile — reject/split, don't trust `total` */ }
 if !est.fits(PER_PROOF_CYCLE_LIMIT, /*margin*/ 1.10) { /* seal early / split */ }
-// est.total = raw prediction; est.conservative(m) = margin-padded; est.phases = breakdown.
+// est.total = predicted effective/native cycles; est.conservative(m) = margin-padded; est.phases = breakdown.
 ```
 
 Notes:
@@ -180,9 +180,11 @@ producing an under-estimate.
 
 ## Model shape & current accuracy
 
-- **Predictors**: an aggregate `total → raw_cycles`, plus one per verify() phase
-  (`setup`, `vm_execution`, `merkle_verification`, `commitment`), each
-  `cycles = base + Σ coeff·feature`, fit by non-negative least squares.
+- **Predictors**: an aggregate `total → effective/native cycles` (= raw RISC-V
+  cycles + Σ delegation·weight, Blake2 ×16 / keccak ×4 / bigint ×4 per zksync-os),
+  plus one per verify() phase (`setup`, `vm_execution`, `merkle_verification`,
+  `commitment`) over raw phase cycles, each `cycles = base + Σ coeff·feature`,
+  fit by non-negative least squares. The total is the number to gate on.
 - **Phase drivers**: `vm_execution` ← opcode-family + crypto counts;
   `merkle_verification` ← merkle_leaf_count + state_diff_count (proof + tree
   update); `setup` ← used_bytecode_bytes/count + storage_key_count (bytecode
