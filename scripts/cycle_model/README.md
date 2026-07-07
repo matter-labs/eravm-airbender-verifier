@@ -95,7 +95,7 @@ cargo test -p zksync-era-airbender-cycles-estimator --test model_regression
 ## Using the estimator (Rust API)
 
 The estimator lives in the lean `zksync-era-airbender-cycles-estimator` crate
-(deps: `zksync_vm2` + serde only), so a sequencer can depend on it without the
+(deps: `zksync_vm2` + serde/serde_json/anyhow only), so a sequencer can depend on it without the
 proving stack.
 
 ```rust

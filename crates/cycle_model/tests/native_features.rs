@@ -41,7 +41,7 @@ fn extract_features_on_real_batch() {
     );
 
     // Human-readable dump so the calibration engineer can eyeball the vector.
-    println!("506077 feature vector:");
+    println!("batch {} feature vector:", inputs[0].number);
     for (id, n) in &features.counts {
         println!("  {id:?}: {n}");
     }
