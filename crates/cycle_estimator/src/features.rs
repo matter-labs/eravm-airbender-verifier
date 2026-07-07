@@ -58,6 +58,27 @@ pub enum FeatureId {
     SystemLogCount,
 }
 
+/// Precompile / crypto complexity features that are expensive per unit and whose
+/// cost the model MUST price for an estimate to be trustworthy. If a batch uses
+/// one of these but the model prices it at ~0 (no coefficient — e.g. the corpus
+/// never exercised that precompile), the prediction silently omits that work and
+/// is an under-estimate. The estimator flags this via
+/// [`crate::model::CostModel::unpriced_used`] so callers can fail safe.
+///
+/// These are the values of [`CycleStats`](zksync_vm2::interface::CycleStats):
+/// each is measured as operation complexity (hashing rounds / circuit cycles),
+/// so it already scales with input size — a bigger keccak yields a bigger count.
+pub const SAFETY_CRITICAL_FEATURES: &[FeatureId] = &[
+    FeatureId::Keccak256Cycles,
+    FeatureId::Sha256Cycles,
+    FeatureId::EcRecoverCycles,
+    FeatureId::Secp256r1VerifyCycles,
+    FeatureId::ModExpCycles,
+    FeatureId::EcAddCycles,
+    FeatureId::EcMulCycles,
+    FeatureId::EcPairingCycles,
+];
+
 /// A calibration feature vector: model INPUTS only (no measured cycles).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureVector {
