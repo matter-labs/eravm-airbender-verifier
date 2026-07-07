@@ -228,6 +228,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
             release-artifacts/app.bin \
             release-artifacts/app.text \
             release-artifacts/fri_vk.bin \
