@@ -2,9 +2,10 @@ use airbender_host::SecurityLevel;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use eravm_prover_host::{
-    default_fri_vk_path, default_trusted_setup_download_url, default_trusted_setup_path,
-    deserialize_from_file, download_trusted_setup_if_not_present, generate_fri_vk,
-    generate_snark_vk, prove_batches_fri, run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
+    app_bin_path, app_text_path, default_fri_vk_path, default_trusted_setup_download_url,
+    default_trusted_setup_path, deserialize_from_file, dist_dir,
+    download_trusted_setup_if_not_present, generate_fri_vk, generate_snark_vk, prove_batches_fri,
+    run_batches, wrap_to_snark, SnarkOptions, SnarkWrapperVK,
 };
 use std::path::PathBuf;
 use zksync_cli_utils::{init_tracing, resolve_batch_inputs, BatchInputFile};
@@ -209,11 +210,14 @@ fn main() -> Result<()> {
                 .context("while attempting to download the SNARK trusted setup")
         }
         Command::ProveSnark(args) => {
+            let dist_dir = dist_dir();
             let snark_options = SnarkOptions {
                 worker_threads: args.worker_threads,
                 trusted_setup: args.trusted_setup,
                 use_zk: args.use_zk,
                 save_intermediates: args.save_intermediates,
+                bin: app_bin_path(&dist_dir),
+                text: app_text_path(&dist_dir),
             };
             let snark_vk = load_snark_vk(args.snark_vk.as_deref())?;
             wrap_to_snark(
@@ -236,11 +240,14 @@ fn main() -> Result<()> {
                 .context("while generating the FRI verification key")?;
 
             let snark_vk_path = args.output_dir.join("snark_vk.json");
+            let dist_dir = dist_dir();
             let snark_options = SnarkOptions {
                 worker_threads: args.worker_threads,
                 trusted_setup: Some(args.trusted_setup),
                 use_zk: false,
                 save_intermediates: false,
+                bin: app_bin_path(&dist_dir),
+                text: app_text_path(&dist_dir),
             };
             generate_snark_vk(&snark_vk_path, &snark_options)
                 .context("while generating the SNARK verification key")?;

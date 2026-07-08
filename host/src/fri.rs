@@ -15,8 +15,12 @@ use zksync_airbender_verifier::Verify;
 /// additionally reads the sibling `app.text`. `app.bin` and `app.text` are not
 /// committed: they are built reproducibly and published as GitHub release assets
 /// (`cargo airbender build` writes them under `guest/dist/app/` locally).
-pub(crate) fn app_bin_path(dist_dir: &Path) -> PathBuf {
+pub fn app_bin_path(dist_dir: &Path) -> PathBuf {
     dist_dir.join("app.bin")
+}
+
+pub fn app_text_path(dist_dir: &Path) -> PathBuf {
+    dist_dir.join("app.text")
 }
 
 /// The guest returns `[u32; 8]` — the proof public input hash.
