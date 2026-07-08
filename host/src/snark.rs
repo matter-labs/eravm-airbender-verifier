@@ -21,6 +21,8 @@ pub struct SnarkOptions {
     pub trusted_setup: Option<PathBuf>,
     pub use_zk: bool,
     pub save_intermediates: bool,
+    pub bin: PathBuf,
+    pub text: PathBuf,
 }
 
 // ==============================================================================
@@ -46,10 +48,11 @@ impl SnarkPipeline {
     /// it again.
     pub fn new(options: &SnarkOptions, snark_vk: Option<SnarkWrapperVK>) -> Result<Self> {
         let mut wrapper = SnarkWrapper::new(SnarkWrapperConfig {
-            bin: None,
-            text: None,
+            bin: Some(options.bin.clone()),
+            text: Some(options.text.clone()),
             trusted_setup: options.trusted_setup.clone(),
             threads: options.worker_threads,
+            check_aux_params: true,
             risc_wrapper_vk: None,
             compression_vk: None,
             snark_vk,
@@ -170,10 +173,11 @@ impl SnarkPipeline {
 /// startup.
 pub fn derive_snark_vk(options: &SnarkOptions) -> Result<SnarkWrapperVK> {
     let mut wrapper = SnarkWrapper::new(SnarkWrapperConfig {
-        bin: None,
-        text: None,
+        bin: Some(options.bin.clone()),
+        text: Some(options.text.clone()),
         trusted_setup: options.trusted_setup.clone(),
         threads: options.worker_threads,
+        check_aux_params: true,
         risc_wrapper_vk: None,
         compression_vk: None,
         snark_vk: None,

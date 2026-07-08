@@ -17,8 +17,8 @@ use tracing::info;
 use zksync_cli_utils::BatchInputFile;
 
 pub use crate::fri::{
-    default_fri_vk_path, dist_dir, load_vk_from_disk, FriProver, FriProverConfig, FriVerifier,
-    ProveOutput, RawFriProof,
+    app_bin_path, app_text_path, default_fri_vk_path, dist_dir, load_vk_from_disk, FriProver,
+    FriProverConfig, FriVerifier, ProveOutput, RawFriProof,
 };
 pub use crate::setup_download::{
     default_trusted_setup_download_url, default_trusted_setup_path,

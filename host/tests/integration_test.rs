@@ -117,9 +117,9 @@ fn host_runs_batch_native_and_transpiler() {
 fn host_proves_fri_then_snark() {
     use airbender_host::{Inputs, Proof, SecurityLevel};
     use eravm_prover_host::{
-        build_fri_prover, default_trusted_setup_download_url, default_trusted_setup_path,
-        deserialize_from_file, download_trusted_setup_if_not_present, FriProverConfig,
-        SnarkOptions, SnarkPipeline, SnarkWrapperProof, SnarkWrapperVK,
+        app_bin_path, app_text_path, build_fri_prover, default_trusted_setup_download_url,
+        default_trusted_setup_path, deserialize_from_file, download_trusted_setup_if_not_present,
+        FriProverConfig, SnarkOptions, SnarkPipeline, SnarkWrapperProof, SnarkWrapperVK,
     };
     use zksync_airbender_verifier::Verify;
     use zksync_cli_utils::load_batch;
@@ -211,6 +211,8 @@ fn host_proves_fri_then_snark() {
         trusted_setup: Some(trusted_setup),
         use_zk: false,
         save_intermediates: false,
+        bin: app_bin_path(&guest_dist_dir()),
+        text: app_text_path(&guest_dist_dir()),
     };
     let mut pipeline =
         SnarkPipeline::new(&snark_options, snark_vk).expect("failed to build SNARK pipeline");
