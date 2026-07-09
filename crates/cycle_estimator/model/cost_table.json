@@ -68,7 +68,7 @@
       "uma_write": 2825.3975118135427,
       "uma_read": 85.81891176548686,
       "keccak256_cycles": 13064.923900782425,
-      "sha256_cycles": 0.0,
+      "sha256_cycles": 1522.8627011766375,
       "ec_recover_cycles": 11544093.954367945,
       "decommit_cycles": 0.0,
       "storage_application": 0.0,
@@ -79,7 +79,12 @@
       "used_bytecode_bytes": 152.3692929260547,
       "used_bytecode_count": 0.0,
       "storage_key_count": 146017.86543397998,
-      "state_diff_count": 154699.80938271995
+      "state_diff_count": 154699.80938271995,
+      "mod_exp_cycles": 936765.0693812616,
+      "ec_add_cycles": 170492.33708703867,
+      "ec_mul_cycles": 185835.9542684629,
+      "ec_pairing_cycles": 66684436.70157578,
+      "secp256r1_verify_cycles": 12650356.287215112
     },
     "base": 1164121820.6147242,
     "r2": 0.9999739141617332
