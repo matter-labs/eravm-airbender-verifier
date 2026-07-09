@@ -16,8 +16,11 @@ use serde::Deserialize;
 
 use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
 
-/// The committed cost table, embedded at compile time.
-const EMBEDDED_COST_TABLE: &str = include_str!("../model/cost_table.json");
+/// The committed cost table, embedded at compile time. Public so external
+/// consumers (e.g. zksync-era's in-tree cycle-estimator tracer) can source the
+/// calibrated constants from this repo — the single source of truth — instead of
+/// vendoring their own copy.
+pub const EMBEDDED_COST_TABLE: &str = include_str!("../model/cost_table.json");
 
 /// One linear predictor: `base + Σ features[i] · counts[i]`. Coefficients are
 /// keyed by [`FeatureId`] (the JSON uses the same snake_case names), so a table

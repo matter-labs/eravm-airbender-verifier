@@ -14,11 +14,19 @@
 pub mod estimator;
 pub mod features;
 pub mod model;
+#[cfg(feature = "vm2-tracer")]
 pub mod tracer;
 
-pub use estimator::{
-    estimate, estimate_with_model, features_for_estimate, BatchContext, CycleEstimate,
-};
+// VM-agnostic surface — usable without the vm2 tracer (e.g. from zksync-era's
+// in-tree legacy-VM tracer). `EMBEDDED_COST_TABLE` lets a consumer source the
+// calibrated constants from this repo without vendoring them.
+pub use estimator::{BatchContext, CycleEstimate};
 pub use features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
-pub use model::{CostModel, LinearModel};
+pub use model::{CostModel, LinearModel, EMBEDDED_COST_TABLE};
+
+// Fast-VM (vm2) tracer + its convenience wrappers. Gated so consumers that only
+// need the cost model / feature schema / cost table do not pull `zksync_vm2`.
+#[cfg(feature = "vm2-tracer")]
+pub use estimator::{estimate, estimate_with_model, features_for_estimate};
+#[cfg(feature = "vm2-tracer")]
 pub use tracer::CycleFeatureTracer;
