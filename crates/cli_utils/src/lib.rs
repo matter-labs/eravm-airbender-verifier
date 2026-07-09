@@ -131,6 +131,74 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput
     Ok(input)
 }
 
+/// Frame a bincode payload exactly the way [`load_batch`] expects to read it: a
+/// 4-byte big-endian length prefix, the payload, then zero-padding up to a
+/// 4-byte boundary (so the hex encoding is a whole number of 4-byte words, as
+/// [`parse_hex_bytes`] requires). Inverse of the length/drain/truncate step in
+/// [`load_batch`].
+fn frame_payload(payload: &[u8]) -> Vec<u8> {
+    let byte_len = u32::try_from(payload.len()).expect("batch payload exceeds u32::MAX bytes");
+    let mut framed = Vec::with_capacity(4 + payload.len() + 3);
+    framed.extend_from_slice(&byte_len.to_be_bytes());
+    framed.extend_from_slice(payload);
+    while !framed.len().is_multiple_of(4) {
+        framed.push(0);
+    }
+    framed
+}
+
+/// Lowercase, prefix-free hex, matching what [`parse_hex_bytes`] accepts.
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// Encode an [`AirbenderVerifierInput`] into the exact framed byte layout that
+/// [`load_batch`] decodes: a `bincode(standard)` payload wrapped by
+/// [`frame_payload`]. This is the inverse of the decode path in [`load_batch`],
+/// so `load_batch(save_batch(x)) == x`.
+pub fn encode_batch(input: &AirbenderVerifierInput) -> Result<Vec<u8>> {
+    let payload = bincode::serde::encode_to_vec(input, bincode::config::standard())
+        .context("while attempting to bincode-encode AirbenderVerifierInput")?;
+    Ok(frame_payload(&payload))
+}
+
+/// Serialize `input` to the on-disk fixture format at `path`: plain hex text for
+/// a `.bin` path, gzipped hex text for a `.bin.gz` path — the same encoding
+/// [`load_batch`] reads back. Used to turn a zksync-era `proof_inputs_*.json`
+/// export into a repo fixture.
+pub fn save_batch(input: &AirbenderVerifierInput, path: &Path) -> Result<()> {
+    let hex = to_hex(&encode_batch(input)?);
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("gz") => {
+            use flate2::write::GzEncoder;
+            use flate2::Compression;
+            use std::io::Write as _;
+
+            let file = std::fs::File::create(path)
+                .with_context(|| format!("while attempting to create {}", path.display()))?;
+            let mut encoder = GzEncoder::new(file, Compression::best());
+            encoder
+                .write_all(hex.as_bytes())
+                .with_context(|| format!("while attempting to write {}", path.display()))?;
+            encoder
+                .finish()
+                .with_context(|| format!("while attempting to finalize {}", path.display()))?;
+        }
+        Some("bin") => std::fs::write(path, hex)
+            .with_context(|| format!("while attempting to write {}", path.display()))?,
+        _ => anyhow::bail!(
+            "unsupported output path {}, expected a .bin or .bin.gz file",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
 fn list_all_batch_inputs(batches_dir: &Path) -> Result<Vec<BatchInputFile>> {
     let entries = std::fs::read_dir(batches_dir)
         .with_context(|| format!("while attempting to read {}", batches_dir.display()))?;
@@ -287,4 +355,43 @@ fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>> {
         bytes.push(byte);
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Replicates the length/drain/truncate step of [`load_batch`] so the test
+    /// proves [`frame_payload`] is its exact inverse without needing a fixture.
+    fn unframe(mut bytes: Vec<u8>) -> Vec<u8> {
+        let byte_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        bytes.drain(..4);
+        bytes.truncate(byte_len);
+        bytes
+    }
+
+    #[test]
+    fn frame_payload_round_trips_through_load_unframe() {
+        for len in [0usize, 1, 2, 3, 4, 5, 31, 32, 33, 255, 1000] {
+            let payload: Vec<u8> = (0..len).map(|i| (i.wrapping_mul(7) + 1) as u8).collect();
+            let framed = frame_payload(&payload);
+            assert!(
+                framed.len().is_multiple_of(4),
+                "len {len}: framed length {} is not 4-byte aligned",
+                framed.len()
+            );
+            assert_eq!(
+                unframe(framed),
+                payload,
+                "len {len}: frame/unframe mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn hex_encoding_round_trips_through_parse() {
+        // 8 bytes -> 16 hex chars, satisfying parse_hex_bytes' 4-byte-word rule.
+        let bytes = vec![0x00u8, 0x01, 0xab, 0xff, 0x10, 0x20, 0x30, 0x40];
+        assert_eq!(parse_hex_bytes(&to_hex(&bytes)).unwrap(), bytes);
+    }
 }

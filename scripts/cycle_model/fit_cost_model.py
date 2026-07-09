@@ -85,6 +85,17 @@ PHASE_FEATURES = {
 # The base term absorbs their (near-constant) contribution instead.
 TOTAL_EXCLUDE = {"system_log_count", "initial_heap_words"}
 
+# Precompile crypto features, calibrated separately from synthetic precompile-heavy
+# batches (see scripts/precompile_calibration/). They are ~0 in the organic mainnet
+# corpus, so a JOINT fit lets collinear generic-opcode features (far_call /
+# rich_addressing_op / precompile_call, which scale with precompile calls) absorb
+# their cost and wreck organic accuracy (513xxx hold-out 0.45% -> 37%). Instead they
+# are fit on the RESIDUAL with the organic model frozen — see residual_precompile_fit.
+PRECOMPILE_FEATURES = [
+    "mod_exp_cycles", "sha256_cycles", "ec_add_cycles", "ec_mul_cycles",
+    "ec_pairing_cycles", "secp256r1_verify_cycles",
+]
+
 # Native-computational weight per delegation, keyed by the airbender delegation
 # CSR id recorded in the guest's `delegation_counter` (NON_DETERMINISM_CSR=0x7c0
 # =1984 + offset). Values are zksync-os's `native_with_delegations!` coefficients
@@ -136,6 +147,25 @@ def fit_with_pinned(X: np.ndarray, y: np.ndarray, feature_cols, pinned: dict):
     return coeffs, base, r2
 
 
+def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
+                            frozen_base: float, target_col: str) -> dict:
+    """Freeze an organic (base + non-precompile) model and NNLS-fit the precompile
+    coefficients on the residual `target - organic_prediction` over the
+    precompile-dominated batches. No intercept: the base is frozen. Returns a
+    {feature: cost} map for the nonzero precompile coeffs.
+    """
+    used = [c for c in PRECOMPILE_FEATURES if c in pdf.columns]
+    if not used or target_col not in pdf.columns:
+        return {}
+    pred = np.full(len(pdf), frozen_base, dtype=float)
+    for c, w in frozen_features.items():  # precompile feats are 0 in the frozen model
+        if c in pdf.columns:
+            pred = pred + pdf[c].to_numpy(dtype=float) * w
+    resid = pdf[target_col].to_numpy(dtype=float) - pred
+    coeffs, _ = nnls(pdf[used].to_numpy(dtype=float), resid)
+    return {c: float(w) for c, w in zip(used, coeffs) if w > 0}
+
+
 def load_dataset(path: Path) -> pd.DataFrame:
     """Flatten dataset.json into a DataFrame: one column per feature, one per
     phase (`phase_*`), plus raw_cycles."""
@@ -182,9 +212,13 @@ def main():
     ap.add_argument("--out", default="artifacts/cycle_model")
     ap.add_argument("--pinned", default=None,
                     help="JSON file mapping feature -> fixed cost (crypto microbench results)")
+    ap.add_argument("--precompile-dataset", default=None,
+                    help="synthetic precompile-batch dataset.json; its precompile "
+                         "coeffs are residual-fit with the organic model frozen")
     args = ap.parse_args()
 
     df = load_dataset(Path(args.dataset))
+    pdf = load_dataset(Path(args.precompile_dataset)) if args.precompile_dataset else None
     feature_cols = [
         c for c in df.columns
         if c not in ("batch_number", "raw_cycles", "effective_cycles")
@@ -208,6 +242,10 @@ def main():
             continue
         y = df[col].to_numpy(dtype=float)
         table, base, r2, used = _fit_block(df, feats, y)
+        # Precompiles run during execution: residual-fit their coeffs into the
+        # vm_execution phase (raw phase cycles) with the organic phase model frozen.
+        if pdf is not None and phase == "vm_execution":
+            table.update(residual_precompile_fit(pdf, table, base, col))
         result["phases"][phase] = {"features": table, "base": base, "r2": r2}
         report.append(f"\n## phase `{phase}`  (R^2 = {r2:.4f}, base = {base:,.0f})")
         report.append("| feature | cost (cycles) | confidence |")
@@ -226,6 +264,16 @@ def main():
     else:
         coeffs, base, r2 = fit(X, y)
     total_table = {c: float(w) for c, w in zip(used, coeffs)}
+    # Add precompile coeffs via residual fit (organic total frozen) so their cost is
+    # attributed to the precompile features, not to collinear generic opcodes.
+    if pdf is not None:
+        pc = residual_precompile_fit(pdf, total_table, base, "effective_cycles")
+        total_table.update(pc)
+        report.append(f"\n## precompile residual fit ({len(pdf)} synthetic batches)")
+        report.append("| feature | cost (cycles) |")
+        report.append("|---|---:|")
+        for c, w in pc.items():
+            report.append(f"| {c} | {w:,.2f} |")
     result["total"] = {"features": total_table, "base": float(base), "r2": r2}
     report.append(f"\n## total  (R^2 = {r2:.4f}, base = {base:,.0f})")
     report.append("| feature | cost (cycles) | confidence |")
