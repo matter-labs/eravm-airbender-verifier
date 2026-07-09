@@ -14,8 +14,16 @@ categories.workspace = true
 # verifier, airbender-host, or vm_compare — so a sequencer (zksync-era) can depend
 # on this to estimate proving cost during batch building without pulling the
 # proving stack. The offline calibration crate (`zksync_cycle_model`) builds on top.
+[features]
+# The vm2 tracer (and its `zksync_vm2` dependency) is opt-in. On by default so the
+# fast-VM sequencer path is unchanged; consumers that only need the cost model /
+# feature schema / cost table (e.g. zksync-era's legacy-VM tracer) depend with
+# `default-features = false` to avoid pulling `zksync_vm2`.
+default = ["vm2-tracer"]
+vm2-tracer = ["dep:zksync_vm2"]
+
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 anyhow.workspace = true
-zksync_vm2.workspace = true
+zksync_vm2 = { workspace = true, optional = true }

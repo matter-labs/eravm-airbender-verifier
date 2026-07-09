@@ -23,8 +23,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::features::{FeatureId, FeatureVector};
+use crate::features::FeatureId;
+#[cfg(feature = "vm2-tracer")]
+use crate::features::FeatureVector;
+#[cfg(feature = "vm2-tracer")]
 use crate::model::CostModel;
+#[cfg(feature = "vm2-tracer")]
 use crate::tracer::CycleFeatureTracer;
 
 /// Batch-level model inputs the sequencer supplies from data it already holds
@@ -94,6 +98,7 @@ impl CycleEstimate {
 /// exactly the features the model was calibrated on. `pubdata_bytes` and
 /// `state_diff_count` come from the finished batch (`pubdata_input.len()` and
 /// `state_diffs.len()`).
+#[cfg(feature = "vm2-tracer")]
 pub fn features_for_estimate(
     tracer: &CycleFeatureTracer,
     pubdata_bytes: u64,
@@ -117,6 +122,7 @@ pub fn features_for_estimate(
 }
 
 /// Estimate guest cycles for a batch using the embedded cost model.
+#[cfg(feature = "vm2-tracer")]
 pub fn estimate(
     tracer: &CycleFeatureTracer,
     pubdata_bytes: u64,
@@ -134,6 +140,7 @@ pub fn estimate(
 
 /// Like [`estimate`], but against a caller-supplied model (e.g. a candidate table
 /// under evaluation). Most callers want [`estimate`].
+#[cfg(feature = "vm2-tracer")]
 pub fn estimate_with_model(
     model: &CostModel,
     tracer: &CycleFeatureTracer,
@@ -149,7 +156,7 @@ pub fn estimate_with_model(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "vm2-tracer"))]
 mod tests {
     use super::*;
 
