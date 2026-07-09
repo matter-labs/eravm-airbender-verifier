@@ -1,11 +1,11 @@
-//! Online cycle-count estimation for the sequencer.
+//! Cycle-count estimation inputs and result.
 //!
-//! The sequencer attaches a [`CycleFeatureTracer`] while it executes a batch on
-//! the fast VM (it is passive — no VM-state mutation, so execution is identical
-//! to a proved run). After the batch finishes it calls [`estimate`] with two
-//! scalars from the batch output plus a small [`BatchContext`], and gets a
-//! predicted guest cycle count to compare against the per-proof limit — with no
-//! RISC-V execution.
+//! Defines the two batch-level pieces the VM trace cannot observe — the
+//! [`BatchContext`] inputs the sequencer supplies, and the [`CycleEstimate`]
+//! result the model produces. A tracer (the sibling
+//! `zksync-era-airbender-cycles-tracer` crate for the fast VM, or zksync-era's
+//! in-tree legacy-VM tracer) assembles a [`crate::FeatureVector`] and feeds it,
+//! together with these scalars, to [`crate::CostModel`].
 //!
 //! The API takes scalars rather than a `FinishedL1Batch` on purpose: it keeps
 //! this crate free of the VM-interface types (which are versioned per protocol),
@@ -24,12 +24,6 @@
 use std::collections::BTreeMap;
 
 use crate::features::FeatureId;
-#[cfg(feature = "vm2-tracer")]
-use crate::features::FeatureVector;
-#[cfg(feature = "vm2-tracer")]
-use crate::model::CostModel;
-#[cfg(feature = "vm2-tracer")]
-use crate::tracer::CycleFeatureTracer;
 
 /// Batch-level model inputs the sequencer supplies from data it already holds
 /// (storage view + the bytecodes it will prove). These drive the setup / merkle
@@ -92,120 +86,9 @@ impl CycleEstimate {
     }
 }
 
-/// Assemble the full model feature vector from the passive tracer's counts plus
-/// the batch-level features the tracer cannot see. This is the online mirror of
-/// the offline `zksync_cycle_model::extract_features`, so the estimator consumes
-/// exactly the features the model was calibrated on. `pubdata_bytes` and
-/// `state_diff_count` come from the finished batch (`pubdata_input.len()` and
-/// `state_diffs.len()`).
-#[cfg(feature = "vm2-tracer")]
-pub fn features_for_estimate(
-    tracer: &CycleFeatureTracer,
-    pubdata_bytes: u64,
-    state_diff_count: u64,
-    ctx: &BatchContext,
-) -> FeatureVector {
-    let mut fv = tracer.snapshot();
-
-    // From the finished batch (exact).
-    fv.add(FeatureId::PubdataBytes, pubdata_bytes);
-    fv.add(FeatureId::StateDiffCount, state_diff_count);
-
-    // From the sequencer-supplied context.
-    fv.add(FeatureId::TransactionCount, ctx.transaction_count);
-    fv.add(FeatureId::MerkleLeafCount, ctx.merkle_leaf_count);
-    fv.add(FeatureId::StorageKeyCount, ctx.storage_key_count);
-    fv.add(FeatureId::UsedBytecodeBytes, ctx.used_bytecode_bytes);
-    fv.add(FeatureId::UsedBytecodeCount, ctx.used_bytecode_count);
-
-    fv
-}
-
-/// Estimate guest cycles for a batch using the embedded cost model.
-#[cfg(feature = "vm2-tracer")]
-pub fn estimate(
-    tracer: &CycleFeatureTracer,
-    pubdata_bytes: u64,
-    state_diff_count: u64,
-    ctx: &BatchContext,
-) -> CycleEstimate {
-    estimate_with_model(
-        CostModel::embedded(),
-        tracer,
-        pubdata_bytes,
-        state_diff_count,
-        ctx,
-    )
-}
-
-/// Like [`estimate`], but against a caller-supplied model (e.g. a candidate table
-/// under evaluation). Most callers want [`estimate`].
-#[cfg(feature = "vm2-tracer")]
-pub fn estimate_with_model(
-    model: &CostModel,
-    tracer: &CycleFeatureTracer,
-    pubdata_bytes: u64,
-    state_diff_count: u64,
-    ctx: &BatchContext,
-) -> CycleEstimate {
-    let fv = features_for_estimate(tracer, pubdata_bytes, state_diff_count, ctx);
-    CycleEstimate {
-        total: model.predict_total(&fv),
-        phases: model.predict_phases(&fv),
-        unpriced: model.unpriced_used(&fv),
-    }
-}
-
-#[cfg(all(test, feature = "vm2-tracer"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tracer_add(t: &CycleFeatureTracer, id: FeatureId, n: u64) {
-        // exercise the shared recorder without a live VM
-        t.recorder().lock().unwrap().add(id, n);
-    }
-
-    #[test]
-    fn assembled_vector_merges_tracer_finished_and_context() {
-        let tracer = CycleFeatureTracer::new();
-        tracer_add(&tracer, FeatureId::StorageWrite, 3);
-        let ctx = BatchContext {
-            transaction_count: 7,
-            merkle_leaf_count: 1000,
-            storage_key_count: 900,
-            used_bytecode_bytes: 50_000,
-            used_bytecode_count: 12,
-        };
-        let fv = features_for_estimate(
-            &tracer, /*pubdata*/ 4096, /*state_diffs*/ 42, &ctx,
-        );
-        assert_eq!(fv.get(FeatureId::StorageWrite), 3); // tracer
-        assert_eq!(fv.get(FeatureId::PubdataBytes), 4096); // finished
-        assert_eq!(fv.get(FeatureId::StateDiffCount), 42); // finished
-        assert_eq!(fv.get(FeatureId::MerkleLeafCount), 1000); // context
-        assert_eq!(fv.get(FeatureId::UsedBytecodeBytes), 50_000); // context
-        assert_eq!(fv.get(FeatureId::TransactionCount), 7); // context
-    }
-
-    #[test]
-    fn estimate_produces_total_and_phases() {
-        let tracer = CycleFeatureTracer::new();
-        let ctx = BatchContext {
-            merkle_leaf_count: 2000,
-            storage_key_count: 2000,
-            used_bytecode_bytes: 5_000_000,
-            used_bytecode_count: 150,
-            transaction_count: 50,
-        };
-        let est = estimate(&tracer, 10_000, 1500, &ctx);
-        assert!(est.total > 0);
-        for phase in ["setup", "vm_execution", "merkle_verification", "commitment"] {
-            assert!(est.phases.contains_key(phase));
-        }
-        assert!(est.is_reliable(), "no unpriced precompiles used");
-        assert!(est.fits(u64::MAX, 1.10));
-        assert!(!est.fits(0, 1.0));
-    }
 
     #[test]
     fn conservative_margin_scales_and_never_shrinks() {
@@ -218,46 +101,5 @@ mod tests {
         assert_eq!(est.conservative(1.0), 1_000_000);
         // a margin below 1.0 is clamped — the safe value is never below `total`.
         assert_eq!(est.conservative(0.5), 1_000_000);
-    }
-
-    #[test]
-    fn unpriced_precompile_fails_safe() {
-        // A batch that runs an ec_pairing (which the embedded model prices at 0)
-        // must be flagged unreliable and never report a fit — even under a huge
-        // limit and no margin.
-        let tracer = CycleFeatureTracer::new();
-        tracer_add(&tracer, FeatureId::EcPairingCycles, 5);
-        let est = estimate(&tracer, 0, 0, &BatchContext::default());
-        assert!(!est.is_reliable());
-        assert_eq!(est.unpriced, vec![FeatureId::EcPairingCycles]);
-        assert!(
-            !est.fits(u64::MAX, 1.0),
-            "unpriced precompile must fail safe"
-        );
-    }
-
-    #[test]
-    fn priced_precompile_is_reliable() {
-        // keccak IS priced (size-scaled), so using it does not trip the guard.
-        let tracer = CycleFeatureTracer::new();
-        tracer_add(&tracer, FeatureId::Keccak256Cycles, 100_000);
-        let est = estimate(&tracer, 0, 0, &BatchContext::default());
-        assert!(est.is_reliable());
-        assert!(est.total > 0);
-    }
-
-    #[test]
-    fn calibrated_but_zero_coeff_feature_is_reliable() {
-        // sha256 is calibrated (present in the corpus) but the fit found it
-        // cheap/near-constant → zero coefficient. It must NOT be flagged unpriced,
-        // otherwise every real batch (all use a little sha256) is falsely rejected.
-        // Guards the guard's presence-not-sign semantics.
-        let tracer = CycleFeatureTracer::new();
-        tracer_add(&tracer, FeatureId::Sha256Cycles, 2_000);
-        let est = estimate(&tracer, 0, 0, &BatchContext::default());
-        assert!(
-            est.is_reliable(),
-            "sha256 is calibrated (present-with-0); must not be flagged unpriced"
-        );
     }
 }
