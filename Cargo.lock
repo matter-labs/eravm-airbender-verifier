@@ -5932,6 +5932,13 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "zksync-era-airbender-cycles-tracer"
+version = "29.9.0"
+dependencies = [
+ "zksync-era-airbender-cycles-estimator",
  "zksync_vm2",
 ]
 
@@ -6118,6 +6125,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zksync-era-airbender-cycles-estimator",
+ "zksync-era-airbender-cycles-tracer",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
  "zksync_types",

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_vm_compare::run_fast_vm_with_tracer;
 
-use zksync_era_airbender_cycles_estimator::{CycleFeatureTracer, FeatureId, FeatureVector};
+use zksync_era_airbender_cycles_estimator::{FeatureId, FeatureVector};
+use zksync_era_airbender_cycles_tracer::CycleFeatureTracer;
 
 /// One calibration sample: model-input features (native) paired with the
 /// ground-truth guest measurements (RISC-V cycles / phases / delegations).

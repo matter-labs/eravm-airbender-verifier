@@ -1,10 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+use zksync_era_airbender_cycles_estimator::{FeatureId, FeatureVector};
 use zksync_vm2::interface::{
     CycleStats, GlobalStateInterface, Opcode, OpcodeType, ShouldStop, Tracer,
 };
-
-use crate::features::{FeatureId, FeatureVector};
 
 /// Passive vm2 tracer that counts calibration features into a shared recorder.
 ///
