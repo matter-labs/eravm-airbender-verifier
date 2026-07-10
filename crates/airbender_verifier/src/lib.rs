@@ -654,7 +654,7 @@ where
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`. `key` is the
 /// storage log's hashed key, passed in so the caller (which already computed it
 /// to bind against `leaf_hashed_key`) doesn't hash it twice.
-fn map_log_tree(
+pub(crate) fn map_log_tree(
     key: U256,
     storage_log: &StorageLog,
     tree_log_entry: &TreeLogEntry,

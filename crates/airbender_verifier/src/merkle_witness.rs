@@ -5,10 +5,25 @@
 //! verifier policy) so the soundness-relevant leaf-shape rules live in one place.
 
 use anyhow::Result;
-use zksync_merkle_tree::{BlockOutputWithProofs, TreeLogEntry, TreeLogEntryWithProof, ValueHash};
-use zksync_types::{H256, U256};
+use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
+use zksync_merkle_tree::{
+    BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof,
+    ValueHash,
+};
+use zksync_types::{StorageLog, H256, U256};
 
+use crate::map_log_tree;
 use crate::types::{StorageLogMetadata, WitnessInputMerklePaths, HASH_LEN};
+
+/// Depth of the Merkle tree (256-bit hashed keys => 256 levels). Mirrors the
+/// `pub(crate)` `zksync_merkle_tree::TREE_DEPTH` (= `KEY_SIZE * 8`), which is not
+/// re-exported. Used only to bound path length exactly as `verify_proofs` does.
+///
+/// `allow(dead_code)`: only reached through `verify_paths_and_new_root`, which is
+/// not yet wired into `verify_l1_batch` (a later task swaps the three-step path
+/// for it; until then the streaming pass is exercised solely by its test).
+#[allow(dead_code)]
+const TREE_DEPTH: usize = 256;
 
 /// The pre-state a single Merkle-witness leaf encodes, after rejecting shapes
 /// the tree never emits.
@@ -160,9 +175,11 @@ pub(crate) fn get_bowp(
 /// path). Mirrors `WitnessInputMerklePaths::into_merkle_paths`, one entry at a
 /// time (entry 0 passes `first` as `compact` and is returned unchanged).
 ///
-/// Not yet wired into `get_bowp`/`verify_paths_and_new_root`: it exists so the
-/// upcoming streaming pass can expand paths lazily, one at a time, instead of
-/// eagerly materializing all of them via `into_merkle_paths`.
+/// Expands one path lazily so the streaming pass holds only one full path at a
+/// time, instead of eagerly materializing all of them via `into_merkle_paths`.
+///
+/// `allow(dead_code)`: see `TREE_DEPTH` — reached only through the not-yet-wired
+/// `verify_paths_and_new_root` (and its own test).
 #[allow(dead_code)]
 fn expand_full_path(
     first: &[[u8; HASH_LEN]],
@@ -179,6 +196,140 @@ fn expand_full_path(
     full.extend(first[..prefix_len].iter().map(|h| ValueHash::from(*h)));
     full.extend(compact.iter().map(|h| ValueHash::from(*h)));
     Ok(full)
+}
+
+/// Reproduces `zksync_merkle_tree`'s (crate-private) `dyn HashTree::
+/// fold_merkle_path` byte-for-byte using only the public `HashTree` primitives.
+///
+/// It is NOT a trait/public method there, so it cannot be called from this
+/// crate; reproducing it here (rather than changing the `merkle_tree` API) keeps
+/// the fold identical to `verify_proofs`. The `expand_merkle_path` extension to
+/// `TREE_DEPTH` with empty-subtree hashes is inlined. `path.len()` must be
+/// `<= TREE_DEPTH` (callers check this, exactly as `verify_proofs` does).
+///
+/// Correctness is pinned by the differential ACCEPT test: a genuine accept
+/// requires this fold to match the real one hash-for-hash.
+///
+/// `allow(dead_code)`: see `TREE_DEPTH` — reached only through the not-yet-wired
+/// `verify_paths_and_new_root` (and its own test).
+#[allow(dead_code)]
+fn fold_merkle_path(hasher: &Blake2Hasher, path: &[ValueHash], entry: TreeEntry) -> ValueHash {
+    let mut hash = hasher.hash_leaf(&entry.value, entry.leaf_index);
+    let empty_hash_count = TREE_DEPTH - path.len();
+    let full_path = (0..empty_hash_count)
+        .map(|depth| hasher.empty_subtree_hash(depth))
+        .chain(path.iter().copied());
+    for (depth, adjacent_hash) in full_path.enumerate() {
+        hash = if entry.key.bit(depth) {
+            hasher.hash_branch(&adjacent_hash, &hash)
+        } else {
+            hasher.hash_branch(&hash, &adjacent_hash)
+        };
+    }
+    hash
+}
+
+/// Streaming replacement for `get_bowp` + `generate_tree_instructions` +
+/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`. Classifies each
+/// witness leaf, binds it to the VM storage-log key, maps it to a
+/// `TreeInstruction`, then expands and fold-verifies its Merkle path against the
+/// running root — holding only one expanded path at a time. Returns
+/// `(new_root_hash, new_enumeration_index)`.
+///
+/// Behavior MUST match the three-step path exactly (accept/reject and returned
+/// values); see the differential oracle test. Divergences from the fused steps:
+/// the count check is hoisted UP FRONT (a bare `zip` would silently truncate),
+/// and `N == 0` maps to the same error the oracle's `root_hash()` `None` yields.
+///
+/// `allow(dead_code)`: not yet wired into `verify_l1_batch` — a later task swaps
+/// the three-step path (`get_bowp` + `generate_tree_instructions` +
+/// `verify_proofs`) for this, and until then those three remain as the
+/// differential-test oracle and this is exercised only by that test.
+#[allow(dead_code)]
+pub(crate) fn verify_paths_and_new_root(
+    witness: WitnessInputMerklePaths,
+    vm_logs: Vec<StorageLog>,
+    hasher: &Blake2Hasher,
+    old_root_hash: ValueHash,
+    mut enumeration_index: u64,
+) -> anyhow::Result<(ValueHash, u64)> {
+    let metas = witness.merkle_paths;
+    // Count check up front: `generate_tree_instructions` performs it before any
+    // fold, and a bare `zip` below would silently truncate to the shorter side.
+    anyhow::ensure!(
+        metas.len() == vm_logs.len(),
+        "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
+        vm_logs.len(),
+        metas.len(),
+    );
+    // With no logs the oracle's `root_hash()` is `None`, which the production
+    // caller turns into this exact error via `.context(...)`.
+    anyhow::ensure!(
+        !metas.is_empty(),
+        "root_hash unavailable after verify_proofs",
+    );
+    let first_path = metas[0].merkle_paths.clone();
+
+    let mut root_hash = old_root_hash;
+    for (meta, vm_log) in metas.iter().zip(vm_logs.iter()) {
+        // (1) classify the witness leaf (shared classifier with `get_bowp`).
+        let base = tree_log_entry_from_witness(meta)?;
+        // (2) bind the proof to the slot the VM actually touched.
+        let key = meta.leaf_hashed_key;
+        let vm_key = vm_log.key.hashed_key_u256();
+        anyhow::ensure!(
+            key == vm_key,
+            "merkle_paths leaf_hashed_key {key:?} does not match \
+             VM storage-log key {vm_key:?}",
+        );
+        // (3) map to a `TreeInstruction` (advances `enumeration_index` on insert).
+        let instruction = map_log_tree(key, vm_log, &base, &mut enumeration_index)?;
+        // (4) expand this path lazily and fold-verify it (as `verify_proofs`).
+        let full = expand_full_path(&first_path, &meta.merkle_paths)?;
+        anyhow::ensure!(full.len() <= TREE_DEPTH);
+        let op_root = ValueHash::from(meta.root_hash);
+        // `TreeLogEntry::is_read()` is `pub(crate)` in `merkle_tree`; inline the
+        // identical predicate rather than change that crate's API.
+        let base_is_read =
+            matches!(base, TreeLogEntry::Read { .. } | TreeLogEntry::ReadMissingKey);
+        if matches!(instruction, TreeInstruction::Read(_)) {
+            anyhow::ensure!(
+                op_root == root_hash,
+                "Condition failed: `op.root_hash == root_hash` ({op_root:?} vs {root_hash:?})",
+            );
+            anyhow::ensure!(base_is_read);
+        } else {
+            anyhow::ensure!(!base_is_read);
+        }
+        let prev_entry = match base {
+            // `TreeEntry::empty(key)` is `pub(crate)` in `merkle_tree`;
+            // `TreeEntry::new(key, 0, ValueHash::zero())` is the identical value.
+            TreeLogEntry::Inserted | TreeLogEntry::ReadMissingKey => {
+                TreeEntry::new(instruction.key(), 0, ValueHash::zero())
+            }
+            TreeLogEntry::Updated {
+                leaf_index,
+                previous_value: value,
+            }
+            | TreeLogEntry::Read { leaf_index, value } => {
+                TreeEntry::new(instruction.key(), leaf_index, value)
+            }
+        };
+        let prev_hash = fold_merkle_path(hasher, &full, prev_entry);
+        anyhow::ensure!(
+            prev_hash == root_hash,
+            "Condition failed: `prev_hash == root_hash` ({prev_hash:?} vs {root_hash:?})",
+        );
+        if let TreeInstruction::Write(new_entry) = instruction {
+            let next_hash = fold_merkle_path(hasher, &full, new_entry);
+            anyhow::ensure!(
+                next_hash == op_root,
+                "Condition failed: `next_hash == op.root_hash` ({next_hash:?} vs {op_root:?})",
+            );
+        }
+        root_hash = op_root;
+    }
+    Ok((root_hash, enumeration_index))
 }
 
 #[cfg(test)]
@@ -248,5 +399,240 @@ mod streaming_tests {
             err.to_string().contains("malformed"),
             "unexpected error message: {err}"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Differential oracle test for `verify_paths_and_new_root`.
+    //
+    // The oracle is the exact current three-step production path
+    // (`get_bowp` + `generate_tree_instructions` + `BlockOutputWithProofs::
+    // verify_proofs` + `root_hash()`); `verify_paths_and_new_root` fuses those
+    // into a single streaming pass. On every input the two MUST agree on the
+    // returned `(new_root, new_enumeration_index)` and on accept/reject.
+    // ---------------------------------------------------------------------
+    use anyhow::Context;
+    use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
+    use zksync_merkle_tree::HashTree;
+    use zksync_types::{AccountTreeId, StorageKey, StorageLog, H160, H256};
+
+    use crate::generate_tree_instructions;
+
+    /// Oracle: the exact current three-step path, threaded like the production
+    /// caller in `lib.rs` (enum index advances by the number of `Inserted`
+    /// leaves; `root_hash()` is `None` when there are no logs).
+    fn reference(
+        witness: WitnessInputMerklePaths,
+        vm_logs: Vec<StorageLog>,
+        old_root: ValueHash,
+        idx: u64,
+    ) -> anyhow::Result<(ValueHash, u64)> {
+        let (bowp, leaf_keys) = get_bowp(witness)?;
+        let instructions = generate_tree_instructions(idx, &bowp, &leaf_keys, vm_logs)?;
+        bowp.verify_proofs(&Blake2Hasher, old_root, &instructions)?;
+        let num_insertions = bowp
+            .logs
+            .iter()
+            .filter(|log| matches!(log.base, TreeLogEntry::Inserted))
+            .count() as u64;
+        let new_root = bowp
+            .root_hash()
+            .context("root_hash unavailable after verify_proofs")?;
+        Ok((new_root, idx + num_insertions))
+    }
+
+    /// Run both paths on identical inputs and assert they agree exactly.
+    fn assert_equivalent(
+        witness: WitnessInputMerklePaths,
+        vm_logs: Vec<StorageLog>,
+        old_root: ValueHash,
+        idx: u64,
+    ) {
+        let expect = reference(witness.clone(), vm_logs.clone(), old_root, idx);
+        let got = verify_paths_and_new_root(witness, vm_logs, &Blake2Hasher, old_root, idx);
+        match (expect, got) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "streaming result diverged from oracle"),
+            (Err(_), Err(_)) => {}
+            (a, b) => panic!("accept/reject diverged: oracle={a:?} streaming={b:?}"),
+        }
+    }
+
+    fn empty_root() -> ValueHash {
+        HashTree::empty_tree_hash(&Blake2Hasher)
+    }
+
+    /// A `(leaf_hashed_key, read StorageLog)` pair whose hashed key is
+    /// self-consistent (the log's own `hashed_key_u256()`), so key-binding
+    /// passes unless deliberately broken.
+    fn read_pair(addr: u8, slot: u8, value: H256) -> (U256, StorageLog) {
+        let key = StorageKey::new(
+            AccountTreeId::new(H160::repeat_byte(addr)),
+            H256::repeat_byte(slot),
+        );
+        (key.hashed_key_u256(), StorageLog::new_read_log(key, value))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn entry(
+        is_write: bool,
+        first_write: bool,
+        enum_index: u64,
+        leaf_hashed_key: U256,
+        root: ValueHash,
+        value_read: H256,
+        paths: Vec<[u8; HASH_LEN]>,
+    ) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: root.to_fixed_bytes(),
+            is_write,
+            first_write,
+            merkle_paths: paths,
+            leaf_hashed_key,
+            leaf_enumeration_index: enum_index,
+            value_written: [0; HASH_LEN],
+            value_read: value_read.to_fixed_bytes(),
+        }
+    }
+
+    /// Build a witness directly from metadata entries, bypassing
+    /// `push_merkle_path`'s delta-compaction. The entries are taken as the
+    /// already-stored (compact) form, exactly as the streaming pass and
+    /// `into_merkle_paths` consume them. Bypassing lets the malformed-first-path
+    /// case construct a state `push_merkle_path` would refuse to build.
+    fn witness_of(metas: Vec<StorageLogMetadata>) -> WitnessInputMerklePaths {
+        let mut witness = WitnessInputMerklePaths::new(0);
+        witness.merkle_paths = metas;
+        witness
+    }
+
+    // --- Real ACCEPT case: single missing-key read on the empty tree. --------
+
+    #[test]
+    fn streaming_matches_oracle_on_missing_key_read() {
+        let (key, log) = read_pair(0x11, 0x22, H256::zero());
+        // is_write=false, first_write=false, enum_index=0 -> ReadMissingKey.
+        // Empty path + empty entry folds to the empty-tree root, and
+        // old_root == op.root_hash == empty_tree_hash, so both paths ACCEPT.
+        let meta = entry(false, false, 0, key, empty_root(), H256::zero(), vec![]);
+        let witness = witness_of(vec![meta]);
+
+        // Prove it is a genuine ACCEPT (not merely a matching reject).
+        let got = verify_paths_and_new_root(
+            witness.clone(),
+            vec![log],
+            &Blake2Hasher,
+            empty_root(),
+            5,
+        )
+        .expect("missing-key read on empty tree must verify");
+        assert_eq!(got, (empty_root(), 5), "root unchanged, enum index unchanged");
+
+        assert_equivalent(witness, vec![log], empty_root(), 5);
+    }
+
+    // --- Logic-agreement rejects (both paths Err). ---------------------------
+
+    #[test]
+    fn streaming_matches_oracle_on_count_mismatch() {
+        let (key, _log) = read_pair(1, 2, H256::zero());
+        let meta = entry(false, false, 1, key, empty_root(), H256::zero(), vec![]);
+        // One merkle path, zero VM logs.
+        assert_equivalent(witness_of(vec![meta]), vec![], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_key_binding_mismatch() {
+        // Valid read classification, but leaf_hashed_key != VM key.
+        let (_vmkey, log) = read_pair(1, 2, H256::from_low_u64_be(9));
+        let meta = entry(
+            false,
+            false,
+            1,
+            U256::from(0xdead_beef_u64),
+            empty_root(),
+            H256::from_low_u64_be(9),
+            vec![],
+        );
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_read_marked_first_write() {
+        // classify rejects: a read flagged first_write.
+        let (key, log) = read_pair(3, 4, H256::zero());
+        let meta = entry(false, true, 0, key, empty_root(), H256::zero(), vec![]);
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_repeated_write_index_zero() {
+        // classify rejects: a repeated write with enumeration index 0.
+        let key = StorageKey::new(AccountTreeId::new(H160::repeat_byte(5)), H256::repeat_byte(6));
+        let log = StorageLog::new_write_log(key, H256::from_low_u64_be(1));
+        let meta = entry(true, false, 0, key.hashed_key_u256(), empty_root(), H256::zero(), vec![]);
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_read_value_mismatch() {
+        // map_log_tree rejects: witnessed pre-state value != VM-read value.
+        let (vmkey, log) = read_pair(7, 8, H256::from_low_u64_be(3));
+        let meta = entry(
+            false,
+            false,
+            1,
+            vmkey,
+            empty_root(),
+            H256::from_low_u64_be(7), // witnessed value_read != VM value (3)
+            vec![],
+        );
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_corrupted_root_hash() {
+        // fold rejects: a read op whose root_hash does not equal the running root.
+        let (vmkey, log) = read_pair(9, 10, H256::zero());
+        let meta = entry(
+            false,
+            false,
+            0,
+            vmkey,
+            H256::repeat_byte(0xAB), // corrupted op root
+            H256::zero(),
+            vec![],
+        );
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    #[test]
+    fn streaming_matches_oracle_on_wrong_prestate_root() {
+        // fold rejects at the prev_hash check: an existing-leaf read whose
+        // pre-state (index 1, non-zero value) cannot fold to the empty root.
+        let value = H256::from_low_u64_be(77);
+        let (vmkey, log) = read_pair(11, 12, value);
+        let meta = entry(false, false, 1, vmkey, empty_root(), value, vec![]);
+        assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
+    }
+
+    // --- Malformed first path: streaming-only (oracle panics). ---------------
+
+    #[test]
+    fn streaming_rejects_malformed_first_path() {
+        // A later path longer than the first. `into_merkle_paths` (used by the
+        // oracle) PANICS on this, so we test the streaming pass alone.
+        let (k0, log0) = read_pair(13, 0, H256::zero());
+        let (k1, log1) = read_pair(13, 1, H256::zero());
+        let m0 = entry(false, false, 0, k0, empty_root(), H256::zero(), vec![]);
+        let m1 = entry(false, false, 0, k1, empty_root(), H256::zero(), vec![[1u8; HASH_LEN]]);
+        let witness = witness_of(vec![m0, m1]);
+
+        let res = verify_paths_and_new_root(
+            witness,
+            vec![log0, log1],
+            &Blake2Hasher,
+            empty_root(),
+            0,
+        );
+        assert!(res.is_err(), "streaming must reject a malformed longer-than-first path");
     }
 }
