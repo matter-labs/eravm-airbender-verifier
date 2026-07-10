@@ -6,8 +6,8 @@
 
 use anyhow::Result;
 use zksync_merkle_tree::{
-    BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof,
-    ValueHash, TREE_DEPTH,
+    BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry,
+    TreeLogEntryWithProof, ValueHash, TREE_DEPTH,
 };
 use zksync_types::{StorageLog, H256, U256};
 
@@ -468,15 +468,14 @@ mod streaming_tests {
         let witness = witness_of(vec![meta]);
 
         // Prove it is a genuine ACCEPT (not merely a matching reject).
-        let got = verify_paths_and_new_root(
-            witness.clone(),
-            vec![log],
-            &Blake2Hasher,
-            empty_root(),
-            5,
-        )
-        .expect("missing-key read on empty tree must verify");
-        assert_eq!(got, (empty_root(), 5), "root unchanged, enum index unchanged");
+        let got =
+            verify_paths_and_new_root(witness.clone(), vec![log], &Blake2Hasher, empty_root(), 5)
+                .expect("missing-key read on empty tree must verify");
+        assert_eq!(
+            got,
+            (empty_root(), 5),
+            "root unchanged, enum index unchanged"
+        );
 
         assert_equivalent(witness, vec![log], empty_root(), 5);
     }
@@ -518,9 +517,20 @@ mod streaming_tests {
     #[test]
     fn streaming_matches_oracle_on_repeated_write_index_zero() {
         // classify rejects: a repeated write with enumeration index 0.
-        let key = StorageKey::new(AccountTreeId::new(H160::repeat_byte(5)), H256::repeat_byte(6));
+        let key = StorageKey::new(
+            AccountTreeId::new(H160::repeat_byte(5)),
+            H256::repeat_byte(6),
+        );
         let log = StorageLog::new_write_log(key, H256::from_low_u64_be(1));
-        let meta = entry(true, false, 0, key.hashed_key_u256(), empty_root(), H256::zero(), vec![]);
+        let meta = entry(
+            true,
+            false,
+            0,
+            key.hashed_key_u256(),
+            empty_root(),
+            H256::zero(),
+            vec![],
+        );
         assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
     }
 
@@ -575,16 +585,22 @@ mod streaming_tests {
         let (k0, log0) = read_pair(13, 0, H256::zero());
         let (k1, log1) = read_pair(13, 1, H256::zero());
         let m0 = entry(false, false, 0, k0, empty_root(), H256::zero(), vec![]);
-        let m1 = entry(false, false, 0, k1, empty_root(), H256::zero(), vec![[1u8; HASH_LEN]]);
+        let m1 = entry(
+            false,
+            false,
+            0,
+            k1,
+            empty_root(),
+            H256::zero(),
+            vec![[1u8; HASH_LEN]],
+        );
         let witness = witness_of(vec![m0, m1]);
 
-        let res = verify_paths_and_new_root(
-            witness,
-            vec![log0, log1],
-            &Blake2Hasher,
-            empty_root(),
-            0,
+        let res =
+            verify_paths_and_new_root(witness, vec![log0, log1], &Blake2Hasher, empty_root(), 0);
+        assert!(
+            res.is_err(),
+            "streaming must reject a malformed longer-than-first path"
         );
-        assert!(res.is_err(), "streaming must reject a malformed longer-than-first path");
     }
 }
