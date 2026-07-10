@@ -85,6 +85,32 @@ pub(crate) fn build_view_from_merkle_paths(
     Ok(view)
 }
 
+/// Classify a witness leaf and map it to its `TreeLogEntry` base. Shared by
+/// `get_bowp` (oracle) and `verify_paths_and_new_root` (streaming) so the two
+/// can never disagree on classification.
+fn tree_log_entry_from_witness(log: &StorageLogMetadata) -> anyhow::Result<TreeLogEntry> {
+    Ok(match classify_witness_leaf(log)? {
+        WitnessLeaf::Empty { is_write: false } => TreeLogEntry::ReadMissingKey,
+        WitnessLeaf::Empty { is_write: true } => TreeLogEntry::Inserted,
+        WitnessLeaf::Existing {
+            is_write: false,
+            index,
+            value,
+        } => TreeLogEntry::Read {
+            leaf_index: index,
+            value: value.0.into(),
+        },
+        WitnessLeaf::Existing {
+            is_write: true,
+            index,
+            value,
+        } => TreeLogEntry::Updated {
+            leaf_index: index,
+            previous_value: value.0.into(),
+        },
+    })
+}
+
 /// Builds `BlockOutputWithProofs` from the merkle witness, paired with each
 /// entry's `leaf_hashed_key` in order.
 ///
@@ -107,26 +133,7 @@ pub(crate) fn get_bowp(
             // never disagree on which witness shapes are valid. `value_written`
             // is intentionally unused: the verifier derives the written value
             // from VM execution, not from the witness.
-            let base = match classify_witness_leaf(&log)? {
-                WitnessLeaf::Empty { is_write: false } => TreeLogEntry::ReadMissingKey,
-                WitnessLeaf::Empty { is_write: true } => TreeLogEntry::Inserted,
-                WitnessLeaf::Existing {
-                    is_write: false,
-                    index,
-                    value,
-                } => TreeLogEntry::Read {
-                    leaf_index: index,
-                    value: value.0.into(),
-                },
-                WitnessLeaf::Existing {
-                    is_write: true,
-                    index,
-                    value,
-                } => TreeLogEntry::Updated {
-                    leaf_index: index,
-                    previous_value: value.0.into(),
-                },
-            };
+            let base = tree_log_entry_from_witness(&log)?;
             let merkle_path = log.merkle_paths.into_iter().map(|x| x.into()).collect();
             Ok((
                 TreeLogEntryWithProof {
