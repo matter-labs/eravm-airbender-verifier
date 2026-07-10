@@ -7,7 +7,7 @@
         "average_op": 236.0,
         "storage_read": 11400.484479283152,
         "storage_write": 44786.758126478904,
-        "transient_storage_read": 11000.0,
+        "transient_storage_read": 500.0,
         "transient_storage_write": 11000.0,
         "event": 0.0,
         "precompile_call": 8641.741702265805,
@@ -60,7 +60,7 @@
       "average_op": 236.0,
       "storage_read": 3697.8710719635264,
       "storage_write": 44255.25941545771,
-      "transient_storage_read": 11000.0,
+      "transient_storage_read": 500.0,
       "transient_storage_write": 11000.0,
       "event": 2286.714649863294,
       "precompile_call": 9215.85845606937,
@@ -87,6 +87,6 @@
     "r2": 0.9999492729142743
   },
   "calibration": {
-    "rich_addressing_share_max": 0.04227979040211793
+    "rich_addressing_share_max": 0.04231867414395903
   }
 }

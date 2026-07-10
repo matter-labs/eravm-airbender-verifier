@@ -258,5 +258,38 @@
     "system_log_count": 10
    }
   }
+ },
+ {
+  "batch_number": 79,
+  "label": "transient_reads_1p2M",
+  "effective_cycles": 2530265726,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 6023116,
+    "average_op": 3752,
+    "storage_read": 121,
+    "storage_write": 74,
+    "transient_storage_read": 1200000,
+    "event": 40,
+    "precompile_call": 102,
+    "far_call": 245,
+    "uma_write": 2319,
+    "uma_read": 1890,
+    "keccak256_cycles": 102,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4744,
+    "storage_application": 67,
+    "transaction_count": 4,
+    "near_call_count": 1074,
+    "pubdata_bytes": 321,
+    "merkle_leaf_count": 56,
+    "used_bytecode_bytes": 392736,
+    "used_bytecode_count": 19,
+    "storage_key_count": 79,
+    "initial_heap_words": 286,
+    "state_diff_count": 11,
+    "system_log_count": 10
+   }
+  }
  }
 ]

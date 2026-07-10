@@ -37,7 +37,7 @@ fn estimate(model: &CostModel, fv: &FeatureVector) -> CycleEstimate {
 #[test]
 fn no_adversarial_batch_both_fits_and_underpredicts() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse adversarial fixture");
-    assert_eq!(rows.len(), 8, "fixture size changed unexpectedly");
+    assert_eq!(rows.len(), 9, "fixture size changed unexpectedly");
     let model = CostModel::embedded();
 
     for r in &rows {
