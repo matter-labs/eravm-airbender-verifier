@@ -190,17 +190,34 @@ fn expand_full_path(
 }
 
 /// Streaming replacement for `get_bowp` + `generate_tree_instructions` +
-/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`. Classifies each
-/// witness leaf, binds it to the VM storage-log key, maps it to a
-/// `TreeInstruction`, then expands its Merkle path and folds it via the
-/// `merkle_tree` crate's own `dyn HashTree::fold_merkle_path` (now `pub`, reused
-/// as-is rather than reimplemented) against the running root — holding only one
-/// expanded path at a time. Returns `(new_root_hash, new_enumeration_index)`.
+/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`, split into the same
+/// two passes as the original three-step path so error ordering matches
+/// exactly:
 ///
-/// Behavior MUST match the three-step path exactly (accept/reject and returned
-/// values); see the differential oracle test. Divergences from the fused steps:
-/// the count check is hoisted UP FRONT (a bare `zip` would silently truncate),
-/// and `N == 0` maps to the same error the oracle's `root_hash()` `None` yields.
+/// - Pass 1 mirrors `generate_tree_instructions`: for every entry, in order,
+///   classify the witness leaf, bind it to the VM storage-log key, and map it
+///   to a `TreeInstruction` — collecting the small `(TreeLogEntry,
+///   TreeInstruction)` pair per entry. No Merkle path is expanded here.
+/// - Pass 2 mirrors `verify_proofs`: for every entry, in order again, expand
+///   its Merkle path lazily and fold it via the `merkle_tree` crate's own
+///   `dyn HashTree::fold_merkle_path` (now `pub`, reused as-is rather than
+///   reimplemented) against the running root — holding only one expanded
+///   path at a time.
+///
+/// Splitting into two passes (rather than fusing classify+bind+map+fold into
+/// a single per-entry loop) is required for correctness, not just style: it
+/// makes every classify/key-binding/map error on any entry surface — in
+/// entry order — before any fold error, exactly as the old three-step path
+/// did. A fused single pass would instead surface whichever error (map or
+/// fold) comes first for the earliest *fold-order* entry, which can differ
+/// from the old ordering on multi-fault inputs. Returns `(new_root_hash,
+/// new_enumeration_index)`.
+///
+/// Behavior MUST match the three-step path exactly (accept/reject, returned
+/// values, AND error ordering); see the differential oracle test. Divergences
+/// from the fused steps: the count check is hoisted UP FRONT (a bare `zip`
+/// would silently truncate), and `N == 0` maps to the same error the oracle's
+/// `root_hash()` `None` yields.
 ///
 /// Wired into `execute()` in `lib.rs`; the three-step path (`get_bowp` +
 /// `generate_tree_instructions` + `verify_proofs` + `root_hash()`) remains as
@@ -229,7 +246,14 @@ pub(crate) fn verify_paths_and_new_root(
     );
     let first_path = metas[0].merkle_paths.clone();
 
-    let mut root_hash = old_root_hash;
+    // Pass 1 (reproduces `generate_tree_instructions` exactly): classify,
+    // key-bind, and map every entry to a `TreeInstruction` FIRST, in order,
+    // before any fold. This is what makes classify/key-binding/map errors
+    // surface in entry order and ahead of any fold error, matching the old
+    // three-step (`get_bowp` + `generate_tree_instructions` + `verify_proofs`)
+    // error ordering exactly. Only the small per-entry `TreeLogEntry` +
+    // `TreeInstruction` are kept here — no Merkle path is expanded yet.
+    let mut instructions: Vec<(TreeLogEntry, TreeInstruction)> = Vec::with_capacity(metas.len());
     for (meta, vm_log) in metas.iter().zip(vm_logs.iter()) {
         // (1) classify the witness leaf (shared classifier with `get_bowp`).
         let base = tree_log_entry_from_witness(meta)?;
@@ -243,7 +267,14 @@ pub(crate) fn verify_paths_and_new_root(
         );
         // (3) map to a `TreeInstruction` (advances `enumeration_index` on insert).
         let instruction = map_log_tree(key, vm_log, &base, &mut enumeration_index)?;
-        // (4) expand this path lazily and fold-verify it (as `verify_proofs`).
+        instructions.push((base, instruction));
+    }
+
+    // Pass 2 (reproduces `verify_proofs` exactly): fold every entry's proof
+    // against the running root, in order, expanding one path at a time so
+    // only a single ~8 KiB expanded path is ever live.
+    let mut root_hash = old_root_hash;
+    for (meta, (base, instruction)) in metas.iter().zip(instructions.into_iter()) {
         let full = expand_full_path(&first_path, &meta.merkle_paths)?;
         anyhow::ensure!(full.len() <= TREE_DEPTH);
         let op_root = ValueHash::from(meta.root_hash);
