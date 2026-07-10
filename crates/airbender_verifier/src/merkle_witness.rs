@@ -125,6 +125,12 @@ fn tree_log_entry_from_witness(log: &StorageLogMetadata) -> anyhow::Result<TreeL
 /// `leaf_hashed_key`; if those two keys are allowed to differ, a proof for one
 /// slot's pre-state could be paired with a VM that read a *different* value for
 /// that slot. Binding them keeps the proven slot and the executed slot the same.
+///
+/// Superseded in production by `verify_paths_and_new_root` (the streaming
+/// pass); kept as part of the differential-test oracle (this +
+/// `generate_tree_instructions` + `verify_proofs` + `root_hash()`) — see
+/// `streaming_tests` below.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn get_bowp(
     witness_input_merkle_paths: WitnessInputMerklePaths,
 ) -> Result<(BlockOutputWithProofs, Vec<U256>)> {
@@ -166,10 +172,6 @@ pub(crate) fn get_bowp(
 ///
 /// Expands one path lazily so the streaming pass holds only one full path at a
 /// time, instead of eagerly materializing all of them via `into_merkle_paths`.
-///
-/// `allow(dead_code)`: see `TREE_DEPTH` — reached only through the not-yet-wired
-/// `verify_paths_and_new_root` (and its own test).
-#[allow(dead_code)]
 fn expand_full_path(
     first: &[[u8; HASH_LEN]],
     compact: &[[u8; HASH_LEN]],
@@ -200,11 +202,9 @@ fn expand_full_path(
 /// the count check is hoisted UP FRONT (a bare `zip` would silently truncate),
 /// and `N == 0` maps to the same error the oracle's `root_hash()` `None` yields.
 ///
-/// `allow(dead_code)`: not yet wired into `verify_l1_batch` — a later task swaps
-/// the three-step path (`get_bowp` + `generate_tree_instructions` +
-/// `verify_proofs`) for this, and until then those three remain as the
-/// differential-test oracle and this is exercised only by that test.
-#[allow(dead_code)]
+/// Wired into `execute()` in `lib.rs`; the three-step path (`get_bowp` +
+/// `generate_tree_instructions` + `verify_proofs` + `root_hash()`) remains as
+/// the differential-test oracle (see `streaming_tests` below).
 pub(crate) fn verify_paths_and_new_root(
     witness: WitnessInputMerklePaths,
     vm_logs: Vec<StorageLog>,
