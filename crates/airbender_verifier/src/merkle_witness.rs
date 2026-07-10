@@ -395,8 +395,8 @@ mod streaming_tests {
     // ---------------------------------------------------------------------
     use anyhow::Context;
     use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
-    use zksync_merkle_tree::HashTree;
-    use zksync_types::{AccountTreeId, StorageKey, StorageLog, H160, H256};
+    // `HashTree`, `StorageLog`, `H256` come in via `use super::*`.
+    use zksync_types::{AccountTreeId, StorageKey, H160};
 
     use crate::generate_tree_instructions;
 
