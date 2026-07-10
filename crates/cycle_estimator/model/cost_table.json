@@ -4,18 +4,18 @@
     "vm_execution": {
       "features": {
         "rich_addressing_op": 2.3048642012932383,
-        "average_op": 0.0,
+        "average_op": 236.0,
         "storage_read": 11400.484479283152,
         "storage_write": 44786.758126478904,
-        "transient_storage_read": 0.0,
-        "transient_storage_write": 0.0,
+        "transient_storage_read": 11000.0,
+        "transient_storage_write": 11000.0,
         "event": 0.0,
         "precompile_call": 8641.741702265805,
         "decommit": 410177.56216735434,
         "far_call": 22924.97944753459,
         "uma_write": 2035.9618759096163,
         "uma_read": 712.2940105786639,
-        "near_call_count": 0.0,
+        "near_call_count": 236.0,
         "keccak256_cycles": 26951.38066024788,
         "sha256_cycles": 84950.24475630203,
         "ec_recover_cycles": 11524968.38558874,
@@ -57,11 +57,11 @@
   "total": {
     "features": {
       "rich_addressing_op": 71.38770172217762,
-      "average_op": 0.0,
+      "average_op": 236.0,
       "storage_read": 3697.8710719635264,
       "storage_write": 44255.25941545771,
-      "transient_storage_read": 0.0,
-      "transient_storage_write": 0.0,
+      "transient_storage_read": 11000.0,
+      "transient_storage_write": 11000.0,
       "event": 2286.714649863294,
       "precompile_call": 9215.85845606937,
       "decommit": 285949.10559122846,
@@ -74,7 +74,7 @@
       "decommit_cycles": 9732.174872095837,
       "storage_application": 159141.07360818062,
       "transaction_count": 30598.40115744476,
-      "near_call_count": 0.0,
+      "near_call_count": 236.0,
       "pubdata_bytes": 4178.688672603418,
       "merkle_leaf_count": 167667.52134472952,
       "mod_exp_cycles": 952643.5807663992,
@@ -85,5 +85,8 @@
     },
     "base": 1228604369.860906,
     "r2": 0.9999492729142743
+  },
+  "calibration": {
+    "rich_addressing_share_max": 0.04227979040211793
   }
 }

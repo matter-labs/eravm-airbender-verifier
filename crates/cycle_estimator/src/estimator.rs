@@ -58,6 +58,11 @@ pub struct CycleEstimate {
     /// (see [`CostModel::unpriced_used`]). Non-empty ⇒ `total` omits real work
     /// and is an under-estimate; treat the estimate as unusable.
     pub unpriced: Vec<FeatureId>,
+    /// Features that push the batch outside the model's calibration envelope, so
+    /// the linear prediction is untrustworthy (see
+    /// [`CostModel::extrapolated_features`]). Non-empty ⇒ compute-dominated /
+    /// out-of-distribution batch; the estimate may be a large under-prediction.
+    pub extrapolated: Vec<FeatureId>,
 }
 
 impl CycleEstimate {
@@ -65,6 +70,14 @@ impl CycleEstimate {
     /// model. When false, `total` is a lower bound, not an estimate.
     pub fn is_reliable(&self) -> bool {
         self.unpriced.is_empty()
+    }
+
+    /// True when the batch is inside the model's calibration envelope. When false,
+    /// the batch is out-of-distribution (e.g. compute-dominated — see
+    /// [`CostModel::extrapolated_features`]) and `total` may under-predict
+    /// substantially, so [`Self::fits`] refuses to report a fit.
+    pub fn is_within_calibration(&self) -> bool {
+        self.extrapolated.is_empty()
     }
 
     /// `total` scaled by a safety `margin` and rounded up — the number to compare
@@ -80,11 +93,12 @@ impl CycleEstimate {
     }
 
     /// Whether the batch fits under `limit` after applying `margin`. **Fails
-    /// safe**: an unreliable estimate (unpriced precompiles) never reports a fit,
-    /// so a precompile the model can't price forces the caller to reject/split
-    /// rather than silently ship an over-limit batch.
+    /// safe**: an unreliable estimate (unpriced precompiles) OR an out-of-envelope
+    /// batch (compute-dominated / extrapolating) never reports a fit, so a batch
+    /// the model can't price or can't be trusted to price forces the caller to
+    /// reject/split rather than silently ship an over-limit batch.
     pub fn fits(&self, limit: u64, margin: f64) -> bool {
-        self.is_reliable() && self.conservative(margin) <= limit
+        self.is_reliable() && self.is_within_calibration() && self.conservative(margin) <= limit
     }
 }
 
@@ -98,10 +112,26 @@ mod tests {
             total: 1_000_000,
             phases: BTreeMap::new(),
             unpriced: vec![],
+            extrapolated: vec![],
         };
         assert_eq!(est.conservative(1.10), 1_100_000);
         assert_eq!(est.conservative(1.0), 1_000_000);
         // a margin below 1.0 is clamped — the safe value is never below `total`.
         assert_eq!(est.conservative(0.5), 1_000_000);
+    }
+
+    #[test]
+    fn extrapolated_batch_fails_safe() {
+        let est = CycleEstimate {
+            total: 1_000_000,
+            phases: BTreeMap::new(),
+            unpriced: vec![],
+            extrapolated: vec![FeatureId::RichAddressingOp],
+        };
+        assert!(!est.is_within_calibration());
+        assert!(
+            !est.fits(u64::MAX, 1.0),
+            "an out-of-envelope (compute-dominated) batch must never report a fit"
+        );
     }
 }

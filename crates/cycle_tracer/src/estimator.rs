@@ -70,6 +70,7 @@ pub fn estimate_with_model(
         total: model.predict_total(&fv),
         phases: model.predict_phases(&fv),
         unpriced: model.unpriced_used(&fv),
+        extrapolated: model.extrapolated_features(&fv),
     }
 }
 
@@ -126,12 +127,17 @@ mod tests {
 
     #[test]
     fn unpriced_precompile_fails_safe() {
-        // A batch that runs an ec_pairing (which the embedded model prices at 0)
-        // must be flagged unreliable and never report a fit — even under a huge
-        // limit and no margin.
+        // A batch that runs a precompile the model does NOT price must be flagged
+        // unreliable and never report a fit — even under a huge limit and no margin.
+        // The embedded model now prices every safety-critical precompile (they were
+        // all calibrated), so exercise the guard against a table that omits one.
+        let model = CostModel::from_json(
+            r#"{"batches":1,"phases":{},"total":{"features":{"storage_write":100.0},"base":1000.0}}"#,
+        )
+        .unwrap();
         let tracer = CycleFeatureTracer::new();
         tracer_add(&tracer, FeatureId::EcPairingCycles, 5);
-        let est = estimate(&tracer, 0, 0, &BatchContext::default());
+        let est = estimate_with_model(&model, &tracer, 0, 0, &BatchContext::default());
         assert!(!est.is_reliable());
         assert_eq!(est.unpriced, vec![FeatureId::EcPairingCycles]);
         assert!(

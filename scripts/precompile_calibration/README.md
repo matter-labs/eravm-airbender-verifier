@@ -5,6 +5,23 @@ to calibrate the cycle-cost model's precompile features. Targets the 5 unpriced
 features (`modexp`, `ec_pairing`, `ec_add`, `ec_mul`, `secp256r1_verify`) plus
 `sha256` (currently coeff 0.00). See the top-level cycle-model docs for the fit.
 
+## Adversarial hardening
+
+A throwaway `CycleHammer` contract (transient-storage / context-op / memory /
+pure-arithmetic loops, plus a modexp `burnGas` edge) driven against the local node
+produced *adversarial* batches that probe under-estimation / DoS vectors — each
+maximizes one vm2 feature the fitted model under-prices. Measured with
+`cycle_bench`, the worst under-predicted **~9×** (transient storage & context ops,
+priced at **0**) and **~3×** (pure arithmetic, `rich_addressing_op` priced ~3×
+low). The contract itself is a dev artifact (not committed); the reproducible
+outputs are the 8 measured batches, committed as
+`scripts/cycle_model/adversarial_dataset.json` and enforced by
+`crates/cycle_estimator/tests/adversarial_safety.rs`. Fixes: post-fit
+`OPCODE_FLOORS` (transient/context) + a calibration-envelope guard for the compute
+vector (`CostModel::extrapolated_features`, which makes `CycleEstimate::fits` fail
+safe on compute-dominated batches). See the `OPCODE_FLOORS` TODO in
+`fit_cost_model.py` for the precise long-term fix (dispatch decomposition).
+
 ## Why isolation
 
 The NNLS fit only recovers a clean per-precompile coefficient if each batch is
