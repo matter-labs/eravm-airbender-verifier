@@ -375,11 +375,12 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
 
     let (block_output_with_proofs, leaf_keys) = get_bowp(input.merkle_paths)?;
 
+    let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
     let instructions: Vec<TreeInstruction> = generate_tree_instructions(
         enumeration_index,
         &block_output_with_proofs,
         &leaf_keys,
-        vm_out,
+        vm_logs,
     )?;
 
     block_output_with_proofs
@@ -703,9 +704,8 @@ fn generate_tree_instructions(
     mut idx: u64,
     bowp: &BlockOutputWithProofs,
     leaf_keys: &[U256],
-    vm_out: FinishedL1Batch,
+    vm_logs: Vec<StorageLog>,
 ) -> anyhow::Result<Vec<TreeInstruction>> {
-    let vm_logs = vm_out.final_execution_state.deduplicated_storage_logs;
     anyhow::ensure!(
         vm_logs.len() == bowp.logs.len() && bowp.logs.len() == leaf_keys.len(),
         "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
