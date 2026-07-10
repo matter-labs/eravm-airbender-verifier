@@ -96,6 +96,48 @@ PRECOMPILE_FEATURES = [
     "ec_pairing_cycles", "secp256r1_verify_cycles",
 ]
 
+# Minimum guest cost per opcode-count feature, in effective cycles. The NNLS fit
+# prices these buckets from mainnet batches where they co-occur with (and get
+# attributed to) costlier priced work, so a batch DOMINATED by one bucket — an
+# attacker's lever — is badly under-predicted. Measured directly from isolated
+# adversarial batches (scripts/cycle_model/adversarial_dataset.json) and applied as
+# a post-fit lower bound: coef = max(fitted, floor). Floors only ever RAISE a
+# prediction, so they are strictly conservative for the seal gate.
+#   - transient_storage_write: ~11k cyc/op with DISTINCT keys (the transient map
+#     grows like storage); the fit prices it 0 (mainnet uses ~800/batch). Measured
+#     9x total under-estimate on a transient-dominated batch.
+#   - average_op (context ops: caller/gasleft/address/…): ~236 cyc dispatch;
+#     priced 0 by the fit. Measured 1.5x under-estimate.
+#   - near_call_count: dispatch minimum (no clean isolate available; conservative).
+# rich_addressing_op is deliberately NOT floored: its true per-op cost (~236) is 3x
+# the fitted 71, but flooring it costs ~6% on organic batches (which run millions of
+# arithmetic ops that legitimately share cost with priced storage). That compute
+# vector is handled by the calibration-envelope guard in the estimator crate.
+#
+# TODO(cycle-model): dispatch decomposition. The precise fix is to add a
+# `total_opcode_count * ~236` dispatch term and subtract 236 from every per-bucket
+# coefficient, so the uniform per-opcode dispatch cost is priced ONCE and cannot be
+# dodged by routing opcodes into a cheap/zero bucket, while organic totals stay
+# accurate. That supersedes both the floors here and the envelope guard. Until then
+# the two of them together keep the gate safe.
+OPCODE_FLOORS = {
+    "transient_storage_write": 11000,
+    "transient_storage_read": 11000,
+    "average_op": 236,
+    "near_call_count": 236,
+}
+
+
+def apply_opcode_floors(table: dict) -> list:
+    """Raise under-priced opcode buckets to their measured minimum (see
+    OPCODE_FLOORS). Returns the (feature, fitted, floor) rows actually raised."""
+    raised = []
+    for feat, floor in OPCODE_FLOORS.items():
+        if table.get(feat, 0.0) < floor:
+            raised.append((feat, table.get(feat, 0.0), float(floor)))
+            table[feat] = float(floor)
+    return raised
+
 # Native-computational weight per delegation, keyed by the airbender delegation
 # CSR id recorded in the guest's `delegation_counter` (NON_DETERMINISM_CSR=0x7c0
 # =1984 + offset). Values are zksync-os's `native_with_delegations!` coefficients
@@ -277,6 +319,8 @@ def main():
         # vm_execution phase (raw phase cycles) with the organic phase model frozen.
         if pdf is not None and phase == "vm_execution":
             table.update(residual_precompile_fit(pdf, table, base, col))
+        if phase == "vm_execution":
+            apply_opcode_floors(table)  # same safety floors as the total (gate uses total)
         result["phases"][phase] = {"features": table, "base": base, "r2": r2}
         report.append(f"\n## phase `{phase}`  (R^2 = {r2:.4f}, base = {base:,.0f})")
         report.append("| feature | cost (cycles) | confidence |")
@@ -307,7 +351,34 @@ def main():
         report.append("|---|---:|")
         for c, w in pc.items():
             report.append(f"| {c} | {w:,.2f} |")
+    # Post-fit safety floors on under-priced opcode buckets (see OPCODE_FLOORS).
+    raised = apply_opcode_floors(total_table)
+    if raised:
+        report.append("\n## opcode-cost floors applied (adversarial hardening)")
+        report.append("| feature | fitted | floored to |")
+        report.append("|---|---:|---:|")
+        for feat, fitted, floor in raised:
+            report.append(f"| {feat} | {fitted:,.2f} | {floor:,.0f} |")
     result["total"] = {"features": total_table, "base": float(base), "r2": r2}
+    # Calibration envelope for the compute-vector guard. rich_addressing_op is left
+    # UNDER-priced (coef ~71 vs true ~236) because flooring it wrecks organic
+    # accuracy; instead the estimator flags any batch where rich_addressing's SHARE
+    # of the prediction exceeds what organic batches ever reach (absolute count
+    # can't separate them — big mainnet batches have more rich ops than an attack
+    # batch, but carry heavy priced storage that dwarfs it). Such a batch is
+    # compute-dominated and its under-priced arithmetic drives the estimate, so the
+    # gate fails safe. Emit the organic max share as the data-derived basis.
+    def _pred_row(row):
+        return base + sum(w * row.get(f, 0) for f, w in total_table.items())
+    crich = total_table.get("rich_addressing_op", 0.0)
+    rich_shares = [
+        crich * row["rich_addressing_op"] / _pred_row(row)
+        for _, row in df.iterrows()
+        if _pred_row(row) > 0
+    ]
+    result["calibration"] = {
+        "rich_addressing_share_max": max(rich_shares) if rich_shares else 0.0,
+    }
     report.append(f"\n## total  (R^2 = {r2:.4f}, base = {base:,.0f})")
     report.append("| feature | cost (cycles) | confidence |")
     report.append("|---|---:|---|")

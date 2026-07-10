@@ -45,6 +45,24 @@ impl LinearModel {
     }
 }
 
+/// Calibration envelope emitted by the fit, used by the extrapolation guard.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Calibration {
+    /// Largest share of the TOTAL prediction that `rich_addressing_op` contributed
+    /// in any organic training batch. `rich_addressing_op` is intentionally
+    /// under-priced (see [`SAFETY_CRITICAL_FEATURES`] docs and the fit script's
+    /// OPCODE_FLOORS note), so a batch whose arithmetic drives the estimate beyond
+    /// this envelope is compute-dominated and must fail safe.
+    #[serde(default)]
+    pub rich_addressing_share_max: f64,
+}
+
+/// Multiplier applied to the calibration envelope before flagging extrapolation —
+/// headroom so ordinary organic variance never trips the guard (organic max share
+/// ~4.5%, so the trip point sits ~8%, while every measured compute-attack batch is
+/// 11–56%).
+const EXTRAPOLATION_FACTOR: f64 = 1.8;
+
 /// The full fitted cost model: an aggregate `total` predictor over effective cycles
 /// plus a per-phase predictor for each verify() phase.
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +72,10 @@ pub struct CostModel {
     pub batches: u64,
     pub phases: BTreeMap<String, LinearModel>,
     pub total: LinearModel,
+    /// Calibration envelope for the extrapolation guard (empty ⇒ guard disabled,
+    /// for backward compat with tables that predate it).
+    #[serde(default)]
+    pub calibration: Calibration,
 }
 
 impl CostModel {
@@ -110,6 +132,40 @@ impl CostModel {
             .copied()
             .filter(|id| fv.get(*id) > 0 && !self.total.features.contains_key(id))
             .collect()
+    }
+
+    /// Features whose contribution pushes the batch OUTSIDE the model's calibration
+    /// envelope, so the (linear) prediction cannot be trusted and the caller must
+    /// fail safe. Currently guards the compute vector: `rich_addressing_op` is
+    /// under-priced by ~3× (coef ~71 vs true ~236) — harmless organically, where it
+    /// rides alongside priced storage, but a batch dominated by pure arithmetic is
+    /// under-estimated ~3×. Flagged when arithmetic's share of the prediction
+    /// exceeds the organic envelope × [`EXTRAPOLATION_FACTOR`]. Returns empty when
+    /// the table carries no calibration data (guard disabled).
+    ///
+    /// See the fit script's `OPCODE_FLOORS` TODO: the dispatch decomposition will
+    /// price arithmetic correctly and retire this guard.
+    pub fn extrapolated_features(&self, fv: &FeatureVector) -> Vec<FeatureId> {
+        let cap = self.calibration.rich_addressing_share_max;
+        if cap <= 0.0 {
+            return Vec::new(); // no envelope in this table → guard disabled
+        }
+        let total = self.predict_total(fv);
+        if total == 0 {
+            return Vec::new();
+        }
+        let coeff = self
+            .total
+            .features
+            .get(&FeatureId::RichAddressingOp)
+            .copied()
+            .unwrap_or(0.0);
+        let share = coeff * fv.get(FeatureId::RichAddressingOp) as f64 / total as f64;
+        if share > cap * EXTRAPOLATION_FACTOR {
+            vec![FeatureId::RichAddressingOp]
+        } else {
+            Vec::new()
+        }
     }
 }
 

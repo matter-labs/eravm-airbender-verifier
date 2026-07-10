@@ -17,10 +17,13 @@ use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
 
-// Current out-of-sample accuracy is MAPE 0.34% / max 1.36% (asymmetric τ=0.9 fit,
-// which leans conservative); these thresholds leave headroom for improvements but
-// trip on a real regression.
-const MAX_MAPE_PCT: f64 = 0.60;
+// Current out-of-sample accuracy is MAPE 0.87% / max 1.60% (asymmetric τ=0.9 fit +
+// adversarial opcode-cost floors, which lean conservative — the floors add a small
+// deliberate over-prediction on organic batches in exchange for not under-pricing
+// attacker-controlled opcode-dominated batches; see fit_cost_model OPCODE_FLOORS).
+// The errors here are almost all OVER-prediction (the safe direction). Thresholds
+// leave headroom for improvement but trip on a real regression.
+const MAX_MAPE_PCT: f64 = 1.20;
 const MAX_SINGLE_ERR_PCT: f64 = 2.5;
 
 #[derive(Deserialize)]

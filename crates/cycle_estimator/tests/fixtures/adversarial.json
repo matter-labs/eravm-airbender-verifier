@@ -1,0 +1,262 @@
+[
+ {
+  "batch_number": 69,
+  "label": "transient_distinct_key",
+  "effective_cycles": 15014154815,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 4823106,
+    "average_op": 3752,
+    "storage_read": 121,
+    "storage_write": 74,
+    "transient_storage_write": 1200000,
+    "event": 40,
+    "precompile_call": 102,
+    "far_call": 245,
+    "uma_write": 2319,
+    "uma_read": 1890,
+    "keccak256_cycles": 102,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4710,
+    "storage_application": 67,
+    "transaction_count": 4,
+    "near_call_count": 1074,
+    "pubdata_bytes": 316,
+    "merkle_leaf_count": 56,
+    "used_bytecode_bytes": 390560,
+    "used_bytecode_count": 19,
+    "storage_key_count": 79,
+    "initial_heap_words": 277,
+    "state_diff_count": 10,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 70,
+  "label": "compute_mem_low",
+  "effective_cycles": 3203568941,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 16023260,
+    "average_op": 3837,
+    "storage_read": 122,
+    "storage_write": 77,
+    "event": 40,
+    "precompile_call": 103,
+    "far_call": 246,
+    "uma_write": 2358,
+    "uma_read": 1896,
+    "keccak256_cycles": 103,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4710,
+    "storage_application": 69,
+    "transaction_count": 4,
+    "near_call_count": 1102,
+    "pubdata_bytes": 375,
+    "merkle_leaf_count": 57,
+    "used_bytecode_bytes": 390560,
+    "used_bytecode_count": 19,
+    "storage_key_count": 81,
+    "initial_heap_words": 280,
+    "state_diff_count": 10,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 71,
+  "label": "mem_high",
+  "effective_cycles": 9449433956,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 19223414,
+    "average_op": 3837,
+    "storage_read": 122,
+    "storage_write": 77,
+    "event": 40,
+    "precompile_call": 103,
+    "far_call": 246,
+    "uma_write": 3202374,
+    "uma_read": 1908,
+    "keccak256_cycles": 103,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4710,
+    "storage_application": 69,
+    "transaction_count": 4,
+    "near_call_count": 1102,
+    "pubdata_bytes": 375,
+    "merkle_leaf_count": 57,
+    "used_bytecode_bytes": 390560,
+    "used_bytecode_count": 19,
+    "storage_key_count": 81,
+    "initial_heap_words": 284,
+    "state_diff_count": 10,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 72,
+  "label": "context_ops",
+  "effective_cycles": 3409951393,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 12823274,
+    "average_op": 4803845,
+    "storage_read": 122,
+    "storage_write": 77,
+    "event": 40,
+    "precompile_call": 103,
+    "far_call": 246,
+    "uma_write": 2358,
+    "uma_read": 1896,
+    "keccak256_cycles": 103,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4710,
+    "storage_application": 69,
+    "transaction_count": 4,
+    "near_call_count": 1102,
+    "pubdata_bytes": 437,
+    "merkle_leaf_count": 57,
+    "used_bytecode_bytes": 390560,
+    "used_bytecode_count": 19,
+    "storage_key_count": 81,
+    "initial_heap_words": 299,
+    "state_diff_count": 12,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 73,
+  "label": "pure_compute",
+  "effective_cycles": 8744844368,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 24023259,
+    "average_op": 3837,
+    "storage_read": 122,
+    "storage_write": 77,
+    "event": 40,
+    "precompile_call": 103,
+    "far_call": 246,
+    "uma_write": 2358,
+    "uma_read": 1896,
+    "keccak256_cycles": 103,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4710,
+    "storage_application": 69,
+    "transaction_count": 4,
+    "near_call_count": 1102,
+    "pubdata_bytes": 418,
+    "merkle_leaf_count": 57,
+    "used_bytecode_bytes": 390560,
+    "used_bytecode_count": 19,
+    "storage_key_count": 81,
+    "initial_heap_words": 299,
+    "state_diff_count": 12,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 74,
+  "label": "storage_reads_80k",
+  "effective_cycles": 27606969375,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 349429,
+    "average_op": 5096,
+    "storage_read": 80165,
+    "storage_write": 105,
+    "event": 49,
+    "precompile_call": 140,
+    "far_call": 327,
+    "uma_write": 3003,
+    "uma_read": 2305,
+    "keccak256_cycles": 142,
+    "ec_recover_cycles": 5,
+    "decommit_cycles": 4705,
+    "storage_application": 80085,
+    "transaction_count": 5,
+    "near_call_count": 1469,
+    "pubdata_bytes": 657,
+    "merkle_leaf_count": 80065,
+    "used_bytecode_bytes": 390208,
+    "used_bytecode_count": 20,
+    "storage_key_count": 80094,
+    "initial_heap_words": 382,
+    "state_diff_count": 15,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 75,
+  "label": "transient_plus_context",
+  "effective_cycles": 24523523692,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 30025802,
+    "average_op": 3754144,
+    "storage_read": 226,
+    "storage_write": 137,
+    "transient_storage_write": 3747060,
+    "event": 116,
+    "precompile_call": 196,
+    "far_call": 461,
+    "uma_write": 4462,
+    "uma_read": 4809,
+    "keccak256_cycles": 213,
+    "sha256_cycles": 50,
+    "ec_recover_cycles": 7,
+    "decommit_cycles": 5284,
+    "storage_application": 98,
+    "transaction_count": 7,
+    "near_call_count": 2031,
+    "pubdata_bytes": 3154,
+    "merkle_leaf_count": 67,
+    "used_bytecode_bytes": 393376,
+    "used_bytecode_count": 21,
+    "storage_key_count": 96,
+    "initial_heap_words": 722,
+    "state_diff_count": 16,
+    "system_log_count": 10
+   }
+  }
+ },
+ {
+  "batch_number": 76,
+  "label": "transient_bounded",
+  "effective_cycles": 27419539965,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 23035097,
+    "average_op": 5996,
+    "storage_read": 183,
+    "storage_write": 114,
+    "transient_storage_write": 4599977,
+    "event": 58,
+    "precompile_call": 156,
+    "far_call": 369,
+    "uma_write": 3629,
+    "uma_read": 2846,
+    "keccak256_cycles": 156,
+    "ec_recover_cycles": 6,
+    "decommit_cycles": 4717,
+    "storage_application": 75,
+    "transaction_count": 6,
+    "near_call_count": 1734,
+    "pubdata_bytes": 576,
+    "merkle_leaf_count": 61,
+    "used_bytecode_bytes": 391008,
+    "used_bytecode_count": 19,
+    "storage_key_count": 87,
+    "initial_heap_words": 402,
+    "state_diff_count": 14,
+    "system_log_count": 10
+   }
+  }
+ }
+]
