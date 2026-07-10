@@ -7,7 +7,8 @@
 //! VM-agnostic [`CostModel`] in `zksync-era-airbender-cycles-estimator`.
 
 use zksync_era_airbender_cycles_estimator::{
-    BatchContext, CostModel, CycleEstimate, FeatureId, FeatureVector,
+    assemble_feature_vector, estimate_from_features_with_model, BatchContext, CostModel,
+    CycleEstimate, FeatureVector,
 };
 
 use crate::tracer::CycleFeatureTracer;
@@ -24,20 +25,9 @@ pub fn features_for_estimate(
     state_diff_count: u64,
     ctx: &BatchContext,
 ) -> FeatureVector {
-    let mut fv = tracer.snapshot();
-
-    // From the finished batch (exact).
-    fv.add(FeatureId::PubdataBytes, pubdata_bytes);
-    fv.add(FeatureId::StateDiffCount, state_diff_count);
-
-    // From the sequencer-supplied context.
-    fv.add(FeatureId::TransactionCount, ctx.transaction_count);
-    fv.add(FeatureId::MerkleLeafCount, ctx.merkle_leaf_count);
-    fv.add(FeatureId::StorageKeyCount, ctx.storage_key_count);
-    fv.add(FeatureId::UsedBytecodeBytes, ctx.used_bytecode_bytes);
-    fv.add(FeatureId::UsedBytecodeCount, ctx.used_bytecode_count);
-
-    fv
+    // Delegate to the VM-agnostic assembly step so the fast VM and any other
+    // consumer share one implementation.
+    assemble_feature_vector(tracer.snapshot(), pubdata_bytes, state_diff_count, ctx)
 }
 
 /// Estimate guest cycles for a batch using the embedded cost model.
@@ -65,17 +55,19 @@ pub fn estimate_with_model(
     state_diff_count: u64,
     ctx: &BatchContext,
 ) -> CycleEstimate {
-    let fv = features_for_estimate(tracer, pubdata_bytes, state_diff_count, ctx);
-    CycleEstimate {
-        total: model.predict_total(&fv),
-        phases: model.predict_phases(&fv),
-        unpriced: model.unpriced_used(&fv),
-        extrapolated: model.extrapolated_features(&fv),
-    }
+    estimate_from_features_with_model(
+        model,
+        tracer.snapshot(),
+        pubdata_bytes,
+        state_diff_count,
+        ctx,
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    use zksync_era_airbender_cycles_estimator::FeatureId;
+
     use super::*;
 
     fn tracer_add(t: &CycleFeatureTracer, id: FeatureId, n: u64) {
