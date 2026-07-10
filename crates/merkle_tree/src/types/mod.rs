@@ -3,10 +3,11 @@
 use zksync_types::{H256, U256};
 
 pub(crate) use self::internal::{
-    ChildRef, Nibbles, NibblesBytes, StaleNodeKey, TreeTags, HASH_SIZE, KEY_SIZE, TREE_DEPTH,
+    ChildRef, Nibbles, NibblesBytes, StaleNodeKey, TreeTags, HASH_SIZE, KEY_SIZE,
 };
 pub use self::internal::{
     InternalNode, LeafNode, Manifest, Node, NodeKey, ProfiledTreeOperation, RawNode, Root,
+    TREE_DEPTH,
 };
 
 mod internal;
@@ -73,7 +74,8 @@ impl<K> TreeEntry<K> {
 }
 
 impl TreeEntry {
-    pub(crate) fn empty(key: Key) -> Self {
+    /// Creates an empty entry (i.e., one encoding lack of a value) for the specified key.
+    pub fn empty(key: Key) -> Self {
         Self {
             key,
             value: ValueHash::zero(),
@@ -162,7 +164,9 @@ impl TreeLogEntry {
         Self::Read { leaf_index, value }
     }
 
-    pub(crate) fn is_read(&self) -> bool {
+    /// Returns `true` if and only if this log entry corresponds to a read operation
+    /// (as opposed to an insertion or update).
+    pub fn is_read(&self) -> bool {
         matches!(self, Self::Read { .. } | Self::ReadMissingKey)
     }
 }

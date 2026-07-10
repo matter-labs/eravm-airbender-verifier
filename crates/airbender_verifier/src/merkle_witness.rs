@@ -5,25 +5,14 @@
 //! verifier policy) so the soundness-relevant leaf-shape rules live in one place.
 
 use anyhow::Result;
-use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 use zksync_merkle_tree::{
     BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry, TreeLogEntryWithProof,
-    ValueHash,
+    ValueHash, TREE_DEPTH,
 };
 use zksync_types::{StorageLog, H256, U256};
 
 use crate::map_log_tree;
 use crate::types::{StorageLogMetadata, WitnessInputMerklePaths, HASH_LEN};
-
-/// Depth of the Merkle tree (256-bit hashed keys => 256 levels). Mirrors the
-/// `pub(crate)` `zksync_merkle_tree::TREE_DEPTH` (= `KEY_SIZE * 8`), which is not
-/// re-exported. Used only to bound path length exactly as `verify_proofs` does.
-///
-/// `allow(dead_code)`: only reached through `verify_paths_and_new_root`, which is
-/// not yet wired into `verify_l1_batch` (a later task swaps the three-step path
-/// for it; until then the streaming pass is exercised solely by its test).
-#[allow(dead_code)]
-const TREE_DEPTH: usize = 256;
 
 /// The pre-state a single Merkle-witness leaf encodes, after rejecting shapes
 /// the tree never emits.
@@ -198,43 +187,13 @@ fn expand_full_path(
     Ok(full)
 }
 
-/// Reproduces `zksync_merkle_tree`'s (crate-private) `dyn HashTree::
-/// fold_merkle_path` byte-for-byte using only the public `HashTree` primitives.
-///
-/// It is NOT a trait/public method there, so it cannot be called from this
-/// crate; reproducing it here (rather than changing the `merkle_tree` API) keeps
-/// the fold identical to `verify_proofs`. The `expand_merkle_path` extension to
-/// `TREE_DEPTH` with empty-subtree hashes is inlined. `path.len()` must be
-/// `<= TREE_DEPTH` (callers check this, exactly as `verify_proofs` does).
-///
-/// Correctness is pinned by the differential ACCEPT test: a genuine accept
-/// requires this fold to match the real one hash-for-hash.
-///
-/// `allow(dead_code)`: see `TREE_DEPTH` — reached only through the not-yet-wired
-/// `verify_paths_and_new_root` (and its own test).
-#[allow(dead_code)]
-fn fold_merkle_path(hasher: &Blake2Hasher, path: &[ValueHash], entry: TreeEntry) -> ValueHash {
-    let mut hash = hasher.hash_leaf(&entry.value, entry.leaf_index);
-    let empty_hash_count = TREE_DEPTH - path.len();
-    let full_path = (0..empty_hash_count)
-        .map(|depth| hasher.empty_subtree_hash(depth))
-        .chain(path.iter().copied());
-    for (depth, adjacent_hash) in full_path.enumerate() {
-        hash = if entry.key.bit(depth) {
-            hasher.hash_branch(&adjacent_hash, &hash)
-        } else {
-            hasher.hash_branch(&hash, &adjacent_hash)
-        };
-    }
-    hash
-}
-
 /// Streaming replacement for `get_bowp` + `generate_tree_instructions` +
 /// `BlockOutputWithProofs::verify_proofs` + `root_hash()`. Classifies each
 /// witness leaf, binds it to the VM storage-log key, maps it to a
-/// `TreeInstruction`, then expands and fold-verifies its Merkle path against the
-/// running root — holding only one expanded path at a time. Returns
-/// `(new_root_hash, new_enumeration_index)`.
+/// `TreeInstruction`, then expands its Merkle path and folds it via the
+/// `merkle_tree` crate's own `dyn HashTree::fold_merkle_path` (now `pub`, reused
+/// as-is rather than reimplemented) against the running root — holding only one
+/// expanded path at a time. Returns `(new_root_hash, new_enumeration_index)`.
 ///
 /// Behavior MUST match the three-step path exactly (accept/reject and returned
 /// values); see the differential oracle test. Divergences from the fused steps:
@@ -249,7 +208,7 @@ fn fold_merkle_path(hasher: &Blake2Hasher, path: &[ValueHash], entry: TreeEntry)
 pub(crate) fn verify_paths_and_new_root(
     witness: WitnessInputMerklePaths,
     vm_logs: Vec<StorageLog>,
-    hasher: &Blake2Hasher,
+    hasher: &dyn HashTree,
     old_root_hash: ValueHash,
     mut enumeration_index: u64,
 ) -> anyhow::Result<(ValueHash, u64)> {
@@ -288,24 +247,18 @@ pub(crate) fn verify_paths_and_new_root(
         let full = expand_full_path(&first_path, &meta.merkle_paths)?;
         anyhow::ensure!(full.len() <= TREE_DEPTH);
         let op_root = ValueHash::from(meta.root_hash);
-        // `TreeLogEntry::is_read()` is `pub(crate)` in `merkle_tree`; inline the
-        // identical predicate rather than change that crate's API.
-        let base_is_read =
-            matches!(base, TreeLogEntry::Read { .. } | TreeLogEntry::ReadMissingKey);
         if matches!(instruction, TreeInstruction::Read(_)) {
             anyhow::ensure!(
                 op_root == root_hash,
                 "Condition failed: `op.root_hash == root_hash` ({op_root:?} vs {root_hash:?})",
             );
-            anyhow::ensure!(base_is_read);
+            anyhow::ensure!(base.is_read());
         } else {
-            anyhow::ensure!(!base_is_read);
+            anyhow::ensure!(!base.is_read());
         }
         let prev_entry = match base {
-            // `TreeEntry::empty(key)` is `pub(crate)` in `merkle_tree`;
-            // `TreeEntry::new(key, 0, ValueHash::zero())` is the identical value.
             TreeLogEntry::Inserted | TreeLogEntry::ReadMissingKey => {
-                TreeEntry::new(instruction.key(), 0, ValueHash::zero())
+                TreeEntry::empty(instruction.key())
             }
             TreeLogEntry::Updated {
                 leaf_index,
@@ -315,13 +268,13 @@ pub(crate) fn verify_paths_and_new_root(
                 TreeEntry::new(instruction.key(), leaf_index, value)
             }
         };
-        let prev_hash = fold_merkle_path(hasher, &full, prev_entry);
+        let prev_hash = hasher.fold_merkle_path(&full, prev_entry);
         anyhow::ensure!(
             prev_hash == root_hash,
             "Condition failed: `prev_hash == root_hash` ({prev_hash:?} vs {root_hash:?})",
         );
         if let TreeInstruction::Write(new_entry) = instruction {
-            let next_hash = fold_merkle_path(hasher, &full, new_entry);
+            let next_hash = hasher.fold_merkle_path(&full, new_entry);
             anyhow::ensure!(
                 next_hash == op_root,
                 "Condition failed: `next_hash == op.root_hash` ({next_hash:?} vs {op_root:?})",

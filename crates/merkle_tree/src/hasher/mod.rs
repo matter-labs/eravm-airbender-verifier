@@ -64,7 +64,11 @@ impl dyn HashTree + '_ {
         empty_hashes.chain(path.iter().copied())
     }
 
-    fn fold_merkle_path(&self, path: &[ValueHash], entry: TreeEntry) -> ValueHash {
+    /// Folds a Merkle path (as returned in [`TreeEntryWithProof`](crate::TreeEntryWithProof) /
+    /// [`TreeLogEntryWithProof`](crate::TreeLogEntryWithProof)) together with the leaf `entry`
+    /// into the resulting root hash. `path` may be shorter than [`TREE_DEPTH`]; it is extended
+    /// with empty-subtree hashes as necessary.
+    pub fn fold_merkle_path(&self, path: &[ValueHash], entry: TreeEntry) -> ValueHash {
         let mut hash = self.hash_leaf(&entry.value, entry.leaf_index);
         let full_path = self.extend_merkle_path(path);
         for (depth, adjacent_hash) in full_path.enumerate() {
