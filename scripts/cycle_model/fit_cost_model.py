@@ -123,6 +123,34 @@ def fit(X: np.ndarray, y: np.ndarray):
     return coeffs, base, 1.0 - ss_res / ss_tot
 
 
+def fit_asymmetric(X: np.ndarray, y: np.ndarray, tau: float, iters: int = 50):
+    """Expectile (asymmetric least-squares) NNLS: penalize UNDER-prediction
+    (actual > pred) by weight `tau` and OVER-prediction by `1 - tau`. tau=0.5 is
+    ordinary least squares; tau>0.5 pushes the model to over-predict (safe for a
+    seal gate, where under-estimating cycles = accepting an unprovable batch).
+
+    Solved by iteratively-reweighted NNLS: scale each row by sqrt(weight) and
+    re-solve until the weights (hence residual signs) converge. Keeps the
+    non-negativity/monotonicity guarantee.
+    """
+    A = np.hstack([X, np.ones((X.shape[0], 1))])
+    sol = np.zeros(A.shape[1])
+    for _ in range(iters):
+        resid = y - A @ sol
+        w = np.where(resid > 0, tau, 1.0 - tau)  # resid>0 == under-prediction
+        sw = np.sqrt(w)
+        new, _ = nnls(A * sw[:, None], y * sw)
+        if np.allclose(new, sol, rtol=1e-9, atol=1e-6):
+            sol = new
+            break
+        sol = new
+    coeffs, base = sol[:-1], sol[-1]
+    pred = A @ sol
+    ss_res = float(((y - pred) ** 2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum()) or 1.0
+    return coeffs, base, 1.0 - ss_res / ss_tot
+
+
 def fit_with_pinned(X: np.ndarray, y: np.ndarray, feature_cols, pinned: dict):
     """Hold `pinned` feature costs fixed (e.g. from crypto microbenchmarks) and
     NNLS-fit the remaining feature costs against the residual target.
@@ -215,6 +243,9 @@ def main():
     ap.add_argument("--precompile-dataset", default=None,
                     help="synthetic precompile-batch dataset.json; its precompile "
                          "coeffs are residual-fit with the organic model frozen")
+    ap.add_argument("--tau", type=float, default=0.5,
+                    help="expectile for the TOTAL fit; >0.5 penalizes UNDER-prediction "
+                         "(safer seal gate). 0.5 = ordinary NNLS (default).")
     args = ap.parse_args()
 
     df = load_dataset(Path(args.dataset))
@@ -261,6 +292,8 @@ def main():
     X = df[used].to_numpy(dtype=float)
     if pinned:
         coeffs, base, r2 = fit_with_pinned(X, y, used, pinned)
+    elif args.tau != 0.5:
+        coeffs, base, r2 = fit_asymmetric(X, y, args.tau)
     else:
         coeffs, base, r2 = fit(X, y)
     total_table = {c: float(w) for c, w in zip(used, coeffs)}

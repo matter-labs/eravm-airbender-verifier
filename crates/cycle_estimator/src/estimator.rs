@@ -68,11 +68,13 @@ impl CycleEstimate {
     }
 
     /// `total` scaled by a safety `margin` and rounded up — the number to compare
-    /// against the per-proof limit. The model systematically under-predicts by a
-    /// couple of percent, so a `margin` of ~1.05–1.10 is a reasonable cushion for
-    /// ordinary variance (pick per your risk tolerance; a bigger cushion trades
-    /// throughput for safety). A margin does NOT compensate for unpriced
-    /// precompiles — see [`Self::is_reliable`].
+    /// against the per-proof limit. The model is fit with an *asymmetric* loss
+    /// (expectile τ=0.9) that penalizes under-prediction more than over-prediction,
+    /// so `total` already leans conservative (out-of-sample it is no longer
+    /// systematically low; residual worst-case under-prediction ~1.4%). A `margin`
+    /// of ~1.05 comfortably covers that tail plus ordinary variance (pick per your
+    /// risk tolerance; a bigger cushion trades throughput for safety). A margin
+    /// does NOT compensate for unpriced precompiles — see [`Self::is_reliable`].
     pub fn conservative(&self, margin: f64) -> u64 {
         ((self.total as f64) * margin.max(1.0)).ceil() as u64
     }

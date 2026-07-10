@@ -7,7 +7,7 @@
 //! (or accuracy-worsening) change to `model/cost_table.json` or to the prediction
 //! code. Genuine model improvements still pass (thresholds, not exact pins).
 //!
-//! The fixture is a frozen snapshot of the 513xxx v31 hold-out set (features +
+//! The fixture is a frozen snapshot of the 513xxx hold-out set (features +
 //! measured effective/native cycles = raw + weighted delegations). Refresh it
 //! only when the guest/verifier changes enough to move real cycle counts (see
 //! `scripts/cycle_model/README.md`).
@@ -17,8 +17,9 @@ use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
 
-// Current out-of-sample accuracy is MAPE 0.45% / max 1.83%; these thresholds
-// leave headroom for improvements but trip on a real regression.
+// Current out-of-sample accuracy is MAPE 0.34% / max 1.36% (asymmetric τ=0.9 fit,
+// which leans conservative); these thresholds leave headroom for improvements but
+// trip on a real regression.
 const MAX_MAPE_PCT: f64 = 0.60;
 const MAX_SINGLE_ERR_PCT: f64 = 2.5;
 

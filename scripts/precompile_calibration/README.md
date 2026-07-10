@@ -88,10 +88,17 @@ Reproduce (residual mode is first-class in the fit script):
 python3 scripts/cycle_model/fit_cost_model.py \
     --dataset <506xxx organic corpus>/dataset.json \
     --precompile-dataset scripts/precompile_calibration/synthetic_dataset.json \
+    --tau 0.9 \
     --out artifacts/cycle_model
 ```
 It fits the organic model from `--dataset`, freezes it, and residual-fits the
 precompile coeffs from `synthetic_dataset.json` into `total` and the
-`vm_execution` phase. (The committed `cost_table.json` keeps the previously
-reviewed organic model and adds these precompile coeffs; coeffs match the script
-to <0.2%.)
+`vm_execution` phase. This is what the committed `cost_table.json` is generated
+from.
+
+`--tau 0.9` fits the organic total with an **asymmetric (expectile) loss** that
+penalizes under-prediction ~9× over over-prediction, so the model leans
+conservative — the right bias for a seal gate. On the 513xxx hold-out this drops
+the under-prediction rate 88%→67%, halves the mean bias (−0.42%→−0.26%), and
+improves both worst-case under (−1.82%→−1.36%) and MAPE (0.44%→0.34%) versus a
+plain (τ=0.5) least-squares fit. See `fit_asymmetric()` in the fit script.
