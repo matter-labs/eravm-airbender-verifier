@@ -41,7 +41,7 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
     let model = CostModel::embedded();
 
     for r in &rows {
-        let est = estimate(&model, &r.features);
+        let est = estimate(model, &r.features);
         let trustworthy = est.is_reliable() && est.is_within_calibration();
         let covered = est.conservative(GATE_MARGIN) >= r.effective_cycles;
         println!(
