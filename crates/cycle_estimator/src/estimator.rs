@@ -23,7 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::features::FeatureId;
+use crate::features::{FeatureId, FeatureVector};
+use crate::model::CostModel;
 
 /// Batch-level model inputs the sequencer supplies from data it already holds
 /// (storage view + the bytecodes it will prove). These drive the setup / merkle
@@ -99,6 +100,68 @@ impl CycleEstimate {
     /// reject/split rather than silently ship an over-limit batch.
     pub fn fits(&self, limit: u64, margin: f64) -> bool {
         self.is_reliable() && self.is_within_calibration() && self.conservative(margin) <= limit
+    }
+}
+
+/// Merge the batch-level features a VM trace cannot observe into a feature vector
+/// (the tracer's opcode/crypto counts, or a hand-built vector). `pubdata_bytes` and
+/// `state_diff_count` come from the finished batch; [`BatchContext`] carries the
+/// sequencer-derived storage/bytecode drivers. This is the VM-agnostic assembly
+/// step — shared by the fast-VM tracer, a legacy-VM tracer, or any other consumer,
+/// so the online estimator always feeds the model exactly the calibrated features.
+pub fn assemble_feature_vector(
+    mut vm_features: FeatureVector,
+    pubdata_bytes: u64,
+    state_diff_count: u64,
+    ctx: &BatchContext,
+) -> FeatureVector {
+    // From the finished batch (exact).
+    vm_features.add(FeatureId::PubdataBytes, pubdata_bytes);
+    vm_features.add(FeatureId::StateDiffCount, state_diff_count);
+    // From the sequencer-supplied context.
+    vm_features.add(FeatureId::TransactionCount, ctx.transaction_count);
+    vm_features.add(FeatureId::MerkleLeafCount, ctx.merkle_leaf_count);
+    vm_features.add(FeatureId::StorageKeyCount, ctx.storage_key_count);
+    vm_features.add(FeatureId::UsedBytecodeBytes, ctx.used_bytecode_bytes);
+    vm_features.add(FeatureId::UsedBytecodeCount, ctx.used_bytecode_count);
+    vm_features
+}
+
+/// Estimate guest cycles from `vm_features` (opcode/crypto counts) plus the batch
+/// scalars, using the embedded cost model. **Tracer-agnostic**: any consumer — the
+/// fast-VM tracer, zksync-era's legacy-VM tracer, or a hand-built vector — can call
+/// this without pulling a VM dependency, so there is one implementation of the
+/// assemble-then-predict path and no need to reimplement it downstream.
+pub fn estimate_from_features(
+    vm_features: FeatureVector,
+    pubdata_bytes: u64,
+    state_diff_count: u64,
+    ctx: &BatchContext,
+) -> CycleEstimate {
+    estimate_from_features_with_model(
+        CostModel::embedded(),
+        vm_features,
+        pubdata_bytes,
+        state_diff_count,
+        ctx,
+    )
+}
+
+/// Like [`estimate_from_features`], but against a caller-supplied model (e.g. a
+/// candidate table under evaluation). Most callers want [`estimate_from_features`].
+pub fn estimate_from_features_with_model(
+    model: &CostModel,
+    vm_features: FeatureVector,
+    pubdata_bytes: u64,
+    state_diff_count: u64,
+    ctx: &BatchContext,
+) -> CycleEstimate {
+    let fv = assemble_feature_vector(vm_features, pubdata_bytes, state_diff_count, ctx);
+    CycleEstimate {
+        total: model.predict_total(&fv),
+        phases: model.predict_phases(&fv),
+        unpriced: model.unpriced_used(&fv),
+        extrapolated: model.extrapolated_features(&fv),
     }
 }
 
