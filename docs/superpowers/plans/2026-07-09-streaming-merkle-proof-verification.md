@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Byte-identical behavior.** The streaming path MUST produce the same `(new_root_hash, enumeration_index)` and the same accept/reject (Ok/Err) as the current three-step path on every input. This is consensus-critical (soundness). Proven by a differential oracle test, not by inspection.
-- **No `merkle_tree` public-API change; no vm2 change.** Reuse `HashTree::fold_merkle_path`.
+- **Reuse the proven `merkle_tree` fold; do NOT reimplement it.** `fold_merkle_path` (on `impl dyn HashTree`), `TreeEntry::empty`, `TreeLogEntry::is_read`, and `TREE_DEPTH` are private/`pub(crate)` — widen them to `pub` (visibility-only, no logic change) so the streaming pass calls the exact same fold as `verify_proofs`. (This supersedes the original "no merkle_tree API change" goal — decided in favor of soundness: reusing the proven fold beats re-expressing it.) No vm2 change.
 - **Fail-closed.** Every malformed-witness / mismatch path must bail or panic (no proof), never succeed with wrong data.
 - **Keep the existing `get_bowp` / `generate_tree_instructions` / `verify_proofs` / `map_log_tree` / `classify_witness_leaf`** — they are the oracle.
 - Branch: `vv/streaming-merkle-verification` (off `main`, v31). Spec: `docs/superpowers/specs/2026-07-09-streaming-merkle-proof-verification-design.md`.
@@ -416,19 +416,20 @@ git commit -m "feat: streaming verify_paths_and_new_root + differential oracle t
         .root_hash()
         .context("root_hash unavailable after verify_proofs")?;
 ```
-with:
+with (note the enumeration-index handling — the streaming fn RETURNS the *new* index, so keep the input as `prev` and delete the old `num_insertions` counting block, which depended on `block_output_with_proofs`):
 ```rust
     let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
-    let (new_root_hash, enumeration_index) = crate::merkle_witness::verify_paths_and_new_root(
+    let prev_enumeration_index = enumeration_index; // = input.merkle_paths.next_enumeration_index()
+    let (new_root_hash, new_enumeration_index) = crate::merkle_witness::verify_paths_and_new_root(
         input.merkle_paths,
         vm_logs,
         &Blake2Hasher,
         old_root_hash,
-        enumeration_index,
+        prev_enumeration_index,
     )
     .with_context(|| format!("Failed to verify Merkle paths for batch {batch_number}"))?;
 ```
-Ensure `enumeration_index` is declared `let mut` earlier (it currently feeds `generate_tree_instructions`); after this, downstream code that read the post-fold enumeration index now reads the returned `enumeration_index`. Confirm nothing else consumed `block_output_with_proofs`, `leaf_keys`, or `instructions` after this block (per the read of `execute()`, they do not).
+Then DELETE the now-dead block that computed `new_root_hash` via `block_output_with_proofs.root_hash()` AND the `num_insertions`/`new_enumeration_index` block (lines that filter `block_output_with_proofs.logs` for `Inserted`) — `verify_paths_and_new_root` already returns `new_enumeration_index = prev + count(Inserted writes)`, which equals the old `enumeration_index + num_insertions` (every `Inserted` is a write on success). In the returned `VmExecutionState`, use `prev_enumeration_index` for the `prev_enumeration_index` field and the returned `new_enumeration_index` for `new_enumeration_index`. **Do not shadow `enumeration_index` with the new value** — prev and new are distinct. Confirm nothing else consumed `block_output_with_proofs`, `leaf_keys`, or `instructions` after this block (per the read of `execute()`, they do not).
 
 - [ ] **Step 2: Silence dead-code on the oracle.** `get_bowp`, `generate_tree_instructions`, `map_log_tree`, `classify_witness_leaf`, `tree_log_entry_from_witness`, `WitnessLeaf` are now used only by tests. Add `#[cfg_attr(not(test), allow(dead_code))]` to each (do NOT delete — they are the oracle).
 
