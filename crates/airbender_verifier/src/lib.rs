@@ -359,7 +359,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     // `execute_vm` already enforced that batch finalization succeeded (rejecting a
     // `Halt`ed block tip), so `vm_out` here is a successfully-finalized batch.
 
-    // Take fields out of vm_out before generate_tree_instructions consumes it.
+    // Take fields out of vm_out before the streaming Merkle verification / bootloader-heap commitment consume the rest.
     // The tree-instructions path only reads final_execution_state.deduplicated_storage_logs.
     let system_logs = std::mem::take(&mut vm_out.final_execution_state.system_logs);
     let pubdata_input = vm_out.pubdata_input.take();

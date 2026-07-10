@@ -288,7 +288,6 @@ pub(crate) fn verify_paths_and_new_root(
 #[cfg(test)]
 mod streaming_tests {
     use super::*;
-    use crate::types::HASH_LEN;
 
     fn meta(paths: Vec<[u8; HASH_LEN]>) -> StorageLogMetadata {
         StorageLogMetadata {
