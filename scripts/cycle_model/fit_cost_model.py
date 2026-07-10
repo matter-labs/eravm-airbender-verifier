@@ -106,6 +106,11 @@ PRECOMPILE_FEATURES = [
 #   - transient_storage_write: ~11k cyc/op with DISTINCT keys (the transient map
 #     grows like storage); the fit prices it 0 (mainnet uses ~800/batch). Measured
 #     9x total under-estimate on a transient-dominated batch.
+#   - transient_storage_read (tload): ~323 cyc/op measured via a matched control
+#     (readLoop - nopLoop) — dispatch + an O(1) in-memory map lookup, ~18x cheaper
+#     than a write (no map growth, no rollback-log entry). Floored at 500 for
+#     headroom. NB reads ARE counted by the tracer — the earlier "0 reads" was
+#     zksolc folding a write-then-read-same-slot into the stored value (no opcode).
 #   - average_op (context ops: caller/gasleft/address/…): ~236 cyc dispatch;
 #     priced 0 by the fit. Measured 1.5x under-estimate.
 #   - near_call_count: dispatch minimum (no clean isolate available; conservative).
@@ -122,7 +127,7 @@ PRECOMPILE_FEATURES = [
 # the two of them together keep the gate safe.
 OPCODE_FLOORS = {
     "transient_storage_write": 11000,
-    "transient_storage_read": 11000,
+    "transient_storage_read": 500,
     "average_op": 236,
     "near_call_count": 236,
 }
