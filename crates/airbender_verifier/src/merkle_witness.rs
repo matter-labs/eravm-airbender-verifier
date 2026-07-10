@@ -5,10 +5,10 @@
 //! verifier policy) so the soundness-relevant leaf-shape rules live in one place.
 
 use anyhow::Result;
-use zksync_merkle_tree::{BlockOutputWithProofs, TreeLogEntry, TreeLogEntryWithProof};
+use zksync_merkle_tree::{BlockOutputWithProofs, TreeLogEntry, TreeLogEntryWithProof, ValueHash};
 use zksync_types::{H256, U256};
 
-use crate::types::{StorageLogMetadata, WitnessInputMerklePaths};
+use crate::types::{StorageLogMetadata, WitnessInputMerklePaths, HASH_LEN};
 
 /// The pre-state a single Merkle-witness leaf encodes, after rejecting shapes
 /// the tree never emits.
@@ -153,4 +153,100 @@ pub(crate) fn get_bowp(
         },
         leaf_keys,
     ))
+}
+
+/// Reconstruct entry `i`'s full Merkle path from the delta-compressed witness
+/// form: the shared prefix is taken from `first` (the first/longest stored
+/// path). Mirrors `WitnessInputMerklePaths::into_merkle_paths`, one entry at a
+/// time (entry 0 passes `first` as `compact` and is returned unchanged).
+///
+/// Not yet wired into `get_bowp`/`verify_paths_and_new_root`: it exists so the
+/// upcoming streaming pass can expand paths lazily, one at a time, instead of
+/// eagerly materializing all of them via `into_merkle_paths`.
+#[allow(dead_code)]
+fn expand_full_path(
+    first: &[[u8; HASH_LEN]],
+    compact: &[[u8; HASH_LEN]],
+) -> anyhow::Result<Vec<ValueHash>> {
+    anyhow::ensure!(
+        compact.len() <= first.len(),
+        "Merkle paths malformed: a later path ({}) is longer than the first ({})",
+        compact.len(),
+        first.len(),
+    );
+    let prefix_len = first.len() - compact.len();
+    let mut full = Vec::with_capacity(first.len());
+    full.extend(first[..prefix_len].iter().map(|h| ValueHash::from(*h)));
+    full.extend(compact.iter().map(|h| ValueHash::from(*h)));
+    Ok(full)
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use crate::types::HASH_LEN;
+
+    fn meta(paths: Vec<[u8; HASH_LEN]>) -> StorageLogMetadata {
+        StorageLogMetadata {
+            root_hash: [0; HASH_LEN],
+            is_write: false,
+            first_write: false,
+            merkle_paths: paths,
+            leaf_hashed_key: U256::zero(),
+            leaf_enumeration_index: 1,
+            value_written: [0; HASH_LEN],
+            value_read: [0; HASH_LEN],
+        }
+    }
+
+    #[test]
+    fn expand_full_path_matches_into_merkle_paths() {
+        // first (longest, uncompacted) path of 4 hashes, then two paths that
+        // share a prefix with it. `WitnessInputMerklePaths` has a private
+        // field, so we build it via `push_merkle_path` (as the crate's own
+        // `witness_merkle_paths_roundtrip` test does) and let it compute the
+        // delta-compacted form itself, exactly as production code does.
+        let first_full = vec![[1u8; HASH_LEN], [2; HASH_LEN], [3; HASH_LEN], [4; HASH_LEN]];
+        let second_full = vec![[1u8; HASH_LEN], [2; HASH_LEN], [3; HASH_LEN], [9; HASH_LEN]]; // shares first[0..3]
+        let third_full = vec![[1u8; HASH_LEN], [2; HASH_LEN], [8; HASH_LEN], [7; HASH_LEN]]; // shares first[0..2]
+
+        let mut witness = WitnessInputMerklePaths::new(4);
+        witness.reserve(3);
+        witness.push_merkle_path(meta(first_full));
+        witness.push_merkle_path(meta(second_full));
+        witness.push_merkle_path(meta(third_full));
+
+        // Sanity check: the middle/last entries were actually delta-compacted
+        // (otherwise this test would trivially pass without exercising
+        // `expand_full_path`'s prefix-splicing logic).
+        assert_eq!(witness.merkle_paths[1].merkle_paths.len(), 1);
+        assert_eq!(witness.merkle_paths[2].merkle_paths.len(), 2);
+
+        let oracle: Vec<Vec<ValueHash>> = witness
+            .clone()
+            .into_merkle_paths()
+            .map(|m| m.merkle_paths.into_iter().map(Into::into).collect())
+            .collect();
+
+        let firsts = &witness.merkle_paths[0].merkle_paths;
+        let got: Vec<Vec<ValueHash>> = witness
+            .merkle_paths
+            .iter()
+            .map(|m| expand_full_path(firsts, &m.merkle_paths).unwrap())
+            .collect();
+
+        assert_eq!(got, oracle);
+    }
+
+    #[test]
+    fn expand_full_path_rejects_compact_longer_than_first() {
+        let first = vec![[1u8; HASH_LEN], [2; HASH_LEN]];
+        let too_long = vec![[3u8; HASH_LEN], [4; HASH_LEN], [5; HASH_LEN]];
+
+        let err = expand_full_path(&first, &too_long).unwrap_err();
+        assert!(
+            err.to_string().contains("malformed"),
+            "unexpected error message: {err}"
+        );
+    }
 }
