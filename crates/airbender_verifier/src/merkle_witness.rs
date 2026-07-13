@@ -191,46 +191,26 @@ fn expand_full_path(
     Ok(full)
 }
 
-/// Streaming replacement for `get_bowp` + `generate_tree_instructions` +
-/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`, split into two
-/// passes so all witness-shape/binding validation finishes before any Merkle
-/// fold:
+/// Verifies the committed `merkle_paths` witness against `old_root_hash` and
+/// returns the post-batch `(root_hash, enumeration_index)`. Streams one path at
+/// a time — `O(1)` live paths instead of expanding all of them at once — which
+/// is what keeps peak memory bounded on read-heavy batches.
 ///
-/// - Pass 1 mirrors `generate_tree_instructions`: for every entry, in order,
-///   classify the witness leaf, bind it to the VM storage-log key, and map it
-///   to a `TreeInstruction` — collecting the small `(TreeLogEntry,
-///   TreeInstruction)` pair per entry. No Merkle path is expanded here.
-/// - Pass 2 mirrors `verify_proofs`: for every entry, in order again, expand
-///   its Merkle path lazily and fold it via the `merkle_tree` crate's own
-///   `dyn HashTree::fold_merkle_path` (now `pub`, reused as-is rather than
-///   reimplemented) against the running root — holding only one expanded
-///   path at a time.
+/// Two passes over the entries:
+/// - Pass 1: classify each witness leaf, bind it to the VM storage-log key, and
+///   map it to a `TreeInstruction`. No Merkle path is expanded.
+/// - Pass 2: expand each path lazily and fold it against the running root via
+///   `merkle_tree`'s own `HashTree::fold_merkle_path` — reused, not
+///   reimplemented, so the consensus fold is identical.
 ///
-/// Splitting into two passes (rather than fusing classify+bind+map+fold into a
-/// single per-entry loop) keeps every classify/key-binding/map error — for all
-/// entries — surfacing before any fold error, so a cryptographic fold failure
-/// never preempts a witness-shape rejection. It is NOT required for the memory
-/// goal (a fused per-entry loop would also expand one path at a time), and it
-/// does NOT reproduce the oracle's exact error on a *multi-fault* witness: the
-/// oracle classifies every entry (in `get_bowp`) before binding any (in
-/// `generate_tree_instructions`), whereas Pass 1 interleaves classify→bind per
-/// entry, so which fault surfaces first can differ. That divergence is
-/// rejection-only and fail-closed (see below). Returns `(new_root_hash,
-/// new_enumeration_index)`.
+/// Running all of Pass 1 before any fold guarantees a witness-shape or binding
+/// error surfaces before a cryptographic fold error.
 ///
-/// Behavior matches the three-step path on what matters: identical accept/reject
-/// and, on accept, identical returned `(new_root_hash, new_enumeration_index)`
-/// — see the differential oracle test. Error *ordering* is NOT guaranteed
-/// identical: on a multi-fault witness both paths reject (fail-closed) but may
-/// surface different errors, and the oracle test treats any `(Err, Err)` as
-/// agreement, so it does not (and need not) pin the specific message.
-/// Divergences from the fused steps: the count check is hoisted UP FRONT (a
-/// bare `zip` would silently truncate), and `N == 0` maps to the same error the
-/// oracle's `root_hash()` `None` yields.
-///
-/// Wired into `execute()` in `lib.rs`; the three-step path (`get_bowp` +
-/// `generate_tree_instructions` + `verify_proofs` + `root_hash()`) remains as
-/// the differential-test oracle (see `streaming_tests` below).
+/// Correctness is pinned by a differential-test oracle (see `streaming_tests`):
+/// identical accept/reject and, on accept, identical returned values. Error
+/// *ordering* is not identical — on a multi-fault witness both reject
+/// (fail-closed) but may surface different errors (see
+/// `streaming_and_oracle_diverge_on_multi_fault_error_ordering`).
 pub(crate) fn verify_paths_and_new_root(
     witness: WitnessInputMerklePaths,
     vm_logs: Vec<StorageLog>,
@@ -239,34 +219,29 @@ pub(crate) fn verify_paths_and_new_root(
     mut enumeration_index: u64,
 ) -> anyhow::Result<(ValueHash, u64)> {
     let metas = witness.merkle_paths;
-    // Count check up front: `generate_tree_instructions` performs it before any
-    // fold, and a bare `zip` below would silently truncate to the shorter side.
+    // Reject mismatched counts explicitly: the `zip` below would otherwise
+    // silently truncate to the shorter side.
     anyhow::ensure!(
         metas.len() == vm_logs.len(),
         "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
         vm_logs.len(),
         metas.len(),
     );
-    // With no logs the oracle's `root_hash()` is `None`, which the production
-    // caller turns into this exact error via `.context(...)`.
+    // Empty input: mirror the oracle, whose `root_hash()` is `None` here and
+    // surfaces this same message.
     anyhow::ensure!(
         !metas.is_empty(),
         "root_hash unavailable after verify_proofs",
     );
     let first_path = metas[0].merkle_paths.clone();
 
-    // Pass 1 (mirrors `generate_tree_instructions`): classify, key-bind, and
-    // map every entry to a `TreeInstruction` FIRST, in order, before any fold,
-    // so no Merkle-fold error can preempt a witness-shape/binding rejection.
-    // This does NOT reproduce the oracle's exact multi-fault error ordering
-    // (`get_bowp` classifies all entries before `generate_tree_instructions`
-    // binds any, whereas this interleaves classify→bind per entry), but any
-    // such divergence is rejection-only and fail-closed — see the fn doc. Only
-    // the small per-entry `TreeLogEntry` + `TreeInstruction` are kept here — no
-    // Merkle path is expanded yet.
+    // Pass 1: classify, key-bind, and map every entry to a `TreeInstruction`
+    // before any fold, so a shape/binding error can't be preempted by a fold
+    // error. Only the small per-entry `(TreeLogEntry, TreeInstruction)` is kept
+    // — no Merkle path is expanded yet.
     let mut instructions: Vec<(TreeLogEntry, TreeInstruction)> = Vec::with_capacity(metas.len());
     for (meta, vm_log) in metas.iter().zip(vm_logs.iter()) {
-        // (1) classify the witness leaf (shared classifier with `get_bowp`).
+        // (1) classify the witness leaf.
         let base = tree_log_entry_from_witness(meta)?;
         // (2) bind the proof to the slot the VM actually touched.
         let key = meta.leaf_hashed_key;

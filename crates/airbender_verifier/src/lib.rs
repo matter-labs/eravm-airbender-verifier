@@ -378,12 +378,10 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
 
     let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
     let prev_enumeration_index = enumeration_index; // = input.merkle_paths.next_enumeration_index()
-                                                    // NOTE: do not wrap this call with `.with_context(...)`. The fused pass
-                                                    // surfaces the classify / key-binding / fold errors directly, and callers
-                                                    // (and the `fail_closed` regression tests) match on those inner messages
-                                                    // via `err.to_string()`, which shows only the outermost context. The old
-                                                    // three-step path let the key-binding error from `generate_tree_instructions`
-                                                    // propagate unwrapped for the same reason; preserve that.
+                                                    // NOTE: do not wrap this call with `.with_context(...)`. It surfaces the
+                                                    // classify / key-binding / fold errors directly, and callers (and the
+                                                    // `fail_closed` regression tests) match on those inner messages via
+                                                    // `err.to_string()`, which shows only the outermost context.
     let (new_root_hash, new_enumeration_index) = crate::merkle_witness::verify_paths_and_new_root(
         input.merkle_paths,
         vm_logs,
