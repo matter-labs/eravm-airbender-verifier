@@ -311,8 +311,9 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     }
 
     // Pre-batch storage view. Slot values come only from `merkle_paths`, which the
-    // `verify_proofs` fold below proves against `old_root_hash` — so the operator
-    // cannot forge the pre-state of any slot the tree witness covers.
+    // streaming Merkle fold below (`verify_paths_and_new_root`) proves against
+    // `old_root_hash` — so the operator cannot forge the pre-state of any slot the
+    // tree witness covers.
     //
     // `merkle_paths` omits exactly one shape: a write the batch fully rolled back.
     // The VM still cold-reads such a slot before writing it, but its pre-state

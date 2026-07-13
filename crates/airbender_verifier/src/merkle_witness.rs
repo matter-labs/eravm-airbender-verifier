@@ -1,8 +1,9 @@
 //! Interpretation of the committed `merkle_paths` witness: classifying each
-//! leaf's pre-state, building the pre-batch storage view, and turning the
-//! witness into the `BlockOutputWithProofs` the tree fold verifies. Kept out of
-//! `lib.rs` (and out of the vendored `merkle_tree` crate, which shouldn't carry
-//! verifier policy) so the soundness-relevant leaf-shape rules live in one place.
+//! leaf's pre-state, building the pre-batch storage view, and streaming each
+//! Merkle path through `verify_paths_and_new_root` to fold-verify it against
+//! the pre-batch root. Kept out of `lib.rs` (and out of the vendored
+//! `merkle_tree` crate, which shouldn't carry verifier policy) so the
+//! soundness-relevant leaf-shape rules live in one place.
 
 use anyhow::Result;
 use zksync_merkle_tree::{
@@ -58,9 +59,10 @@ pub(crate) fn classify_witness_leaf(log: &StorageLogMetadata) -> anyhow::Result<
 /// Build the storage view from the committed `merkle_paths` witness: each entry's
 /// classified pre-state (empty leaf -> `None`, existing leaf -> `Some((value,
 /// index))`), keyed by its hashed key (a little-endian `U256`). Every entry is
-/// proven against `old_root_hash` by the later `verify_proofs` fold, so this only
-/// translates shapes — rejecting malformed leaves (via the classifier) and any
-/// conflicting duplicate (`merkle_paths` is deduplicated to one entry per slot).
+/// proven against `old_root_hash` by the later streaming Merkle fold
+/// (`verify_paths_and_new_root`), so this only translates shapes — rejecting
+/// malformed leaves (via the classifier) and any conflicting duplicate
+/// (`merkle_paths` is deduplicated to one entry per slot).
 pub(crate) fn build_view_from_merkle_paths(
     merkle_paths: &[StorageLogMetadata],
 ) -> anyhow::Result<std::collections::BTreeMap<H256, Option<(H256, u64)>>> {
@@ -387,7 +389,7 @@ mod streaming_tests {
     // ---------------------------------------------------------------------
     // Differential oracle test for `verify_paths_and_new_root`.
     //
-    // The oracle is the exact current three-step production path
+    // The oracle is the exact previous three-step production path
     // (`get_bowp` + `generate_tree_instructions` + `BlockOutputWithProofs::
     // verify_proofs` + `root_hash()`); `verify_paths_and_new_root` fuses those
     // into a single streaming pass. On every input the two MUST agree on the
@@ -400,7 +402,7 @@ mod streaming_tests {
 
     use crate::generate_tree_instructions;
 
-    /// Oracle: the exact current three-step path, threaded like the production
+    /// Oracle: the exact previous three-step path, threaded like the production
     /// caller in `lib.rs` (enum index advances by the number of `Inserted`
     /// leaves; `root_hash()` is `None` when there are no logs).
     fn reference(
