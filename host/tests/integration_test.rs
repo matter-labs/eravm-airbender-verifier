@@ -99,6 +99,33 @@ fn host_runs_batch_native_and_transpiler() {
     println!("[test] native verification matched transpiler execution");
 }
 
+/// Regression guard for the streaming Merkle-proof verification (the
+/// RAM-exhaustion DoS fix, PR #83). Batch `900065` is a synthetic v31 batch
+/// (generated from a local Era node, not mainnet) with 140,059 unique storage
+/// reads — the batch the fix was validated against.
+///
+/// The pre-fix path expanded every storage Merkle proof to full depth at once
+/// (~1.15 GiB for this batch: 140_059 * 256 * 32 B), overflowing the bounded
+/// guest heap and OOMing the guest — a settlement-liveness DoS. The transpiler
+/// runs the actual compiled guest binary under that same bounded memory model,
+/// so this reproduces the OOM on CPU (no GPU needed): the streaming pass keeps
+/// live paths at `O(1)` and the run completes; a regression to eager expansion
+/// would OOM here.
+#[ignore = "requires the LFS batch corpus and the built guest binary"]
+#[test]
+fn host_runs_read_heavy_batch_without_guest_oom() {
+    let batch = batch_input("900065.bin.gz");
+    println!(
+        "[test] run_batches on read-heavy batch (140_059 unique reads): {}",
+        batch.path.display()
+    );
+    eravm_prover_host::run_batches(std::slice::from_ref(&batch), false).expect(
+        "run_batches failed — the guest may have OOMed on eager Merkle-proof expansion \
+         (the RAM-exhaustion DoS may have regressed)",
+    );
+    println!("[test] read-heavy batch verified natively and on the transpiler without OOM");
+}
+
 // ---------------------------------------------------------------------------
 // GPU: FRI proving followed by SNARK wrapping, end-to-end in-process
 // ---------------------------------------------------------------------------

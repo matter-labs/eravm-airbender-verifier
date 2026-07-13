@@ -11,7 +11,7 @@ use zksync_vm_interface::{L1BatchEnv, SystemEnv};
 
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
-const HASH_LEN: usize = 32;
+pub(crate) const HASH_LEN: usize = 32;
 
 /// Number of blob hash/commitment pairs in the auxiliary output.
 ///
