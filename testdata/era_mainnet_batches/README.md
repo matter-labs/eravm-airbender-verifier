@@ -71,6 +71,27 @@ batch (a fully rolled-back write, mainnet batch 506155, pre-v31). We could not
 regenerate that batch on v31 — the batches we produced don't reproduce the gap — so
 the test synthesizes the gap adversarially instead.
 
+## Synthetic Read-Heavy Batch (`900065`)
+
+`900065.bin.gz` is **not** a mainnet batch. It is a synthetic v31 batch generated
+from a local Era node with 140,059 unique cold storage reads (the `9000xx` prefix
+marks it synthetic; `65` is its source batch number). It is the regression fixture
+for the streaming Merkle-proof verification (the RAM-exhaustion DoS fix): the
+pre-fix path expanded every storage proof to full depth at once (~1.15 GiB here),
+OOMing the bounded guest heap.
+
+`host/tests/integration_test.rs::host_runs_read_heavy_batch_without_guest_oom`
+runs it through the transpiler (the actual compiled guest under its bounded memory
+model, CPU only — no GPU), so a regression to eager expansion OOMs the guest there.
+Fetch it and run explicitly:
+
+```sh
+./scripts/fetch_lfs_batches.sh 900065.bin.gz
+cargo airbender build --project guest
+cargo test -p eravm-prover-host --test integration_test \
+  -- --ignored --nocapture host_runs_read_heavy_batch_without_guest_oom
+```
+
 ## Running Tools Against This Corpus
 
 Both the VM compare tool and the host runner accept this directory directly.
