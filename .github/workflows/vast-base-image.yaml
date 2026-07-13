@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+      - dl/vast-and-split-snark
     paths:
       - Dockerfile.vast-base
       - scripts/vast/**
