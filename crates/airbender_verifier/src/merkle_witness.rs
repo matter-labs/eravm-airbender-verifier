@@ -192,9 +192,9 @@ fn expand_full_path(
 }
 
 /// Streaming replacement for `get_bowp` + `generate_tree_instructions` +
-/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`, split into the same
-/// two passes as the original three-step path so error ordering matches
-/// exactly:
+/// `BlockOutputWithProofs::verify_proofs` + `root_hash()`, split into two
+/// passes so all witness-shape/binding validation finishes before any Merkle
+/// fold:
 ///
 /// - Pass 1 mirrors `generate_tree_instructions`: for every entry, in order,
 ///   classify the witness leaf, bind it to the VM storage-log key, and map it
@@ -206,20 +206,27 @@ fn expand_full_path(
 ///   reimplemented) against the running root — holding only one expanded
 ///   path at a time.
 ///
-/// Splitting into two passes (rather than fusing classify+bind+map+fold into
-/// a single per-entry loop) is required for correctness, not just style: it
-/// makes every classify/key-binding/map error on any entry surface — in
-/// entry order — before any fold error, exactly as the old three-step path
-/// did. A fused single pass would instead surface whichever error (map or
-/// fold) comes first for the earliest *fold-order* entry, which can differ
-/// from the old ordering on multi-fault inputs. Returns `(new_root_hash,
+/// Splitting into two passes (rather than fusing classify+bind+map+fold into a
+/// single per-entry loop) keeps every classify/key-binding/map error — for all
+/// entries — surfacing before any fold error, so a cryptographic fold failure
+/// never preempts a witness-shape rejection. It is NOT required for the memory
+/// goal (a fused per-entry loop would also expand one path at a time), and it
+/// does NOT reproduce the oracle's exact error on a *multi-fault* witness: the
+/// oracle classifies every entry (in `get_bowp`) before binding any (in
+/// `generate_tree_instructions`), whereas Pass 1 interleaves classify→bind per
+/// entry, so which fault surfaces first can differ. That divergence is
+/// rejection-only and fail-closed (see below). Returns `(new_root_hash,
 /// new_enumeration_index)`.
 ///
-/// Behavior MUST match the three-step path exactly (accept/reject, returned
-/// values, AND error ordering); see the differential oracle test. Divergences
-/// from the fused steps: the count check is hoisted UP FRONT (a bare `zip`
-/// would silently truncate), and `N == 0` maps to the same error the oracle's
-/// `root_hash()` `None` yields.
+/// Behavior matches the three-step path on what matters: identical accept/reject
+/// and, on accept, identical returned `(new_root_hash, new_enumeration_index)`
+/// — see the differential oracle test. Error *ordering* is NOT guaranteed
+/// identical: on a multi-fault witness both paths reject (fail-closed) but may
+/// surface different errors, and the oracle test treats any `(Err, Err)` as
+/// agreement, so it does not (and need not) pin the specific message.
+/// Divergences from the fused steps: the count check is hoisted UP FRONT (a
+/// bare `zip` would silently truncate), and `N == 0` maps to the same error the
+/// oracle's `root_hash()` `None` yields.
 ///
 /// Wired into `execute()` in `lib.rs`; the three-step path (`get_bowp` +
 /// `generate_tree_instructions` + `verify_proofs` + `root_hash()`) remains as
@@ -248,13 +255,15 @@ pub(crate) fn verify_paths_and_new_root(
     );
     let first_path = metas[0].merkle_paths.clone();
 
-    // Pass 1 (reproduces `generate_tree_instructions` exactly): classify,
-    // key-bind, and map every entry to a `TreeInstruction` FIRST, in order,
-    // before any fold. This is what makes classify/key-binding/map errors
-    // surface in entry order and ahead of any fold error, matching the old
-    // three-step (`get_bowp` + `generate_tree_instructions` + `verify_proofs`)
-    // error ordering exactly. Only the small per-entry `TreeLogEntry` +
-    // `TreeInstruction` are kept here — no Merkle path is expanded yet.
+    // Pass 1 (mirrors `generate_tree_instructions`): classify, key-bind, and
+    // map every entry to a `TreeInstruction` FIRST, in order, before any fold,
+    // so no Merkle-fold error can preempt a witness-shape/binding rejection.
+    // This does NOT reproduce the oracle's exact multi-fault error ordering
+    // (`get_bowp` classifies all entries before `generate_tree_instructions`
+    // binds any, whereas this interleaves classify→bind per entry), but any
+    // such divergence is rejection-only and fail-closed — see the fn doc. Only
+    // the small per-entry `TreeLogEntry` + `TreeInstruction` are kept here — no
+    // Merkle path is expanded yet.
     let mut instructions: Vec<(TreeLogEntry, TreeInstruction)> = Vec::with_capacity(metas.len());
     for (meta, vm_log) in metas.iter().zip(vm_logs.iter()) {
         // (1) classify the witness leaf (shared classifier with `get_bowp`).
@@ -521,6 +530,79 @@ mod streaming_tests {
         let meta = entry(false, false, 1, key, empty_root(), H256::zero(), vec![]);
         // One merkle path, zero VM logs.
         assert_equivalent(witness_of(vec![meta]), vec![], empty_root(), 0);
+    }
+
+    /// The `verify_paths_and_new_root` doc no longer claims error *ordering*
+    /// matches the oracle (only accept/reject and, on accept, returned values).
+    /// This pins WHY: on a *multi-fault* witness both paths reject (fail-closed —
+    /// the sound part is preserved) but surface DIFFERENT errors, and the
+    /// differential harness `assert_equivalent` (which treats any `(Err, Err)` as
+    /// agreement) passes anyway, so it cannot catch the divergence.
+    ///
+    /// Multi-fault input:
+    /// - entry 0 classifies fine (existing read, index 1) but its
+    ///   `leaf_hashed_key` != the VM key → a KEY-BIND fault (checked in Pass 1 /
+    ///   `generate_tree_instructions`).
+    /// - entry 1 is a read marked `first_write` → a CLASSIFY fault (checked in
+    ///   `classify_witness_leaf`, reached inside `get_bowp`).
+    ///
+    /// Oracle: `get_bowp` classifies ALL entries before any key-bind, so entry
+    /// 1's classify error surfaces first. Streaming: Pass 1 interleaves
+    /// classify→bind per entry, so entry 0's key-bind error surfaces first.
+    #[test]
+    fn streaming_and_oracle_diverge_on_multi_fault_error_ordering() {
+        // entry 0 — valid classify, but leaf_hashed_key (0xdead_beef) != VM key.
+        let (_vmkey0, log0) = read_pair(1, 2, H256::from_low_u64_be(9));
+        let meta0 = entry(
+            false,
+            false,
+            1,
+            U256::from(0xdead_beef_u64),
+            empty_root(),
+            H256::from_low_u64_be(9),
+            vec![],
+        );
+        // entry 1 — classify fault: a read marked first_write.
+        let (key1, log1) = read_pair(3, 4, H256::zero());
+        let meta1 = entry(false, true, 0, key1, empty_root(), H256::zero(), vec![]);
+
+        let witness = witness_of(vec![meta0, meta1]);
+        let vm_logs = vec![log0, log1];
+
+        let oracle_err = reference(witness.clone(), vm_logs.clone(), empty_root(), 0)
+            .expect_err("oracle must reject the multi-fault witness");
+        let streaming_err = verify_paths_and_new_root(
+            witness.clone(),
+            vm_logs.clone(),
+            &Blake2Hasher,
+            empty_root(),
+            0,
+        )
+        .expect_err("streaming must reject the multi-fault witness");
+
+        let oracle_msg = oracle_err.to_string();
+        let streaming_msg = streaming_err.to_string();
+
+        // The oracle surfaces entry 1's CLASSIFY fault first...
+        assert!(
+            oracle_msg.contains("first_write"),
+            "oracle should surface entry 1's classify error, got: {oracle_msg}"
+        );
+        // ...while the streaming pass surfaces entry 0's KEY-BIND fault first.
+        assert!(
+            streaming_msg.contains("leaf_hashed_key") && streaming_msg.contains("does not match"),
+            "streaming should surface entry 0's key-bind error, got: {streaming_msg}"
+        );
+        // => the surfaced errors are NOT identical: exact error-ordering
+        //    equivalence does not hold (the sound guarantee is accept/reject).
+        assert_ne!(
+            oracle_msg, streaming_msg,
+            "error ordering diverges between the streaming path and the oracle"
+        );
+
+        // Yet the differential harness treats both as an agreeing `(Err, Err)`
+        // and PASSES — both reject (fail-closed), which is what matters.
+        assert_equivalent(witness, vm_logs, empty_root(), 0);
     }
 
     #[test]
