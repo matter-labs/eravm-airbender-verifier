@@ -100,8 +100,9 @@ fn host_runs_batch_native_and_transpiler() {
 }
 
 /// Regression guard for the streaming Merkle-proof verification (the
-/// RAM-exhaustion DoS fix, PR #83). Batch `900065` is a real v31 batch with
-/// 140,059 unique storage reads — the batch the fix was validated against.
+/// RAM-exhaustion DoS fix, PR #83). Batch `900065` is a synthetic v31 batch
+/// (generated from a local Era node, not mainnet) with 140,059 unique storage
+/// reads — the batch the fix was validated against.
 ///
 /// The pre-fix path expanded every storage Merkle proof to full depth at once
 /// (~1.15 GiB for this batch: 140_059 * 256 * 32 B), overflowing the bounded

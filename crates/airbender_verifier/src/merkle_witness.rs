@@ -167,17 +167,19 @@ pub(crate) fn get_bowp(
     ))
 }
 
-/// Reconstruct entry `i`'s full Merkle path from the delta-compressed witness
-/// form: the shared prefix is taken from `first` (the first/longest stored
-/// path). Mirrors `WitnessInputMerklePaths::into_merkle_paths`, one entry at a
-/// time (entry 0 passes `first` as `compact` and is returned unchanged).
+/// Reconstruct one entry's full Merkle path from the delta-compressed witness
+/// form into `out` (cleared first): the shared prefix is taken from `first`
+/// (the first/longest stored path). Mirrors
+/// `WitnessInputMerklePaths::into_merkle_paths`, one entry at a time (entry 0
+/// passes `first` as `compact`, yielding `first` unchanged).
 ///
-/// Expands one path lazily so the streaming pass holds only one full path at a
-/// time, instead of eagerly materializing all of them via `into_merkle_paths`.
-fn expand_full_path(
+/// Writing into a caller-owned buffer lets the streaming Pass 2 hold a single
+/// expanded path and reuse it across every entry — no per-entry allocation.
+fn expand_full_path_into(
     first: &[[u8; HASH_LEN]],
     compact: &[[u8; HASH_LEN]],
-) -> anyhow::Result<Vec<ValueHash>> {
+    out: &mut Vec<ValueHash>,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         compact.len() <= first.len(),
         "Merkle paths malformed: a later path ({}) is longer than the first ({})",
@@ -185,10 +187,11 @@ fn expand_full_path(
         first.len(),
     );
     let prefix_len = first.len() - compact.len();
-    let mut full = Vec::with_capacity(first.len());
-    full.extend(first[..prefix_len].iter().map(|h| ValueHash::from(*h)));
-    full.extend(compact.iter().map(|h| ValueHash::from(*h)));
-    Ok(full)
+    out.clear();
+    out.reserve(first.len());
+    out.extend(first[..prefix_len].iter().map(|h| ValueHash::from(*h)));
+    out.extend(compact.iter().map(|h| ValueHash::from(*h)));
+    Ok(())
 }
 
 /// Verifies the committed `merkle_paths` witness against `old_root_hash` and
@@ -257,11 +260,13 @@ pub(crate) fn verify_paths_and_new_root(
     }
 
     // Pass 2 (reproduces `verify_proofs` exactly): fold every entry's proof
-    // against the running root, in order, expanding one path at a time so
-    // only a single ~8 KiB expanded path is ever live.
+    // against the running root, in order, expanding one path at a time into a
+    // single reused buffer so only one ~8 KiB expanded path is ever live and
+    // there is no per-entry allocation.
     let mut root_hash = old_root_hash;
+    let mut full = Vec::with_capacity(first_path.len());
     for (meta, (base, instruction)) in metas.iter().zip(instructions.into_iter()) {
-        let full = expand_full_path(&first_path, &meta.merkle_paths)?;
+        expand_full_path_into(&first_path, &meta.merkle_paths, &mut full)?;
         anyhow::ensure!(full.len() <= TREE_DEPTH);
         let op_root = ValueHash::from(meta.root_hash);
         if matches!(instruction, TreeInstruction::Read(_)) {
@@ -352,7 +357,11 @@ mod streaming_tests {
         let got: Vec<Vec<ValueHash>> = witness
             .merkle_paths
             .iter()
-            .map(|m| expand_full_path(firsts, &m.merkle_paths).unwrap())
+            .map(|m| {
+                let mut out = Vec::new();
+                expand_full_path_into(firsts, &m.merkle_paths, &mut out).unwrap();
+                out
+            })
             .collect();
 
         assert_eq!(got, oracle);
@@ -363,7 +372,8 @@ mod streaming_tests {
         let first = vec![[1u8; HASH_LEN], [2; HASH_LEN]];
         let too_long = vec![[3u8; HASH_LEN], [4; HASH_LEN], [5; HASH_LEN]];
 
-        let err = expand_full_path(&first, &too_long).unwrap_err();
+        let mut out = Vec::new();
+        let err = expand_full_path_into(&first, &too_long, &mut out).unwrap_err();
         assert!(
             err.to_string().contains("malformed"),
             "unexpected error message: {err}"
