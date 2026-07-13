@@ -1113,7 +1113,10 @@ mod dedup_spec_tests {
         }
 
         fn live(&self, s: Slot) -> U256 {
-            self.storage_writes.get(&s).copied().unwrap_or_else(|| self.db(s))
+            self.storage_writes
+                .get(&s)
+                .copied()
+                .unwrap_or_else(|| self.db(s))
         }
 
         /// Runs `ops`, returning the list of forward write queries emitted
@@ -1191,7 +1194,10 @@ mod dedup_spec_tests {
 
     fn check(db_initial: &[(Slot, u64)], ops: Vec<Op>) {
         let mut sim = Sim {
-            db_initial: db_initial.iter().map(|(s, v)| (*s, U256::from(*v))).collect(),
+            db_initial: db_initial
+                .iter()
+                .map(|(s, v)| (*s, U256::from(*v)))
+                .collect(),
             ..Default::default()
         };
         sim.run(&ops);
@@ -1293,10 +1299,10 @@ mod dedup_spec_tests {
         check(
             &[(a, 10), (b, 20), (c, 30), (d, 40)],
             vec![
-                Op::Read(a),                    // protective read
-                Op::Write(b, U256::from(99)),   // net write
+                Op::Read(a),                  // protective read
+                Op::Write(b, U256::from(99)), // net write
                 Op::Write(c, U256::from(31)),
-                Op::Write(c, U256::from(30)),   // write-back -> protective read
+                Op::Write(c, U256::from(30)), // write-back -> protective read
                 Op::Frame {
                     ops: vec![Op::Write(d, U256::from(41))],
                     committed: false,

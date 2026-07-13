@@ -15,13 +15,13 @@ use std::fs::File;
 use std::io::BufReader;
 
 use zksync_airbender_verifier::execute;
-use zksync_airbender_verifier::types::V1AirbenderVerifierInput;
+use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("usage: mem_check <proof_inputs.json>");
-    let input: V1AirbenderVerifierInput =
+    let input: AirbenderVerifierInput =
         serde_json::from_reader(BufReader::new(File::open(&path).expect("open batch json")))
             .expect("parse batch json");
     let refunds = input.vm_run_data.storage_refunds.len();
