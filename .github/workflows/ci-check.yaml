@@ -142,6 +142,20 @@ jobs:
         working-directory: ./guest
         run: cargo airbender build
 
+      # The Airbender circuit proves RV32IM only: fail on any instruction
+      # outside that set in the built guest, and on any soft-float arithmetic
+      # intrinsic beyond the (empty) committed baseline. See the script header.
+      # Scans the build ELF (the source of dist's app.bin/app.text objcopies) —
+      # dist/app/app.elf has .text stripped (-R .text) and holds no code.
+      - name: Check guest instruction set
+        # keep in sync with the identical 'Check guest instruction set' step in release-artifacts.yaml
+        working-directory: ./guest
+        run: |
+          bash ../scripts/check_guest_riscv_code.sh \
+            ../target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+            --baseline ../scripts/guest_softfloat_baseline.txt \
+            --min-insns 500000
+
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
