@@ -211,6 +211,21 @@ jobs:
             --batches-dir "$BATCHES_DIR" \
             --batch-files "$CI_BATCHES"
 
+      # Regression guard for the streaming Merkle-proof fix (RAM-exhaustion DoS,
+      # PR #83). Batch 900065 is a synthetic 140k-unique-read batch that, under
+      # the pre-fix eager proof expansion (~1.15 GiB), OOMs the bounded guest
+      # heap. The transpiler runs the real compiled guest under that same memory
+      # model, so a regression OOMs here (CPU only — no GPU). Fetched separately
+      # from the mainnet CI_BATCHES since it is synthetic, not a mainnet batch.
+      - name: Pull read-heavy regression batch
+        run: ./scripts/fetch_lfs_batches.sh 900065.bin.gz
+
+      - name: Run guest-OOM regression (read-heavy batch)
+        run: |
+          cargo test --release -p eravm-prover-host --locked \
+            --test integration_test -- \
+            --ignored --nocapture host_runs_read_heavy_batch_without_guest_oom
+
   # -----------------------------------------------------------------------------
   # Cheap precondition for the expensive proving guard: only run build-prover-host /
   # host-integration-run when the PR changes something that could affect the
