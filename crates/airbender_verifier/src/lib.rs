@@ -53,9 +53,11 @@ pub struct VerificationResult {
     pub value_hash: ValueHash,
     /// The batch number that was verified.
     pub batch_number: L1BatchNumber,
-    /// The proof public input preimage `keccak256(prev || curr)`, packed as 8 big-endian
-    /// u32 words. See [`commitment::BatchCommitmentOutput::proof_public_input`] for the
-    /// L1 `PUBLIC_INPUT_SHIFT` contract and the wrapper's responsibility.
+    /// The proof public input preimage `keccak256(prev || curr)`, packed as 8
+    /// little-endian u32 words — the byte order `zkos-wrapper` expects in the
+    /// guest's output registers (see `commitment::bytes32_to_u32x8`). See
+    /// [`commitment::compute_proof_public_input`] for the L1
+    /// `PUBLIC_INPUT_SHIFT` contract and the wrapper's responsibility.
     pub proof_public_input: [u32; 8],
     /// The computed batch commitment.
     pub commitment: H256,
