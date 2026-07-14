@@ -89,7 +89,7 @@ pub trait Verify {
 /// proved guest. The fixed sequence of calls (start, then the three phase
 /// boundaries, then end = 5 markers over one `verify()`) is the contract the
 /// host uses to attribute per-phase cycles; keep it in lockstep with the
-/// harness's `phase_labels()`.
+/// harness's `PHASE_LABELS`.
 #[inline(always)]
 fn phase_marker() {
     #[cfg(feature = "cycle-markers")]

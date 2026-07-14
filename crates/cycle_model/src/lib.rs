@@ -16,6 +16,7 @@ pub use runner::{run_guest, GuestMeasurement};
 // `zksync_cycle_model::{FeatureId, CostModel, ...}` paths keep working and
 // callers need only this crate.
 pub use zksync_era_airbender_cycles_estimator::{
-    BatchContext, CostModel, CycleEstimate, FeatureId, FeatureVector, LinearModel,
+    estimate_from_features, BatchContext, CostModel, CycleEstimate, FeatureId, FeatureVector,
+    LinearModel,
 };
-pub use zksync_era_airbender_cycles_tracer::{estimate, CycleFeatureTracer};
+pub use zksync_era_airbender_cycles_tracer::CycleFeatureTracer;

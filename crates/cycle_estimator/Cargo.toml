@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 # Deliberately lean and VM-agnostic: the feature schema, fitted cost model, and
-# the pure estimator only — serde/serde_json/anyhow, no `zksync_vm2`. This is the
+# the pure estimator only — serde/serde_json, no `zksync_vm2`. This is the
 # single source of truth for the calibrated constants (`EMBEDDED_COST_TABLE`), so
 # a sequencer (zksync-era) can depend on it to price batches without pulling the
 # fast-VM / proving stack. The vm2 tracer that feeds it lives in the sibling
@@ -20,4 +20,3 @@ categories.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-anyhow.workspace = true

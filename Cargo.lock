@@ -6213,7 +6213,6 @@ dependencies = [
 name = "zksync-era-airbender-cycles-estimator"
 version = "29.9.0"
 dependencies = [
- "anyhow",
  "serde",
  "serde_json",
 ]
