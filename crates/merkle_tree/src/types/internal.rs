@@ -15,7 +15,7 @@ use crate::{
 /// Size of a (leaf) tree key in bytes.
 pub(crate) const KEY_SIZE: usize = 32;
 /// Depth of the tree (= number of bits in `KEY_SIZE`).
-pub(crate) const TREE_DEPTH: usize = KEY_SIZE * 8;
+pub const TREE_DEPTH: usize = KEY_SIZE * 8;
 /// Size of a hashed value in bytes.
 pub(crate) const HASH_SIZE: usize = 32;
 

@@ -58,7 +58,7 @@ pub use crate::{
     storage::{Database, PatchSet, Patched, PruneDatabase, PrunePatchSet},
     types::{
         BlockOutput, BlockOutputWithProofs, Key, TreeEntry, TreeEntryWithProof, TreeInstruction,
-        TreeLogEntry, TreeLogEntryWithProof, ValueHash,
+        TreeLogEntry, TreeLogEntryWithProof, ValueHash, TREE_DEPTH,
     },
     witness::{StorageLogMetadata, WitnessInputMerklePaths},
 };

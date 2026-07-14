@@ -42,7 +42,9 @@ use zksync_types::{
 };
 
 use crate::commitment::expand_bootloader_heap;
-use crate::merkle_witness::{build_view_from_merkle_paths, get_bowp};
+use crate::merkle_witness::build_view_from_merkle_paths;
+#[cfg(test)]
+use crate::merkle_witness::get_bowp;
 use crate::types::{AirbenderVerifierInput, CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
 
 /// A structure to hold the result of verification.
@@ -311,8 +313,9 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     }
 
     // Pre-batch storage view. Slot values come only from `merkle_paths`, which the
-    // `verify_proofs` fold below proves against `old_root_hash` — so the operator
-    // cannot forge the pre-state of any slot the tree witness covers.
+    // streaming Merkle fold below (`verify_paths_and_new_root`) proves against
+    // `old_root_hash` — so the operator cannot forge the pre-state of any slot the
+    // tree witness covers.
     //
     // `merkle_paths` omits exactly one shape: a write the batch fully rolled back.
     // The VM still cold-reads such a slot before writing it, but its pre-state
@@ -359,7 +362,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     // `execute_vm` already enforced that batch finalization succeeded (rejecting a
     // `Halt`ed block tip), so `vm_out` here is a successfully-finalized batch.
 
-    // Take fields out of vm_out before generate_tree_instructions consumes it.
+    // Take fields out of vm_out before the streaming Merkle verification / bootloader-heap commitment consume the rest.
     // The tree-instructions path only reads final_execution_state.deduplicated_storage_logs.
     let system_logs = std::mem::take(&mut vm_out.final_execution_state.system_logs);
     let pubdata_input = vm_out.pubdata_input.take();
@@ -375,31 +378,19 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
         "VM output is missing final_bootloader_memory — required for the bootloader heap commitment",
     )?;
 
-    let (block_output_with_proofs, leaf_keys) = get_bowp(input.merkle_paths)?;
-
-    let instructions: Vec<TreeInstruction> = generate_tree_instructions(
-        enumeration_index,
-        &block_output_with_proofs,
-        &leaf_keys,
-        vm_out,
+    let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
+    let prev_enumeration_index = enumeration_index; // = input.merkle_paths.next_enumeration_index()
+                                                    // NOTE: do not wrap this call with `.with_context(...)`. It surfaces the
+                                                    // classify / key-binding / fold errors directly, and callers (and the
+                                                    // `fail_closed` regression tests) match on those inner messages via
+                                                    // `err.to_string()`, which shows only the outermost context.
+    let (new_root_hash, new_enumeration_index) = crate::merkle_witness::verify_paths_and_new_root(
+        input.merkle_paths,
+        vm_logs,
+        &Blake2Hasher,
+        old_root_hash,
+        prev_enumeration_index,
     )?;
-
-    block_output_with_proofs
-        .verify_proofs(&Blake2Hasher, old_root_hash, &instructions)
-        .with_context(|| format!("Failed to verify_proofs {batch_number} correctly!"))?;
-
-    let new_root_hash = block_output_with_proofs
-        .root_hash()
-        .context("root_hash unavailable after verify_proofs")?;
-    // The new enumeration index is the old index + number of newly inserted leaves.
-    // Only TreeLogEntry::Inserted entries increment the index — Updated entries reuse
-    // their existing leaf_index and don't allocate a new slot.
-    let num_insertions = block_output_with_proofs
-        .logs
-        .iter()
-        .filter(|log| matches!(log.base, TreeLogEntry::Inserted))
-        .count() as u64;
-    let new_enumeration_index = enumeration_index + num_insertions;
 
     let bootloader_memory_size = get_used_bootloader_memory_bytes(protocol_version.into());
     let expanded_heap = expand_bootloader_heap(&final_bootloader_memory, bootloader_memory_size);
@@ -408,7 +399,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
         batch_number,
         protocol_version,
         old_root_hash,
-        prev_enumeration_index: enumeration_index,
+        prev_enumeration_index,
         new_root_hash,
         new_enumeration_index,
         system_logs,
@@ -655,7 +646,7 @@ where
 /// Map `LogQuery` and `TreeLogEntry` to a `TreeInstruction`. `key` is the
 /// storage log's hashed key, passed in so the caller (which already computed it
 /// to bind against `leaf_hashed_key`) doesn't hash it twice.
-fn map_log_tree(
+pub(crate) fn map_log_tree(
     key: U256,
     storage_log: &StorageLog,
     tree_log_entry: &TreeLogEntry,
@@ -701,13 +692,18 @@ fn map_log_tree(
 }
 
 /// Generates the `TreeInstruction`s from the VM executions.
+///
+/// Superseded in production by `merkle_witness::verify_paths_and_new_root`
+/// (the streaming pass); kept as part of the differential-test oracle
+/// (`get_bowp` + this + `verify_proofs` + `root_hash()`) — see
+/// `merkle_witness::streaming_tests`.
+#[cfg_attr(not(test), allow(dead_code))]
 fn generate_tree_instructions(
     mut idx: u64,
     bowp: &BlockOutputWithProofs,
     leaf_keys: &[U256],
-    vm_out: FinishedL1Batch,
+    vm_logs: Vec<StorageLog>,
 ) -> anyhow::Result<Vec<TreeInstruction>> {
-    let vm_logs = vm_out.final_execution_state.deduplicated_storage_logs;
     anyhow::ensure!(
         vm_logs.len() == bowp.logs.len() && bowp.logs.len() == leaf_keys.len(),
         "VM deduplicated storage logs count mismatch with merkle proofs: vm_logs={}, merkle_logs={}",
