@@ -60,9 +60,12 @@ pub fn compute_commitment(
 }
 
 /// Compute the proof public input: `keccak256(prev || current)` packed as 8
-/// big-endian u32 words. The on-chain SNARK wrapper drops the low 32 bits
-/// (BN254 scalar field is ~254 bits) and feeds `keccak(...) >> 32` to L1's
-/// `Executor.sol::_getBatchProofPublicInput`. We emit all 256 bits so the
+/// **little-endian** u32 words (see `bytes32_to_u32x8` for why LE is the
+/// contract with `zkos-wrapper`). The SNARK wrapper packs the guest's output
+/// registers 10..=16 — the first 28 of these 32 bytes — as the public input,
+/// dropping the digest's last 4 bytes (BN254's scalar field is ~254 bits), so
+/// the SNARK public input equals `keccak(...) >> 32` exactly as L1 computes it
+/// in `Executor.sol::_getBatchProofPublicInput`. We emit all 256 bits so the
 /// guest stays shift-agnostic; the wrapper handles the truncation.
 ///
 /// `test_proof_public_input_matches_l1_shift` pins the contract.
@@ -269,10 +272,22 @@ pub fn expand_bootloader_heap(
     result
 }
 
+/// Split a 32-byte hash into 8 u32 words, each read **little-endian** from its
+/// 4-byte chunk.
+///
+/// The endianness is a contract with `zkos-wrapper`: in `check_aux_params` mode
+/// its `prepare_and_allocate_public_inputs` builds the SNARK public input by
+/// decomposing the guest's output registers into bytes in RISC-V (little-endian)
+/// order and reading the resulting stream as a big-endian integer. Only when the
+/// registers hold LE chunks of the digest does that reconstruct the digest
+/// itself, making the SNARK public input equal L1's
+/// `uint256(keccak256(...)) >> PUBLIC_INPUT_SHIFT` (Executor.sol). With BE words
+/// here, every 4-byte group of the digest arrives byte-swapped on the SNARK side
+/// and the proof rejects L1's public input.
 fn bytes32_to_u32x8(hash: [u8; 32]) -> [u32; 8] {
     let mut result = [0u32; 8];
     for (i, chunk) in hash.chunks_exact(4).enumerate() {
-        result[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        result[i] = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
     }
     result
 }
@@ -307,7 +322,9 @@ mod tests {
         assert_eq!(bytes32_to_u32x8([0u8; 32]), [0u32; 8]);
         let mut hash = [0u8; 32];
         hash[0] = 0xFF;
-        assert_eq!(bytes32_to_u32x8(hash)[0], 0xFF000000);
+        // Words are little-endian chunks: the digest's first byte is the
+        // word's LOW byte (see `bytes32_to_u32x8` for why).
+        assert_eq!(bytes32_to_u32x8(hash)[0], 0x000000FF);
     }
 
     #[test]
@@ -335,10 +352,14 @@ mod tests {
         );
     }
 
-    /// Pins the wrapper contract: the big-endian integer formed by the high 7 u32 words
-    /// of `compute_proof_public_input` must equal `uint256(keccak(prev || curr)) >> 32`.
-    /// If this breaks, the on-wire `[u32; 8]` encoding or L1's shift constant changed —
-    /// both require coordinated changes in the SNARK wrapper.
+    /// Pins the wrapper contract: `zkos-wrapper`'s `prepare_and_allocate_public_inputs`
+    /// (in `check_aux_params` mode) decomposes output registers 10..=16 into bytes in
+    /// RISC-V little-endian order and reads the 28-byte stream as a big-endian integer.
+    /// Modelling exactly that packing over the first 7 words of
+    /// `compute_proof_public_input` must reproduce `uint256(keccak(prev || curr)) >> 32`
+    /// — the value L1's `Executor.sol::_getBatchProofPublicInput` computes. If this
+    /// breaks, the on-wire `[u32; 8]` encoding, the wrapper's packing, or L1's shift
+    /// constant changed — all require coordinated changes.
     #[test]
     fn test_proof_public_input_matches_l1_shift() {
         const PUBLIC_INPUT_SHIFT: u32 = 32;
@@ -351,15 +372,17 @@ mod tests {
         let l1_input = U256::from_big_endian(&keccak256(&preimage)) >> PUBLIC_INPUT_SHIFT;
 
         let words = compute_proof_public_input(prev, current);
+        // The wrapper reads each register's bytes little-endian; the resulting
+        // 28-byte stream forms the big-endian integer public input.
         let mut wrapper_bytes = [0u8; 32];
         for (i, word) in words[..7].iter().enumerate() {
-            wrapper_bytes[4 + i * 4..4 + (i + 1) * 4].copy_from_slice(&word.to_be_bytes());
+            wrapper_bytes[4 + i * 4..4 + (i + 1) * 4].copy_from_slice(&word.to_le_bytes());
         }
         let wrapper_input = U256::from_big_endian(&wrapper_bytes);
 
         assert_eq!(
             wrapper_input, l1_input,
-            "proof_public_input high 7 words must equal L1's keccak >> 32"
+            "wrapper-packed proof_public_input words must equal L1's keccak >> 32"
         );
     }
 }
