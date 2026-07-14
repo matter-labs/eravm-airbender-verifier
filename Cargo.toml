@@ -98,7 +98,7 @@ zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksyn
 # defaults to `Bits100`, which produces two unified proofs; the wrapper must
 # expect the same number.
 zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = "dev", default-features = false, features = ["security_100"] } # TODO: Must be pinned before merge
-zksync_vm2 = { git = "https://github.com/matter-labs/vm2", rev = "4d110657a22025d4a49a563a7e119d754551b715" } # TODO: pin to a tag before merge
+zksync_vm2 = { git = "https://github.com/matter-labs/vm2", rev = "4270ec4280a49e64671105817d65574f949fed8c" } # gate trace + consolidate WorldDiff maps (signed, clean); TODO: pin to a tag before merge
 
 # Local dependencies in this workspace
 zksync_basic_types = { path = "crates/basic_types" }

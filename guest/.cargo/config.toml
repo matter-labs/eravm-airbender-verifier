@@ -2,6 +2,13 @@
 target = "riscv32im-risc0-zkvm-elf"
 rustflags = [
   "-C", "target-feature=+m,-unaligned-scalar-mem,+relax",
+  # Reclaim the ~186 MiB of RAM left unused by the default 768 MiB heap.
+  # `_heap_size` is `PROVIDE`d (=768M) in riscv_common's link.x; this --defsym
+  # must precede -Tlink.x so the symbol is already defined when the PROVIDE is
+  # evaluated (otherwise the section math uses 768M and only the symbol value,
+  # not _eheap, changes). 952 MiB heap ends at _sheap(70M)+952M = 1022 MiB,
+  # 2 MiB below the 1 GiB RAM ceiling.
+  "-C", "link-arg=--defsym=_heap_size=998244352",
   "-C", "link-arg=-Tmemory.x",
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=--save-temps",

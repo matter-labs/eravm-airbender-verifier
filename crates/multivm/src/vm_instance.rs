@@ -297,6 +297,14 @@ where
             Self::Fast(vm) => vm.skip_signature_verification(),
         }
     }
+
+    /// Forwards to the inner fast Vm's capacity-reservation knob; see
+    /// `vm_fast::Vm::reserve_capacities`.
+    pub fn reserve_capacities(&mut self, hints: vm_fast::VmCapacityHints) {
+        match self {
+            Self::Fast(vm) => vm.reserve_capacities(hints),
+        }
+    }
 }
 
 /// Checks whether the protocol version is supported by the fast VM.

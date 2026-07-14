@@ -1,8 +1,10 @@
 use std::{collections::HashMap, fmt, mem, rc::Rc};
 
 use circuit_sequencer_api::sort_storage_access::sort_storage_access_queries;
+
 use zk_evm_1_5_2::{
-    aux_structures::LogQuery, zkevm_opcode_defs::system_params::INITIAL_FRAME_FORMAL_EH_LOCATION,
+    aux_structures::{LogQuery, Timestamp},
+    zkevm_opcode_defs::system_params::{INITIAL_FRAME_FORMAL_EH_LOCATION, STORAGE_AUX_BYTE},
 };
 use zksync_types::{
     bytecode::BytecodeHash, h256_to_u256, l1::is_l1_tx_type, l2_to_l1_log::UserL2ToL1Log,
@@ -77,6 +79,18 @@ impl VmRunResult {
 type InnerVm<S, Tr, Val> =
     VirtualMachine<WithBuiltinTracers<Tr, Val>, World<S, WithBuiltinTracers<Tr, Val>>>;
 
+/// Capacity hints for `Vm::reserve_capacities`. Each field is a one-shot
+/// upper bound the caller derives from the witness; the inner `WorldDiff`
+/// uses `reserve_exact`, so the underlying Vecs allocate exactly once and
+/// avoid the transient peak from `Vec` doubling.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VmCapacityHints {
+    pub events: usize,
+    pub pubdata_costs: usize,
+    pub storage_refunds: usize,
+    pub dynamic_heap_groups: usize,
+}
+
 /// Fast VM wrapper.
 ///
 /// The wrapper is parametric by the storage and tracer types. Besides the [`Tracer`] trait, the tracer must implement [`Default`]
@@ -92,6 +106,12 @@ pub struct Vm<S, Tr = (), Val = FastValidationTracer> {
     snapshot: Option<VmSnapshot>,
     vm_version: FastVmVersion,
     skip_signature_verification: bool,
+    /// Mirrors the inner `WorldDiff`'s recording mode (vm2 has no getter).
+    /// `true` (the default) means the per-access storage log trace is kept and
+    /// `get_current_execution_state` derives the deduplicated set from it;
+    /// `reserve_capacities` flips it to `false` (skip mode), switching the
+    /// derivation to vm2's rollback-aware maps. See `get_current_execution_state`.
+    record_storage_logs: bool,
     #[cfg(test)]
     enforced_state_diffs: Option<Vec<StateDiffRecord>>,
 }
@@ -165,11 +185,32 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
             snapshot: None,
             vm_version,
             skip_signature_verification: false,
+            record_storage_logs: true,
             #[cfg(test)]
             enforced_state_diffs: None,
         };
         this.write_to_bootloader_heap(bootloader_memory);
         this
+    }
+
+    /// Pre-reserve capacity inside the inner vm2 state to suppress the
+    /// mid-execution Vec doublings that account for the bulk of transient
+    /// memory pressure in the verifier guest. Call once after construction
+    /// with hints derived from the witness.
+    pub fn reserve_capacities(&mut self, hints: VmCapacityHints) {
+        let wd = self.inner.world_diff_mut();
+        wd.reserve_auxiliary_log_capacity(hints.events, hints.pubdata_costs, hints.storage_refunds);
+        // The verifier derives `deduplicated_storage_logs` from vm2's
+        // rollback-aware maps (see `get_current_execution_state`) and never
+        // reads the per-access `storage_log_queries()` trace — there is no
+        // in-circuit storage argument on the Airbender side. Opt out of
+        // recording that trace so it doesn't consume the memory this whole
+        // path exists to save (~270 MiB on large batches). vm2 defaults to
+        // recording on for Boojum-style consumers.
+        wd.set_record_storage_logs(false);
+        self.record_storage_logs = false;
+        self.inner
+            .reserve_dynamic_heap_capacity(hints.dynamic_heap_groups);
     }
 
     pub fn skip_signature_verification(&mut self) {
@@ -294,7 +335,7 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
                     .world_diff()
                     .get_storage_state()
                     .get(&(KNOWN_CODES_STORAGE_ADDRESS, h256_to_u256(hash)))
-                    .map(|x| !x.is_zero())
+                    .map(|x| !x.value.is_zero())
                     .unwrap_or_else(|| self.world.storage.is_bytecode_known(&hash))
             })
         };
@@ -381,13 +422,72 @@ impl<S: ReadStorage, Tr: Tracer, Val: ValidationTracer> Vm<S, Tr, Val> {
 
         CurrentExecutionState {
             events,
-            deduplicated_storage_logs: {
-                let (_, deduped_storage_log_queries) =
+            deduplicated_storage_logs: if self.record_storage_logs {
+                // Recording mode (the vm2 default): the per-access trace is
+                // available, so deduplicate it the canonical way — identical to
+                // the legacy VM and to `sort_storage_access_queries`. The
+                // map-derived shortcut below is *only* valid in skip mode, where
+                // the `SLOT_COMMITTED_READ_Z0` bookkeeping is populated; without
+                // it the derivation would silently drop every protective read.
+                let (_, deduped) =
                     sort_storage_access_queries(world_diff.storage_log_queries().iter().copied());
-                deduped_storage_log_queries
-                    .into_iter()
-                    .map(|log_query| StorageLog::from_log_query(&log_query.glue_into()))
-                    .collect()
+                deduped.into_iter().map(GlueInto::glue_into).collect()
+            } else {
+                // Skip mode (memory-optimized verifier path): the trace was not
+                // recorded. Derive deduplicated storage logs directly from vm2's
+                // rollback-aware maps instead. Slots that appear in the dedup
+                // output are exactly:
+                //   storage_changes ∪ committed_reads_at_depth_zero
+                // mirroring the dedup's emit-or-skip rule (emit a slot iff
+                // `did_read_at_depth_zero` OR `changes_stack` non-empty).
+                // Both sources iterate in (address, key) sorted order via
+                // their BTreeMap/BTreeSet backings — same order the merkle
+                // witness uses, so the downstream zip in
+                // `generate_tree_instructions` lines up.
+                //
+                // Savings vs the recording path:
+                //   - ~220 MiB: no per-access storage_logs Vec
+                //   - ~50 MiB: no rollback_storage_logs Vec
+                //   - ~330M cycles: no global sort, no full-trace walk
+                use std::collections::BTreeSet;
+                let storage_changes = world_diff.get_storage_state();
+                let mut slots: BTreeSet<(H160, U256)> = storage_changes.keys().copied().collect();
+                for slot in world_diff.committed_reads_at_depth_zero_iter() {
+                    slots.insert(slot);
+                }
+                let mut out = Vec::with_capacity(slots.len());
+                for (address, key) in slots {
+                    // Every emitted slot is either a live write or a committed
+                    // depth-zero read, and both paths cache the initial value in
+                    // `storage_initial_values` (never rolled back). A missing
+                    // entry would mean that invariant broke, which must fail
+                    // loudly rather than silently fabricate `read_value = 0` and
+                    // corrupt the deduplicated set.
+                    let initial = world_diff
+                        .initial_storage_value(address, key)
+                        .map(|s| s.value)
+                        .expect("emitted storage slot must have a cached initial value");
+                    let final_value = storage_changes
+                        .get(&(address, key))
+                        .map(|e| e.value)
+                        .unwrap_or(initial);
+                    let is_write = initial != final_value;
+                    let log_query = LogQuery {
+                        timestamp: Timestamp(0),
+                        tx_number_in_block: 0,
+                        aux_byte: STORAGE_AUX_BYTE,
+                        shard_id: 0,
+                        address,
+                        key,
+                        read_value: initial,
+                        written_value: final_value,
+                        rw_flag: is_write,
+                        rollback: false,
+                        is_service: false,
+                    };
+                    out.push(StorageLog::from_log_query(&log_query.glue_into()));
+                }
+                out
             },
             used_contract_hashes: self.decommitted_hashes().collect(),
             system_logs: vm.l2_to_l1_logs().map(GlueInto::glue_into).collect(),
@@ -941,5 +1041,273 @@ impl<S: fmt::Debug, Tr: fmt::Debug, Val: fmt::Debug> fmt::Debug for Vm<S, Tr, Va
             .field("system_env", &self.system_env)
             .field("snapshot", &self.snapshot.as_ref().map(|_| ()))
             .finish()
+    }
+}
+
+/// Pins the skip-mode `deduplicated_storage_logs` derivation
+/// (`storage_writes ∪ committed_reads_at_depth_zero`, `is_write = initial !=
+/// final`) against the canonical `sort_storage_access_queries` used by the
+/// legacy VM.
+///
+/// The `vm-compare-batches` CI job exercises the real vm2 maps end-to-end; this
+/// test complements it with deterministic, offline coverage of the subtle
+/// rollback / protective-read corners that mainnet traffic may not contain. A
+/// single op sequence drives *both*: the real `sort_storage_access_queries`
+/// (via the recorded `LogQuery` trace) and a faithful simulation of vm2's
+/// rollback-aware `storage_writes` / sticky `SLOT_COMMITTED_READ_Z0` /
+/// non-rolled-back initial-value maps. If the derivation rule and the canonical
+/// algorithm ever disagree on these cases, this fails.
+#[cfg(test)]
+mod dedup_spec_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    type Slot = (H160, U256);
+
+    /// A high-level storage action. `Frame` groups actions that either commit
+    /// or revert as a unit (single level of nesting is enough for these cases).
+    enum Op {
+        Read(Slot),
+        Write(Slot, U256),
+        Frame { ops: Vec<Op>, committed: bool },
+    }
+
+    fn slot(addr: u64, key: u64) -> Slot {
+        (H160::from_low_u64_be(addr), U256::from(key))
+    }
+
+    fn query(s: Slot, read: U256, written: U256, rw_flag: bool, rollback: bool) -> LogQuery {
+        LogQuery {
+            timestamp: Timestamp(0),
+            tx_number_in_block: 0,
+            aux_byte: STORAGE_AUX_BYTE,
+            shard_id: 0,
+            address: s.0,
+            key: s.1,
+            read_value: read,
+            written_value: written,
+            rw_flag,
+            rollback,
+            is_service: false,
+        }
+    }
+
+    /// Simulator state mirroring the vm2 fields the derivation reads.
+    #[derive(Default)]
+    struct Sim {
+        db_initial: BTreeMap<Slot, U256>,
+        // vm2's rollback-aware `storage_writes` (only written slots).
+        storage_writes: BTreeMap<Slot, U256>,
+        // sticky `SLOT_COMMITTED_READ_Z0`: reads with no live write at read time.
+        committed_reads: BTreeSet<Slot>,
+        // non-rolled-back `storage_initial_values` cache.
+        initial_values: BTreeMap<Slot, U256>,
+        // recorded per-access trace, exactly as the VM would build it.
+        trace: Vec<LogQuery>,
+    }
+
+    impl Sim {
+        fn db(&self, s: Slot) -> U256 {
+            self.db_initial.get(&s).copied().unwrap_or_else(U256::zero)
+        }
+
+        fn live(&self, s: Slot) -> U256 {
+            self.storage_writes
+                .get(&s)
+                .copied()
+                .unwrap_or_else(|| self.db(s))
+        }
+
+        /// Runs `ops`, returning the list of forward write queries emitted
+        /// directly at this level so a reverting parent can append their twins.
+        fn run(&mut self, ops: &[Op]) -> Vec<LogQuery> {
+            let mut frame_writes = Vec::new();
+            for op in ops {
+                match op {
+                    Op::Read(s) => {
+                        let cur = self.live(*s);
+                        let db = self.db(*s);
+                        self.initial_values.entry(*s).or_insert(db);
+                        // Read is committed-at-depth-zero iff no live write exists.
+                        if !self.storage_writes.contains_key(s) {
+                            self.committed_reads.insert(*s);
+                        }
+                        self.trace.push(query(*s, cur, cur, false, false));
+                    }
+                    Op::Write(s, new) => {
+                        let old = self.live(*s);
+                        let db = self.db(*s);
+                        self.initial_values.entry(*s).or_insert(db);
+                        let q = query(*s, old, *new, true, false);
+                        self.trace.push(q);
+                        frame_writes.push(q);
+                        self.storage_writes.insert(*s, *new);
+                    }
+                    Op::Frame { ops, committed } => {
+                        let snapshot = self.storage_writes.clone();
+                        let inner_writes = self.run(ops);
+                        if *committed {
+                            // Writes survive; their twins bubble up so an outer
+                            // revert would still roll them back.
+                            frame_writes.extend(inner_writes);
+                        } else {
+                            // Revert: restore live writes, append rollback twins
+                            // in reverse order (matching the legacy VM).
+                            self.storage_writes = snapshot;
+                            for q in inner_writes.iter().rev() {
+                                self.trace.push(LogQuery {
+                                    rollback: true,
+                                    ..*q
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            frame_writes
+        }
+
+        /// The production skip-mode derivation, over the simulated maps.
+        fn map_derived(&self) -> BTreeSet<(H160, U256, bool, U256, U256)> {
+            let mut slots: BTreeSet<Slot> = self.storage_writes.keys().copied().collect();
+            slots.extend(self.committed_reads.iter().copied());
+            slots
+                .into_iter()
+                .map(|s| {
+                    let initial = *self.initial_values.get(&s).expect("cached initial");
+                    let final_value = self.storage_writes.get(&s).copied().unwrap_or(initial);
+                    (s.0, s.1, initial != final_value, initial, final_value)
+                })
+                .collect()
+        }
+
+        /// The canonical dedup, via the real `sort_storage_access_queries`.
+        fn canonical(&self) -> BTreeSet<(H160, U256, bool, U256, U256)> {
+            let (_, deduped) = sort_storage_access_queries(self.trace.iter().copied());
+            deduped
+                .into_iter()
+                .map(|q| (q.address, q.key, q.rw_flag, q.read_value, q.written_value))
+                .collect()
+        }
+    }
+
+    fn check(db_initial: &[(Slot, u64)], ops: Vec<Op>) {
+        let mut sim = Sim {
+            db_initial: db_initial
+                .iter()
+                .map(|(s, v)| (*s, U256::from(*v)))
+                .collect(),
+            ..Default::default()
+        };
+        sim.run(&ops);
+        assert_eq!(
+            sim.map_derived(),
+            sim.canonical(),
+            "map-derived dedup diverged from sort_storage_access_queries"
+        );
+    }
+
+    #[test]
+    fn protective_read_only() {
+        // Case 2a: read observes the committed value, nothing changes.
+        let s = slot(0x8002, 1);
+        check(&[(s, 10)], vec![Op::Read(s)]);
+    }
+
+    #[test]
+    fn net_write() {
+        // Case 3.
+        let s = slot(0xbeef, 2);
+        check(&[(s, 10)], vec![Op::Write(s, U256::from(20))]);
+    }
+
+    #[test]
+    fn write_back_to_initial_without_read() {
+        // Case 2b: a -> b -> a with no depth-zero read still emits a
+        // protective read. This is the corner the map path must not drop.
+        let s = slot(0xbeef, 3);
+        check(
+            &[(s, 10)],
+            vec![Op::Write(s, U256::from(20)), Op::Write(s, U256::from(10))],
+        );
+    }
+
+    #[test]
+    fn write_then_revert_no_read() {
+        // Case 1: a fully rolled-back write with no read emits nothing.
+        let s = slot(0xbeef, 4);
+        check(
+            &[(s, 10)],
+            vec![Op::Frame {
+                ops: vec![Op::Write(s, U256::from(20))],
+                committed: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn read_only_in_reverted_frame() {
+        // A read inside a reverted frame is still observed: sticky depth-zero
+        // read -> protective read on both sides.
+        let s = slot(0x8002, 5);
+        check(
+            &[(s, 10)],
+            vec![Op::Frame {
+                ops: vec![Op::Read(s)],
+                committed: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn read_before_write_in_reverted_frame() {
+        // Read at depth zero, then write, then revert: the read survives ->
+        // protective read.
+        let s = slot(0x8002, 6);
+        check(
+            &[(s, 10)],
+            vec![Op::Frame {
+                ops: vec![Op::Read(s), Op::Write(s, U256::from(20))],
+                committed: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn read_after_write_in_reverted_frame() {
+        // Write, then read the pending value, then revert: no depth-zero read,
+        // write rolled back -> nothing emitted on both sides.
+        let s = slot(0x8002, 7);
+        check(
+            &[(s, 10)],
+            vec![Op::Frame {
+                ops: vec![Op::Write(s, U256::from(20)), Op::Read(s)],
+                committed: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn mixed_slots_ordering_and_cases() {
+        // Several slots exercising different cases together; also checks the
+        // (address, key)-sorted output ordering agrees.
+        let a = slot(0x8002, 1);
+        let b = slot(0x8002, 2);
+        let c = slot(0xbeef, 1);
+        let d = slot(0xbeef, 2);
+        check(
+            &[(a, 10), (b, 20), (c, 30), (d, 40)],
+            vec![
+                Op::Read(a),                  // protective read
+                Op::Write(b, U256::from(99)), // net write
+                Op::Write(c, U256::from(31)),
+                Op::Write(c, U256::from(30)), // write-back -> protective read
+                Op::Frame {
+                    ops: vec![Op::Write(d, U256::from(41))],
+                    committed: false,
+                }, // rolled back -> nothing
+            ],
+        );
     }
 }

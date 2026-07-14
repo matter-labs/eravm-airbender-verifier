@@ -50,6 +50,13 @@ pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result
         input.system_env.clone(),
         fast_storage,
     );
+    // Match the production verifier's configuration: it calls
+    // `reserve_capacities`, which opts the fast VM into skip mode (no per-access
+    // storage log trace; `deduplicated_storage_logs` is derived from vm2's
+    // rollback-aware maps). Exercising the same mode here is the whole point of
+    // the comparison — otherwise we'd validate a derivation path production
+    // never takes. Default hints reserve nothing; only the mode switch matters.
+    fast_vm.reserve_capacities(zksync_multivm::vm_fast::VmCapacityHints::default());
 
     let mut compared_transactions = 0usize;
     let compared_l2_blocks = input.l2_blocks_execution_data.len().saturating_sub(1);
