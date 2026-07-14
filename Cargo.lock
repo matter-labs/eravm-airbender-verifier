@@ -1005,7 +1005,7 @@ source = "git+https://github.com/matter-labs/zksync-protocol?branch=oh_for_wrapp
 dependencies = [
  "derivative",
  "serde",
- "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=oh_for_wrapper)",
+ "zk_evm 0.153.9",
  "zkevm_circuits",
 ]
 
@@ -1021,13 +1021,13 @@ dependencies = [
 
 [[package]]
 name = "circuit_sequencer_api"
-version = "0.153.9"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#55f7a4cf5f590545edc1c26e31956815a79b037d"
+version = "0.153.12"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
 dependencies = [
  "derivative",
  "rayon",
  "serde",
- "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zk_evm 0.153.12",
  "zksync_bellman 0.32.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1768,7 +1768,7 @@ dependencies = [
  "serde",
  "serde_json",
  "setups",
- "sha3 0.10.8",
+ "sha3 0.9.1",
  "trace_and_split",
  "verifier_common",
 ]
@@ -4246,7 +4246,7 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_json",
- "sha3 0.10.8",
+ "sha3 0.9.1",
  "shift_binary_csr",
  "syn 2.0.114",
  "unified_reduced_machine",
@@ -5803,13 +5803,13 @@ dependencies = [
  "serde",
  "serde_json",
  "static_assertions",
- "zk_evm_abstractions 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=oh_for_wrapper)",
+ "zk_evm_abstractions 0.153.9",
 ]
 
 [[package]]
 name = "zk_evm"
-version = "0.153.9"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#55f7a4cf5f590545edc1c26e31956815a79b037d"
+version = "0.153.12"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -5817,7 +5817,7 @@ dependencies = [
  "serde",
  "serde_json",
  "static_assertions",
- "zk_evm_abstractions 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zk_evm_abstractions 0.153.12",
 ]
 
 [[package]]
@@ -5829,19 +5829,21 @@ dependencies = [
  "num_enum 0.6.1",
  "serde",
  "static_assertions",
- "zkevm_opcode_defs 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=oh_for_wrapper)",
+ "zkevm_opcode_defs 0.153.9",
 ]
 
 [[package]]
 name = "zk_evm_abstractions"
-version = "0.153.9"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#55f7a4cf5f590545edc1c26e31956815a79b037d"
+version = "0.153.12"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
 dependencies = [
+ "airbender-crypto",
  "anyhow",
+ "cfg-if",
  "num_enum 0.6.1",
  "serde",
  "static_assertions",
- "zkevm_opcode_defs 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zkevm_opcode_defs 0.153.12",
 ]
 
 [[package]]
@@ -5860,7 +5862,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
- "zkevm_opcode_defs 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=oh_for_wrapper)",
+ "zkevm_opcode_defs 0.153.9",
  "zksync_cs_derive",
 ]
 
@@ -5883,8 +5885,8 @@ dependencies = [
 
 [[package]]
 name = "zkevm_opcode_defs"
-version = "0.153.9"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#55f7a4cf5f590545edc1c26e31956815a79b037d"
+version = "0.153.12"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
 dependencies = [
  "bitflags 2.10.0",
  "blake2 0.10.6",
@@ -5915,7 +5917,7 @@ dependencies = [
  "serde",
  "serde_json",
  "setups",
- "sha3 0.10.8",
+ "sha3 0.9.1",
  "shivini",
  "snark_wrapper",
  "tracing",
@@ -6203,7 +6205,7 @@ dependencies = [
  "test-casing",
  "thiserror 2.0.18",
  "tracing",
- "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zk_evm 0.153.12",
  "zksync_contracts",
  "zksync_mini_merkle_tree",
  "zksync_system_constants",
@@ -6276,8 +6278,8 @@ source = "git+https://github.com/matter-labs/vm2?rev=4d110657a22025d4a49a563a7e1
 dependencies = [
  "enum_dispatch",
  "primitive-types",
- "zk_evm_abstractions 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
- "zkevm_opcode_defs 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zk_evm_abstractions 0.153.12",
+ "zkevm_opcode_defs 0.153.12",
  "zksync_vm2_interface",
 ]
 
@@ -6296,7 +6298,7 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
- "zk_evm 0.153.9 (git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles)",
+ "zk_evm 0.153.12",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
  "zksync_multivm",
