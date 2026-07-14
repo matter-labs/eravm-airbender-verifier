@@ -119,12 +119,27 @@ PRECOMPILE_FEATURES = [
 # arithmetic ops that legitimately share cost with priced storage). That compute
 # vector is handled by the calibration-envelope guard in the estimator crate.
 #
-# TODO(cycle-model): dispatch decomposition. The precise fix is to add a
-# `total_opcode_count * ~236` dispatch term and subtract 236 from every per-bucket
-# coefficient, so the uniform per-opcode dispatch cost is priced ONCE and cannot be
-# dodged by routing opcodes into a cheap/zero bucket, while organic totals stay
-# accurate. That supersedes both the floors here and the envelope guard. Until then
-# the two of them together keep the gate safe.
+# EVALUATED AND REJECTED — dispatch decomposition. The natural-looking fix
+# (pin a uniform ~236 cyc/op dispatch term by fitting on
+# `y - 236*total_opcode_count` and folding 236 back into every bucket, so no
+# bucket can be routed to for free) was implemented and refit on the real
+# corpus, and it makes the gate LESS safe:
+#   - total attribution is conserved, so forcing 236 into every opcode bucket
+#     makes the fit SHRINK the storage/merkle coefficients to keep matching
+#     organic totals — the isolated storage_reads_80k adversarial batch then
+#     under-predicts past the seal margin (-11%), a NEW invariant violation the
+#     shipped floors+guard model does not have;
+#   - the mandatory dispatch term is re-absorbed by the asymmetric fit, erasing
+#     the floors' deliberate conservative bias (513xxx hold-out flips from 0/49
+#     under-predicted, worst +0.03%, to 40+/49 under, worst -1.9%); raising tau
+#     to 0.97 does not fix either effect.
+# The structural lesson: post-fit FLOORS only ever add cost (strictly
+# conservative), while re-attribution inside the fit moves cost away from other
+# levers — some of which (storage) are load-bearing for isolated batches. Run
+# `eval_adversarial.py` against any candidate table to check the invariant
+# before committing it. The long-term fix for the compute vector is finer
+# featurization (split rich_addressing by op subtype) plus compute-heavy
+# synthetic batches residual-fit like the precompiles — not re-attribution.
 OPCODE_FLOORS = {
     "transient_storage_write": 11000,
     "transient_storage_read": 500,
