@@ -54,13 +54,6 @@ struct Args {
     jobs: usize,
 }
 
-/// Cheap compatibility check: load the batch (v31 has no version envelope) and
-/// return its protocol version. No guest, no VM execution.
-fn check_batch(bf: &BatchInputFile) -> Result<ProtocolVersionId> {
-    let input = load_batch(bf).with_context(|| format!("loading batch {}", bf.number))?;
-    Ok(input.system_env.version)
-}
-
 /// Full measurement for one batch: native features + guest cycle measurement.
 fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<DatasetRow> {
     // v31 is a single canonical `AirbenderVerifierInput` (no version envelope):
@@ -163,7 +156,8 @@ fn run_check(inputs: &[BatchInputFile]) -> Result<()> {
     let expected = ProtocolVersionId::latest();
     let mut incompatible = 0usize;
     for bf in inputs {
-        match check_batch(bf) {
+        // v31 has no version envelope: loading the batch is the whole check.
+        match load_batch(bf).map(|input| input.system_env.version) {
             Ok(v) if v == expected => tracing::info!(batch = bf.number, version = ?v, "ok"),
             Ok(v) => {
                 incompatible += 1;

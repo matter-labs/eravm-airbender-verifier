@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
+use crate::estimator::CycleEstimate;
 use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
 
 /// The committed cost table, embedded at compile time. Public so external
@@ -80,8 +81,8 @@ pub struct CostModel {
 
 impl CostModel {
     /// Parse a cost table from JSON (as emitted by `fit_cost_model.py`).
-    pub fn from_json(s: &str) -> anyhow::Result<Self> {
-        Ok(serde_json::from_str(s)?)
+    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(s)
     }
 
     /// The canonical model committed in this crate, parsed once.
@@ -92,6 +93,20 @@ impl CostModel {
                 "embedded cost_table.json is malformed — regenerate it with fit_cost_model.py",
             )
         })
+    }
+
+    /// Full estimate for a complete feature vector: total, per-phase breakdown,
+    /// and both fail-safe signals ([`CycleEstimate::is_reliable`] /
+    /// [`CycleEstimate::is_within_calibration`]). This is the one place a
+    /// [`CycleEstimate`] is built; the free functions in [`crate::estimator`]
+    /// only assemble the feature vector before calling it.
+    pub fn estimate(&self, fv: &FeatureVector) -> CycleEstimate {
+        CycleEstimate {
+            total: self.predict_total(fv),
+            phases: self.predict_phases(fv),
+            unpriced: self.unpriced_used(fv),
+            extrapolated: self.extrapolated_features(fv),
+        }
     }
 
     /// Aggregate prediction of **effective (native-computational) cycles** — the

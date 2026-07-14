@@ -18,9 +18,6 @@ pub mod estimator;
 pub mod features;
 pub mod model;
 
-pub use estimator::{
-    assemble_feature_vector, estimate_from_features, estimate_from_features_with_model,
-    BatchContext, CycleEstimate,
-};
+pub use estimator::{assemble_feature_vector, estimate_from_features, BatchContext, CycleEstimate};
 pub use features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
 pub use model::{CostModel, LinearModel, EMBEDDED_COST_TABLE};

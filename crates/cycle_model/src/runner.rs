@@ -8,9 +8,7 @@ use zksync_airbender_verifier::types::AirbenderVerifierInput;
 /// The four phase regions between the verifier's five cycle markers, in order.
 /// Must stay in lockstep with the `phase_marker()` call sequence in
 /// `crates/airbender_verifier/src/lib.rs`.
-pub fn phase_labels() -> [&'static str; 4] {
-    ["setup", "vm_execution", "merkle_verification", "commitment"]
-}
+pub const PHASE_LABELS: [&str; 4] = ["setup", "vm_execution", "merkle_verification", "commitment"];
 
 /// Diff consecutive cumulative marks into per-label cycle counts. `markers`
 /// holds one mark per emitted boundary in execution order; `labels[i]` names the
@@ -59,7 +57,7 @@ pub fn run_guest(
 
     Ok(GuestMeasurement {
         raw_cycles: execution.cycles_executed as u64,
-        phase_cycles: phases_from_markers(&markers, &phase_labels()),
+        phase_cycles: phases_from_markers(&markers, &PHASE_LABELS),
         // `delegation_counter` is a HashMap; collect into a BTreeMap for a
         // stable, deterministic column order in the dataset.
         delegations: markers
@@ -88,7 +86,7 @@ mod tests {
             markers: vec![mark(0), mark(100), mark(350), mark(400), mark(500)],
             delegation_counter: Default::default(),
         };
-        let phases = phases_from_markers(&markers, &phase_labels());
+        let phases = phases_from_markers(&markers, &PHASE_LABELS);
         assert_eq!(phases["setup"], 100);
         assert_eq!(phases["vm_execution"], 250);
         assert_eq!(phases["merkle_verification"], 50);

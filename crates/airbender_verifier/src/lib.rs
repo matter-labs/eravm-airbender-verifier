@@ -87,7 +87,7 @@ pub trait Verify {
 /// proved guest. The fixed sequence of calls (start, then the three phase
 /// boundaries, then end = 5 markers over one `verify()`) is the contract the
 /// host uses to attribute per-phase cycles; keep it in lockstep with the
-/// harness's `phase_labels()`.
+/// harness's `PHASE_LABELS`.
 #[inline(always)]
 fn phase_marker() {
     #[cfg(feature = "cycle-markers")]
@@ -159,18 +159,19 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     phase_marker(); // marker 0: begin `setup`
-                    // Pin the protocol version to the single one this verifier is built for.
-                    // `protocol_version` is operator-supplied and only *gates* commitment fields
-                    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
-                    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
-                    // malicious witness could substitute a behavior-compatible version undetectably.
-                    // The verifier ships one guest binary + VK set tied to `latest()`.
-                    //
-                    // The offline cycle-cost calibration build (`cycle-markers`) relaxes this pin
-                    // so it can measure older-but-still-FastVM-supported batches (e.g. the v29
-                    // corpus in the v31 wire format). This NEVER ships in a proved guest — the
-                    // `cycle-markers` feature is off for every real build — and the
-                    // `is_supported_by_fast_vm` guard below still holds. Production stays strict.
+
+    // Pin the protocol version to the single one this verifier is built for.
+    // `protocol_version` is operator-supplied and only *gates* commitment fields
+    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
+    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
+    // malicious witness could substitute a behavior-compatible version undetectably.
+    // The verifier ships one guest binary + VK set tied to `latest()`.
+    //
+    // The offline cycle-cost calibration build (`cycle-markers`) relaxes this pin
+    // so it can measure older-but-still-FastVM-supported batches (e.g. the v29
+    // corpus in the v31 wire format). This NEVER ships in a proved guest — the
+    // `cycle-markers` feature is off for every real build — and the
+    // `is_supported_by_fast_vm` guard below still holds. Production stays strict.
     #[cfg(not(feature = "cycle-markers"))]
     anyhow::ensure!(
         input.system_env.version == ProtocolVersionId::latest(),

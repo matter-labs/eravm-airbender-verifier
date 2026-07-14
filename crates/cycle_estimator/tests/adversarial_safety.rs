@@ -11,7 +11,7 @@
 //! over-budget batch. This locks in the OPCODE_FLOORS + calibration-envelope guard.
 
 use serde::Deserialize;
-use zksync_era_airbender_cycles_estimator::{CostModel, CycleEstimate, FeatureVector};
+use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/adversarial.json");
 /// The seal-gate cushion this test holds the model to (see `CycleEstimate::conservative`).
@@ -25,15 +25,6 @@ struct Row {
     features: FeatureVector,
 }
 
-fn estimate(model: &CostModel, fv: &FeatureVector) -> CycleEstimate {
-    CycleEstimate {
-        total: model.predict_total(fv),
-        phases: model.predict_phases(fv),
-        unpriced: model.unpriced_used(fv),
-        extrapolated: model.extrapolated_features(fv),
-    }
-}
-
 #[test]
 fn no_adversarial_batch_both_fits_and_underpredicts() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse adversarial fixture");
@@ -41,7 +32,7 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
     let model = CostModel::embedded();
 
     for r in &rows {
-        let est = estimate(model, &r.features);
+        let est = model.estimate(&r.features);
         let trustworthy = est.is_reliable() && est.is_within_calibration();
         let covered = est.conservative(GATE_MARGIN) >= r.effective_cycles;
         println!(

@@ -36,10 +36,6 @@ pub enum FeatureId {
     EcPairingCycles,
     DecommitCycles,
     StorageApplication,
-    // Airbender size features
-    HeapGrowthBytes,
-    CopyBytes,
-    DecommitBytes,
     // batch-level features
     TransactionCount,
     NearCallCount,
