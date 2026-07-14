@@ -1022,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "circuit_sequencer_api"
 version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
 dependencies = [
  "derivative",
  "rayon",
@@ -5809,7 +5809,7 @@ dependencies = [
 [[package]]
 name = "zk_evm"
 version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -5835,7 +5835,7 @@ dependencies = [
 [[package]]
 name = "zk_evm_abstractions"
 version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
 dependencies = [
  "airbender-crypto",
  "anyhow",
@@ -5886,7 +5886,7 @@ dependencies = [
 [[package]]
 name = "zkevm_opcode_defs"
 version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#6d851a3e6db3189c3c8b9e401d2c5a495dcaaaaa"
+source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
 dependencies = [
  "bitflags 2.10.0",
  "blake2 0.10.6",
