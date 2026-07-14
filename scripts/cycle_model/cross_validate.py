@@ -14,7 +14,12 @@ in organic batches, so this exercises the organic model (the part that varies
 with batch composition).
 
 EVALUATION ONLY: this never writes cost_table.json — the shipped weights are
-untouched. Reproduce the committed model with fit_cost_model.py.
+untouched. Reproduce the committed model with fit_cost_model.py. Two deliberate
+approximations vs the shipped pipeline: ALL precompile columns are excluded
+(incl. sha256_cycles, which the real total fit keeps as an organic column), and
+the post-fit OPCODE_FLOORS are not applied — so this slightly understates the
+shipped model's conservative bias. It answers "does the organic fit generalize",
+not "what exact error does the shipped table have".
 
     python cross_validate.py --dataset <506xxx>/dataset.json \
         --extra crates/cycle_estimator/tests/fixtures/holdout_513xxx.json
@@ -24,27 +29,15 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fit_cost_model import (  # reuse the exact fit + constants the model ships with
-    fit_asymmetric, DELEGATION_WEIGHTS, TOTAL_EXCLUDE, PRECOMPILE_FEATURES,
+from fit_cost_model import (  # reuse the exact fit + helpers the model ships with
+    fit_asymmetric, effective_cycles, feature_counts, TOTAL_EXCLUDE, PRECOMPILE_FEATURES,
 )
-
-
-def effective_cycles(r: dict) -> float:
-    if "effective_cycles" in r:
-        return float(r["effective_cycles"])
-    deleg = sum(DELEGATION_WEIGHTS[k] * v for k, v in (r.get("delegations") or {}).items())
-    return float(r["raw_cycles"] + deleg)
-
-
-def counts(r: dict) -> dict:
-    f = r["features"]
-    return f["counts"] if "counts" in f else f
 
 
 def load(path: Path) -> list:
     d = json.loads(path.read_text())
     rows = d if isinstance(d, list) else d.get("rows", d)
-    return [(r["batch_number"], counts(r), effective_cycles(r)) for r in rows]
+    return [(r["batch_number"], feature_counts(r), effective_cycles(r)) for r in rows]
 
 
 def predict(sol: np.ndarray, X: np.ndarray) -> np.ndarray:
@@ -65,7 +58,7 @@ def main() -> None:
     cols = sorted({k for _, c, _ in data for k in c} - exclude)
     X = np.array([[c.get(k, 0) for k in cols] for _, c, _ in data], float)
     y = np.array([v for _, _, v in data], float)
-    sizes = y.copy()
+    sizes = y  # stratify folds by effective cycles ("size")
 
     # round-robin over size-sorted index -> each fold is a size-representative sample
     order = np.argsort(sizes)

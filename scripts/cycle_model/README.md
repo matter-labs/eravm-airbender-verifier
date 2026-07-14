@@ -55,8 +55,10 @@ The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
    ```
 
    Which features drive each phase is declared in `PHASE_FEATURES` in
-   `fit_cost_model.py`. `--pinned pinned.json` holds chosen costs fixed (e.g.
-   crypto microbenchmarks) instead of fitting them.
+   `fit_cost_model.py`. `--precompile-dataset` residual-fits the precompile
+   coefficients from synthetic precompile-heavy batches (see
+   `scripts/precompile_calibration/`); `--tau` sets the asymmetric-loss expectile
+   for the total fit.
 
 ## Updating the deployed model
 
@@ -94,45 +96,46 @@ cargo test -p zksync-era-airbender-cycles-estimator --test model_regression
 
 ## Using the estimator (Rust API)
 
-The estimator lives in the lean `zksync-era-airbender-cycles-estimator` crate
-(deps: `zksync_vm2` + serde/serde_json/anyhow only), so a sequencer can depend on it without the
-proving stack.
+The model/estimator lives in the lean `zksync-era-airbender-cycles-estimator`
+crate (deps: serde/serde_json only — no VM), so a sequencer can depend on it
+without the proving stack; the passive vm2 tracer that fills the feature vector
+is the sibling `zksync-era-airbender-cycles-tracer` crate.
 
 ```rust
-use zksync_era_airbender_cycles_estimator::{estimate, BatchContext, CycleFeatureTracer};
+use zksync_era_airbender_cycles_estimator::{estimate_from_features, BatchContext};
+use zksync_era_airbender_cycles_tracer::CycleFeatureTracer;
 
 // 1. Attach the passive tracer while executing the batch. Clone it per tx into
-//    the VM's tracer dispatcher; it only observes, so execution is unchanged.
+//    the VM's tracer dispatcher; it only observes, so execution is unchanged
+//    (clones share one recorder).
 let tracer = CycleFeatureTracer::new();
 // ... run all transactions with `tracer.clone()` ...
 let finished = vm.finish_batch(pubdata_builder);
 
 // 2. Estimate — no RISC-V execution. Pass the two batch scalars from `finished`
-//    plus the batch-level drivers the opcode tracer can't see (from the storage
-//    view + the bytecodes being proved).
+//    plus the batch-level drivers the opcode tracer can't see.
 let ctx = BatchContext {
     transaction_count,
     merkle_leaf_count,   // distinct storage slots touched = what the tree witnesses
-    storage_key_count,
-    used_bytecode_bytes,
-    used_bytecode_count,
 };
-let est = estimate(
-    &tracer,
+let est = estimate_from_features(
+    tracer.snapshot(),
     finished.pubdata_input.map_or(0, |p| p.len() as u64),
     finished.state_diffs.map_or(0, |s| s.len() as u64),
     &ctx,
 );
 
 // 3. Decide — fail safe. `fits` rejects the batch if it used a precompile the
-//    model can't price (e.g. ec_pairing/modexp), and applies a safety margin.
+//    model can't price or if it falls outside the calibration envelope, and
+//    applies a safety margin.
 if !est.is_reliable() { /* unpriced precompile — reject/split, don't trust `total` */ }
 if !est.fits(PER_PROOF_CYCLE_LIMIT, /*margin*/ 1.10) { /* seal early / split */ }
 // est.total = predicted effective/native cycles; est.conservative(m) = margin-padded; est.phases = breakdown.
 ```
 
 Notes:
-- `estimate` uses the embedded model; `estimate_with_model` takes a candidate table.
+- `estimate_from_features` uses the embedded model; to evaluate a candidate
+  table, call `model.estimate(&assemble_feature_vector(...))` directly.
 - `CycleFeatureTracer` is a **vm2 (fast VM)** tracer. The legacy VM has a
   different tracer interface, so the legacy path needs a sibling tracer filling
   the same `FeatureVector` (the model/estimator are VM-agnostic).
@@ -153,30 +156,23 @@ proved), so the estimate is used conservatively:
    prediction. The model systematically under-predicts a couple of percent
    (hold-out: 43/49 batches, worst −1.83%), so ~1.05–1.10 covers ordinary
    variance; pick per risk tolerance.
-3. **Pin precompile costs** (below) so the priced set is sound and complete — the
-   real fix behind the coverage guard.
+3. **Calibrate precompile costs from synthetic batches** so the priced set is
+   sound and complete — the real fix behind the coverage guard.
 
-### Pinning precompile costs (microbenchmarks)
+### Calibrating precompile costs (synthetic batches)
 
-keccak256/sha256/ecrecover are size-scaled from the trace, but their fitted
-coefficients are in-sample/collinear, and secp256r1/modexp/ec_add/ec_mul/
-ec_pairing are unpriced (absent from the corpus).
+Precompiles are ~0 in the organic mainnet corpus, so a joint fit lets collinear
+generic-opcode features absorb their cost. Instead, drive precompile-dominated
+batches on a local node (`scripts/precompile_calibration/`), measure their true
+cycles with `cycle_bench`, and pass the resulting dataset to
+`fit_cost_model.py --precompile-dataset`: the precompile coefficients are fit on
+the RESIDUAL with the organic model frozen. The committed `cost_table.json` was
+produced this way — every safety-critical precompile is priced.
+([`native_cost_conversion.md`](native_cost_conversion.md) documents the
+alternative zksync-os-derived costs used as a cross-check.)
 
-The fastest source is **zksync-os**, which already measured RISC-V-cycle native
-costs for every precompile against the same airbender delegations — see
-[`native_cost_conversion.md`](native_cost_conversion.md) for the derived costs in
-our units and the conversion factor. Alternatively, measure directly and pin:
-
-- Build a synthetic batch that runs N of one precompile (varying input size),
-  measure guest cycles with the marker guest (`cycle_bench`), and divide by the
-  feature count to get cycles-per-unit.
-- Record results in a `pinned.json` (see `pinned.example.json`) and pass
-  `--pinned pinned.json` to `fit_cost_model.py`. Features the corpus never
-  exercised have no dataset column, so their pinned cost must be written into the
-  committed `cost_table.json` directly (they are not fit).
-
-Until pinned, the coverage guard is what keeps unpriced precompiles from silently
-producing an under-estimate.
+For a precompile the corpus (organic + synthetic) has never exercised, the
+coverage guard is what keeps it from silently producing an under-estimate.
 
 ## Model shape & current accuracy
 
