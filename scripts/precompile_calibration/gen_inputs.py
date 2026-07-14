@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Generate precompile input vectors (hex, no 0x) for the PrecompileHammer.
 
-Emits one <precompile>_<tier>.hex file per (precompile, tier) plus a
-manifest.json describing how to drive each: which hammer function, the input
-file, and a *starting* per-tx `count` (tune after the first measured batch).
+Emits one <precompile>_<tier>.hex file per (precompile, tier); the driver
+(`run_calibration.sh`) reads these and sweeps the per-tx call count itself.
 
 Design:
-- Input-dependent precompiles (modexp, sha256, ecpairing) tier by INPUT SIZE
-  (light/medium/heavy). Fixed-cost precompiles (ecadd, ecmul, secp256r1) tier by
-  CALL COUNT, so they share one input and the driver sweeps `count`.
+- sha256/ecpairing tier by INPUT SIZE (light/medium/heavy or pair count).
+  modexp gets only a light (<=32B-operand) input: the circuit rejects larger
+  operands (burnGas -> 0 cycles), so bigger vectors would calibrate nothing —
+  the driver ranges the feature via call count instead. Fixed-cost precompiles
+  (ecadd, ecmul, secp256r1) share one input and the driver sweeps `count`.
 - Curve inputs use the canonical bn254 generators (G1 = (1,2); EIP-197 G2
   generator). They are VALID by construction but MUST be confirmed against the
   live node (`cast call <precompile> <input>`) before mass-generation — a bad
   point makes the precompile fail and cost nothing. secp256r1 needs a real P-256
   signature; generated here if `cryptography` is available, else left as a TODO.
 """
-import json
 import os
 
 OUT = os.path.dirname(os.path.abspath(__file__))
@@ -72,69 +72,53 @@ def ec_pairing(k):  # k * 192 bytes: k copies of (G1, G2); valid points, result 
 # --- secp256r1 (RIP-7212, addr 0x100): 160 bytes hash|r|s|x|y ------------------
 def secp256r1_vector():
     try:
+        from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+        from cryptography.hazmat.primitives.asymmetric.utils import (
+            Prehashed,
+            decode_dss_signature,
+        )
     except Exception:
         return None
     key = ec.generate_private_key(ec.SECP256R1())
     msg_hash = bytes((i * 13 + 1) & 0xFF for i in range(32))
-    from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
-    from cryptography.hazmat.primitives import hashes  # noqa
     # Sign the raw hash via Prehashed
-    from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
-    sig = key.sign(msg_hash, ECDSA(Prehashed(hashes.SHA256())))
+    sig = key.sign(msg_hash, ec.ECDSA(Prehashed(hashes.SHA256())))
     r, s = decode_dss_signature(sig)
     nums = key.public_key().public_numbers()
     return (u256(int.from_bytes(msg_hash, "big")) + u256(r) + u256(s) + u256(nums.x) + u256(nums.y)).hex()
 
 
 def main():
-    manifest = []
+    def add(name, hexstr, note=""):
+        rel, nbytes = w(name, hexstr)
+        print(f"{rel:22s} {nbytes:>7} B  {note}")
 
-    def add(precompile, fn, tier, hexstr, count, note=""):
-        rel, nbytes = w(f"{precompile}_{tier}", hexstr)
-        manifest.append({
-            "precompile": precompile, "hammer_fn": fn, "tier": tier,
-            "input_file": rel, "input_bytes": nbytes,
-            "start_count_per_tx": count, "note": note,
-        })
-
-    # modexp: tier by operand size
-    add("modexp", "modexp", "light", modexp(32, 4, 32), 20000)
-    add("modexp", "modexp", "medium", modexp(256, 8, 256), 3000)
-    add("modexp", "modexp", "heavy", modexp(1024, 16, 1024), 400)
+    # modexp: light (<=32B operands) only — the circuit rejects larger operands
+    # (burnGas -> 0 cycles); the driver ranges the feature via call count.
+    add("modexp_light", modexp(32, 4, 32))
 
     # sha256: tier by input size
-    add("sha256", "sha256_", "light", sha256_in(64), 50000)
-    add("sha256", "sha256_", "medium", sha256_in(4096), 4000)
-    add("sha256", "sha256_", "heavy", sha256_in(32768), 500)
+    add("sha256_light", sha256_in(64))
+    add("sha256_medium", sha256_in(4096))
+    add("sha256_heavy", sha256_in(32768))
 
     # ecpairing: tier by number of pairs (input size)
-    add("ecpairing", "ecPairing", "light", ec_pairing(1), 2000, "verify on-curve on live node")
-    add("ecpairing", "ecPairing", "medium", ec_pairing(4), 500, "verify on-curve on live node")
-    add("ecpairing", "ecPairing", "heavy", ec_pairing(10), 200, "verify on-curve on live node")
+    add("ecpairing_light", ec_pairing(1), "verify on-curve on live node")
+    add("ecpairing_medium", ec_pairing(4), "verify on-curve on live node")
+    add("ecpairing_heavy", ec_pairing(10), "verify on-curve on live node")
 
     # ecadd / ecmul: fixed cost/call — one input, driver sweeps count
-    add("ecadd", "ecAdd", "fixed", ec_add(), 50000, "verify on-curve on live node")
-    add("ecmul", "ecMul", "fixed", ec_mul(7), 20000, "verify on-curve on live node")
+    add("ecadd_fixed", ec_add(), "verify on-curve on live node")
+    add("ecmul_fixed", ec_mul(7), "verify on-curve on live node")
 
     # secp256r1: fixed cost/call — needs a valid P-256 signature
     p256 = secp256r1_vector()
     if p256:
-        add("secp256r1", "hammer(0x100)", "fixed", p256, 20000, "verify returns 1 on live node")
+        add("secp256r1_fixed", p256, "verify returns 1 on live node")
     else:
-        manifest.append({
-            "precompile": "secp256r1", "hammer_fn": "hammer(0x100)", "tier": "fixed",
-            "input_file": None, "note": "TODO: python `cryptography` unavailable — "
-            "generate a valid RIP-7212 hash|r|s|x|y (160B) vector before use",
-        })
-
-    with open(os.path.join(OUT, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
-    for m in manifest:
-        print(f"{m['precompile']:11s} {m['tier']:7s} "
-              f"{m.get('input_bytes', '?')!s:>6} B  count~{m.get('start_count_per_tx', '?')}"
-              f"  {m.get('note', '')}")
+        print("secp256r1_fixed: SKIPPED — python `cryptography` unavailable; "
+              "generate a valid RIP-7212 hash|r|s|x|y (160B) vector before use")
 
 
 if __name__ == "__main__":

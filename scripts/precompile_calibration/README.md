@@ -14,8 +14,8 @@ maximizes one vm2 feature the fitted model under-prices. Measured with
 `cycle_bench`, the worst under-predicted **~9×** (transient storage & context ops,
 priced at **0**) and **~3×** (pure arithmetic, `rich_addressing_op` priced ~3×
 low). The contract itself is a dev artifact (not committed); the reproducible
-outputs are the 8 measured batches, committed as
-`scripts/cycle_model/adversarial_dataset.json` and enforced by
+outputs are the measured batches, committed as
+`crates/cycle_estimator/tests/fixtures/adversarial.json` and enforced by
 `crates/cycle_estimator/tests/adversarial_safety.rs`. Fixes: post-fit
 `OPCODE_FLOORS` (transient/context) + a calibration-envelope guard for the compute
 vector (`CostModel::extrapolated_features`, which makes `CycleEstimate::fits` fail
@@ -30,16 +30,17 @@ features). So each batch is a burst of transactions to a *single*
 `PrecompileHammer` function; families are driven sequentially so each lands in
 its own batch. Tiers sweep the feature ~2–3 orders of magnitude:
 
-- input-dependent (`modexp`, `sha256`, `ecpairing`): tier by **input size** (light/medium/heavy)
-- fixed-cost (`ecadd`, `ecmul`, `secp256r1`): tier by **call count** (one input, driver sweeps `count`)
+- input-dependent (`sha256`, `ecpairing`): tier by **input size** (light/medium/heavy)
+- fixed-cost (`modexp` — the circuit only takes ≤32B operands — `ecadd`, `ecmul`,
+  `secp256r1`): tier by **call count** (one input, driver sweeps `count`)
 
 ## Pieces
 
 | file | role |
 | --- | --- |
 | `PrecompileHammer.sol` | loops `count` staticcalls to one precompile per tx (minimal contamination) |
-| `gen_inputs.py` | emits `<precompile>_<tier>.hex` valid input vectors + `manifest.json` |
-| `run_calibration.sh` | deploy hammer, drive tx bursts per manifest entry, export + convert each batch |
+| `gen_inputs.py` | emits `<precompile>_<tier>.hex` valid input vectors |
+| `run_calibration.sh` | drive tx bursts against a pre-deployed hammer, export + convert each batch |
 
 ## Prerequisites
 
