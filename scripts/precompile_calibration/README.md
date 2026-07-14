@@ -19,8 +19,9 @@ outputs are the measured batches, committed as
 `crates/cycle_estimator/tests/adversarial_safety.rs`. Fixes: post-fit
 `OPCODE_FLOORS` (transient/context) + a calibration-envelope guard for the compute
 vector (`CostModel::extrapolated_features`, which makes `CycleEstimate::fits` fail
-safe on compute-dominated batches). See the `OPCODE_FLOORS` TODO in
-`fit_cost_model.py` for the precise long-term fix (dispatch decomposition).
+safe on compute-dominated batches). A dispatch-decomposition refit that would have
+superseded both was evaluated and rejected — it creates a new storage-dominated
+under-estimation vector; see the `OPCODE_FLOORS` notes in `fit_cost_model.py`.
 
 ## Why isolation
 

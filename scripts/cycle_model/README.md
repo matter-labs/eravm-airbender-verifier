@@ -62,11 +62,15 @@ The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
 
 ## Updating the deployed model
 
-The estimator compiles the cost table in via `include_str!`. To ship a new one:
+The estimator compiles the cost table in via `include_str!`. To ship a new one,
+FIRST check the candidate against the adversarial invariant (the Rust test only
+guards the already-committed table — this is the pre-commit half):
 
 ```sh
+python scripts/cycle_model/eval_adversarial.py \
+    --cost-table artifacts/cycle_model/cost_table.json   # must exit 0
 cp artifacts/cycle_model/cost_table.json crates/cycle_estimator/model/cost_table.json
-cargo test -p zksync-era-airbender-cycles-estimator   # re-parses the embedded table
+cargo test -p zksync-era-airbender-cycles-estimator   # re-parses + regression-checks
 ```
 
 A malformed table or a feature name not in the `FeatureId` enum fails the build /

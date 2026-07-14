@@ -158,8 +158,11 @@ impl CostModel {
     /// exceeds the organic envelope × [`EXTRAPOLATION_FACTOR`]. Returns empty when
     /// the table carries no calibration data (guard disabled).
     ///
-    /// See the fit script's `OPCODE_FLOORS` TODO: the dispatch decomposition will
-    /// price arithmetic correctly and retire this guard.
+    /// This guard is here to stay (a dispatch-decomposition refit that would have
+    /// priced arithmetic uniformly was evaluated and REJECTED — it shifts cost off
+    /// the storage coefficients and creates a new under-estimation vector; see the
+    /// `OPCODE_FLOORS` notes in `scripts/cycle_model/fit_cost_model.py`). Retiring
+    /// it takes finer featurization of the compute vector, not re-attribution.
     pub fn extrapolated_features(&self, fv: &FeatureVector) -> Vec<FeatureId> {
         let cap = self.calibration.rich_addressing_share_max;
         if cap <= 0.0 {
