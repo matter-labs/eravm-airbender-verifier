@@ -2,8 +2,12 @@
 import json
 
 import numpy as np
+import pandas as pd
+import pytest
 
-from fit_cost_model import fit, fit_with_pinned, load_dataset, _fit_block
+from fit_cost_model import (
+    fit, fit_asymmetric, load_dataset, residual_precompile_fit, _fit_block,
+)
 
 
 def test_recovers_known_costs():
@@ -17,16 +21,36 @@ def test_recovers_known_costs():
     assert r2 > 0.999
 
 
-def test_pinned_fit_holds_pinned_and_fits_rest():
-    rng = np.random.default_rng(1)
-    X = rng.integers(0, 50, size=(300, 3)).astype(float)
-    true = np.array([12.0, 7.0, 2.0])
-    y = X @ true + 500.0
-    cols = ["A", "B", "C"]
-    coeffs, base, r2 = fit_with_pinned(X, y, cols, {"A": 12.0})
-    assert abs(coeffs[0] - 12.0) < 1e-9  # pinned held exactly
-    assert np.allclose(coeffs[1:], true[1:], atol=1e-6)
-    assert r2 > 0.999
+def test_asymmetric_fit_leans_conservative():
+    # On noisy data, τ=0.9 must produce a fit that under-predicts far less often
+    # than ordinary least squares (the whole point of the expectile loss).
+    rng = np.random.default_rng(3)
+    X = rng.integers(1, 100, size=(300, 2)).astype(float)
+    y = X @ np.array([10.0, 3.0]) + 500.0 + rng.normal(0, 50.0, size=300)
+    A = np.hstack([X, np.ones((300, 1))])
+    c_ols, b_ols, _ = fit_asymmetric(X, y, tau=0.5)
+    c_hi, b_hi, _ = fit_asymmetric(X, y, tau=0.9)
+    under_ols = (y > A @ np.concatenate([c_ols, [b_ols]])).mean()
+    under_hi = (y > A @ np.concatenate([c_hi, [b_hi]])).mean()
+    assert under_hi < under_ols
+    assert under_hi < 0.25  # τ=0.9 → only a small tail still under-predicted
+
+
+def test_residual_fit_rejects_organically_priced_precompile():
+    # The residual coefficients REPLACE organic ones (table.update), so an organic
+    # model that already prices a precompile feature must be rejected — silently
+    # proceeding would double-count it in the residual and then drop the organic
+    # cost from the table.
+    pdf = pd.DataFrame({
+        "sha256_cycles": [100.0, 200.0, 300.0],
+        "effective_cycles": [1e6, 2e6, 3e6],
+    })
+    with pytest.raises(ValueError, match="sha256_cycles"):
+        residual_precompile_fit(
+            pdf, {"sha256_cycles": 17.0}, 1000.0, "effective_cycles")
+    # A frozen model that does NOT price it fits fine.
+    out = residual_precompile_fit(pdf, {}, 0.0, "effective_cycles")
+    assert out["sha256_cycles"] > 0
 
 
 def test_load_dataset_and_merkle_phase_fit(tmp_path):

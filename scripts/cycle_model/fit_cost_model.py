@@ -50,7 +50,7 @@ VM_FEATURES = [
     "transient_storage_read", "transient_storage_write", "event",
     "precompile_call", "decommit", "far_call", "uma_write", "uma_read",
     "near_call_count", "keccak256_cycles", "sha256_cycles", "ec_recover_cycles",
-    "secp256r1_verify_cycles", "modexp_cycles", "ec_add_cycles", "ec_mul_cycles",
+    "secp256r1_verify_cycles", "mod_exp_cycles", "ec_add_cycles", "ec_mul_cycles",
     "ec_pairing_cycles", "decommit_cycles", "storage_application",
     "transaction_count",
 ]
@@ -100,7 +100,7 @@ PRECOMPILE_FEATURES = [
 # prices these buckets from mainnet batches where they co-occur with (and get
 # attributed to) costlier priced work, so a batch DOMINATED by one bucket — an
 # attacker's lever — is badly under-predicted. Measured directly from isolated
-# adversarial batches (scripts/cycle_model/adversarial_dataset.json) and applied as
+# adversarial batches (crates/cycle_estimator/tests/fixtures/adversarial.json) and applied as
 # a post-fit lower bound: coef = max(fitted, floor). Floors only ever RAISE a
 # prediction, so they are strictly conservative for the seal gate.
 #   - transient_storage_write: ~11k cyc/op with DISTINCT keys (the transient map
@@ -157,17 +157,11 @@ DELEGATION_WEIGHTS = {"1991": 16, "1994": 4, "1995": 4}
 
 
 def fit(X: np.ndarray, y: np.ndarray):
-    """Non-negative least squares with an intercept column.
+    """Non-negative least squares with an intercept column (= expectile τ=0.5).
 
     Returns (coeffs, base, r2) where coeffs[i] is the cost of feature column i.
     """
-    A = np.hstack([X, np.ones((X.shape[0], 1))])
-    sol, _ = nnls(A, y)
-    coeffs, base = sol[:-1], sol[-1]
-    pred = A @ sol
-    ss_res = float(((y - pred) ** 2).sum())
-    ss_tot = float(((y - y.mean()) ** 2).sum()) or 1.0
-    return coeffs, base, 1.0 - ss_res / ss_tot
+    return fit_asymmetric(X, y, tau=0.5)
 
 
 def fit_asymmetric(X: np.ndarray, y: np.ndarray, tau: float, iters: int = 50):
@@ -198,30 +192,6 @@ def fit_asymmetric(X: np.ndarray, y: np.ndarray, tau: float, iters: int = 50):
     return coeffs, base, 1.0 - ss_res / ss_tot
 
 
-def fit_with_pinned(X: np.ndarray, y: np.ndarray, feature_cols, pinned: dict):
-    """Hold `pinned` feature costs fixed (e.g. from crypto microbenchmarks) and
-    NNLS-fit the remaining feature costs against the residual target.
-
-    `pinned` maps bare feature name to a cost. Returns (coeffs, base, r2) aligned
-    to `feature_cols`.
-    """
-    pin_idx = {i: pinned[c] for i, c in enumerate(feature_cols) if c in pinned}
-    y_adj = y.copy()
-    for i, w in pin_idx.items():
-        y_adj = y_adj - X[:, i] * w
-    free_idx = [i for i in range(len(feature_cols)) if i not in pin_idx]
-    if free_idx:
-        coeffs_free, base, r2 = fit(X[:, free_idx], y_adj)
-    else:
-        coeffs_free, base, r2 = np.array([]), 0.0, 1.0
-    coeffs = np.zeros(len(feature_cols))
-    for i, w in pin_idx.items():
-        coeffs[i] = w
-    for j, i in enumerate(free_idx):
-        coeffs[i] = coeffs_free[j]
-    return coeffs, base, r2
-
-
 def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
                             frozen_base: float, target_col: str) -> dict:
     """Freeze an organic (base + non-precompile) model and NNLS-fit the precompile
@@ -232,8 +202,20 @@ def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
     used = [c for c in PRECOMPILE_FEATURES if c in pdf.columns]
     if not used or target_col not in pdf.columns:
         return {}
+    # The residual coefficients REPLACE (table.update) any organic coefficient, so
+    # the frozen prediction must not already include one — otherwise that cost is
+    # double-counted here and then dropped from the table (net under-pricing).
+    # `sha256_cycles` sits in both VM_FEATURES and PRECOMPILE_FEATURES, so this is
+    # a real (if currently dormant — the organic fit prices it 0) hazard.
+    organic_priced = [c for c in used if frozen_features.get(c, 0.0) > 0]
+    if organic_priced:
+        raise ValueError(
+            f"organic model already prices precompile feature(s) {organic_priced}; "
+            "residual fit would overwrite them — exclude them from the organic fit "
+            "or from PRECOMPILE_FEATURES"
+        )
     pred = np.full(len(pdf), frozen_base, dtype=float)
-    for c, w in frozen_features.items():  # precompile feats are 0 in the frozen model
+    for c, w in frozen_features.items():
         if c in pdf.columns:
             pred = pred + pdf[c].to_numpy(dtype=float) * w
     resid = pdf[target_col].to_numpy(dtype=float) - pred
@@ -241,25 +223,44 @@ def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
     return {c: float(w) for c, w in zip(used, coeffs) if w > 0}
 
 
+def effective_cycles(r: dict) -> float:
+    """Effective (native-computational) cycles for one dataset/fixture row =
+    main RISC-V cycles + the weighted delegation-circuit cost the main trace
+    doesn't account for. Fixture rows may carry it precomputed."""
+    if "effective_cycles" in r:
+        return float(r["effective_cycles"])
+    deleg_cost = 0
+    for did, cnt in (r.get("delegations") or {}).items():
+        if did not in DELEGATION_WEIGHTS:
+            raise ValueError(
+                f"batch {r['batch_number']}: unknown delegation id {did!r} — add its "
+                f"native weight to DELEGATION_WEIGHTS (see zksync-os cost_constants.rs)"
+            )
+        deleg_cost += DELEGATION_WEIGHTS[did] * cnt
+    return float(r["raw_cycles"] + deleg_cost)
+
+
+def feature_counts(r: dict) -> dict:
+    """The feature-count map of one dataset/fixture row (both layouts)."""
+    f = r["features"]
+    return f["counts"] if "counts" in f else f
+
+
+def predict_row(base: float, coeffs: dict, feats) -> float:
+    """One linear prediction: base + Σ coeff·feature (missing feature -> 0).
+    `feats` is any mapping with .get (a dict or a pandas row)."""
+    return base + sum(w * feats.get(name, 0) for name, w in coeffs.items())
+
+
 def load_dataset(path: Path) -> pd.DataFrame:
     """Flatten dataset.json into a DataFrame: one column per feature, one per
-    phase (`phase_*`), plus raw_cycles."""
+    phase (`phase_*`), plus raw_cycles + effective_cycles."""
     rows = json.loads(path.read_text())
     records = []
     for r in rows:
         rec = {"batch_number": r["batch_number"], "raw_cycles": r["raw_cycles"]}
-        # Effective (native-computational) cycles = main RISC-V cycles + the
-        # weighted delegation-circuit cost the main trace doesn't account for.
-        deleg_cost = 0
-        for did, cnt in r.get("delegations", {}).items():
-            if did not in DELEGATION_WEIGHTS:
-                raise ValueError(
-                    f"batch {r['batch_number']}: unknown delegation id {did!r} — add its "
-                    f"native weight to DELEGATION_WEIGHTS (see zksync-os cost_constants.rs)"
-                )
-            deleg_cost += DELEGATION_WEIGHTS[did] * cnt
-        rec["effective_cycles"] = r["raw_cycles"] + deleg_cost
-        rec.update(r["features"]["counts"])
+        rec["effective_cycles"] = effective_cycles(r)
+        rec.update(feature_counts(r))
         for phase, cyc in r.get("phase_cycles", {}).items():
             rec[f"phase_{phase}"] = cyc
         records.append(rec)
@@ -270,7 +271,9 @@ def _fit_block(df: pd.DataFrame, feature_cols, y: np.ndarray):
     """Fit `y` against present feature_cols; return (table, base, r2, used_cols)."""
     used = [c for c in feature_cols if c in df.columns]
     if not used:
-        return {}, 0.0, float("nan"), []
+        # r2 must stay a number: NaN would serialize as bare `NaN`, which is
+        # invalid JSON and the Rust estimator's serde parse rejects it.
+        return {}, 0.0, 0.0, []
     X = df[used].to_numpy(dtype=float)
     coeffs, base, r2 = fit(X, y)
     return {c: float(w) for c, w in zip(used, coeffs)}, float(base), r2, used
@@ -285,8 +288,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="artifacts/cycle_model/dataset.json")
     ap.add_argument("--out", default="artifacts/cycle_model")
-    ap.add_argument("--pinned", default=None,
-                    help="JSON file mapping feature -> fixed cost (crypto microbench results)")
     ap.add_argument("--precompile-dataset", default=None,
                     help="synthetic precompile-batch dataset.json; its precompile "
                          "coeffs are residual-fit with the organic model frozen")
@@ -303,7 +304,6 @@ def main():
         and not c.startswith("phase_")
         and c not in TOTAL_EXCLUDE
     ]
-    pinned = json.loads(Path(args.pinned).read_text()) if args.pinned else {}
 
     result = {"batches": int(len(df)), "phases": {}, "total": {}}
     report = [
@@ -334,17 +334,12 @@ def main():
             report.append(f"| {c} | {table[c]:,.2f} | {_confidence(df, c)} |")
 
     # Total fit (all features -> EFFECTIVE/native cycles = raw + weighted
-    # delegations), optionally with pinned crypto costs. This is the predictor the
-    # sequencer compares against the per-proof native budget.
+    # delegations). This is the predictor the sequencer compares against the
+    # per-proof native budget. τ=0.5 is ordinary NNLS.
     y = df["effective_cycles"].to_numpy(dtype=float)
     used = [c for c in feature_cols if c in df.columns]
     X = df[used].to_numpy(dtype=float)
-    if pinned:
-        coeffs, base, r2 = fit_with_pinned(X, y, used, pinned)
-    elif args.tau != 0.5:
-        coeffs, base, r2 = fit_asymmetric(X, y, args.tau)
-    else:
-        coeffs, base, r2 = fit(X, y)
+    coeffs, base, r2 = fit_asymmetric(X, y, args.tau)
     total_table = {c: float(w) for c, w in zip(used, coeffs)}
     # Add precompile coeffs via residual fit (organic total frozen) so their cost is
     # attributed to the precompile features, not to collinear generic opcodes.
@@ -373,13 +368,11 @@ def main():
     # batch, but carry heavy priced storage that dwarfs it). Such a batch is
     # compute-dominated and its under-priced arithmetic drives the estimate, so the
     # gate fails safe. Emit the organic max share as the data-derived basis.
-    def _pred_row(row):
-        return base + sum(w * row.get(f, 0) for f, w in total_table.items())
     crich = total_table.get("rich_addressing_op", 0.0)
     rich_shares = [
-        crich * row["rich_addressing_op"] / _pred_row(row)
+        crich * row["rich_addressing_op"] / predict_row(base, total_table, row)
         for _, row in df.iterrows()
-        if _pred_row(row) > 0
+        if predict_row(base, total_table, row) > 0
     ]
     result["calibration"] = {
         "rich_addressing_share_max": max(rich_shares) if rich_shares else 0.0,
