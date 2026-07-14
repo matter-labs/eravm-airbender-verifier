@@ -202,25 +202,23 @@ def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
     used = [c for c in PRECOMPILE_FEATURES if c in pdf.columns]
     if not used or target_col not in pdf.columns:
         return {}
-    # The residual coefficients REPLACE (table.update) any organic coefficient, so
-    # the frozen prediction must not already include one — otherwise that cost is
-    # double-counted here and then dropped from the table (net under-pricing).
-    # `sha256_cycles` sits in both VM_FEATURES and PRECOMPILE_FEATURES, so this is
-    # a real (if currently dormant — the organic fit prices it 0) hazard.
-    organic_priced = [c for c in used if frozen_features.get(c, 0.0) > 0]
-    if organic_priced:
-        raise ValueError(
-            f"organic model already prices precompile feature(s) {organic_priced}; "
-            "residual fit would overwrite them — exclude them from the organic fit "
-            "or from PRECOMPILE_FEATURES"
-        )
+    # The residual coefficients REPLACE (table.update) any organic coefficient the
+    # frozen model has for a feature in `used`, so the frozen prediction must
+    # EXCLUDE those features' organic terms — otherwise their cost is counted in
+    # the prediction, the residual under-states it, and the replacement drops the
+    # organic term (net under-pricing). `sha256_cycles` sits in both VM_FEATURES
+    # and PRECOMPILE_FEATURES and the organic vm_execution phase fit does price
+    # it, so this exclusion is load-bearing, not defensive.
     pred = np.full(len(pdf), frozen_base, dtype=float)
     for c, w in frozen_features.items():
-        if c in pdf.columns:
+        if c in pdf.columns and c not in used:
             pred = pred + pdf[c].to_numpy(dtype=float) * w
     resid = pdf[target_col].to_numpy(dtype=float) - pred
     coeffs, _ = nnls(pdf[used].to_numpy(dtype=float), resid)
-    return {c: float(w) for c, w in zip(used, coeffs) if w > 0}
+    # Return a coefficient for every residual-fit feature (including 0.0): the
+    # caller replaces the organic coefficient, so omitting a zero here would
+    # leave a stale organic term that the residual above did not account for.
+    return {c: float(w) for c, w in zip(used, coeffs)}
 
 
 def effective_cycles(r: dict) -> float:

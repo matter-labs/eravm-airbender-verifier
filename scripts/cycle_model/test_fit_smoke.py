@@ -3,7 +3,6 @@ import json
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from fit_cost_model import (
     fit, fit_asymmetric, load_dataset, residual_precompile_fit, _fit_block,
@@ -36,21 +35,21 @@ def test_asymmetric_fit_leans_conservative():
     assert under_hi < 0.25  # τ=0.9 → only a small tail still under-predicted
 
 
-def test_residual_fit_rejects_organically_priced_precompile():
-    # The residual coefficients REPLACE organic ones (table.update), so an organic
-    # model that already prices a precompile feature must be rejected — silently
-    # proceeding would double-count it in the residual and then drop the organic
-    # cost from the table.
+def test_residual_fit_excludes_organically_priced_precompile():
+    # The residual coefficients REPLACE organic ones (table.update), so the frozen
+    # prediction must EXCLUDE the organic term of every residual-fit feature —
+    # else its cost is double-counted in the prediction and then dropped from the
+    # table. With exclusion, the residual coefficient must come out the same
+    # whether or not the frozen model carried an organic value for it.
     pdf = pd.DataFrame({
         "sha256_cycles": [100.0, 200.0, 300.0],
         "effective_cycles": [1e6, 2e6, 3e6],
     })
-    with pytest.raises(ValueError, match="sha256_cycles"):
-        residual_precompile_fit(
-            pdf, {"sha256_cycles": 17.0}, 1000.0, "effective_cycles")
-    # A frozen model that does NOT price it fits fine.
-    out = residual_precompile_fit(pdf, {}, 0.0, "effective_cycles")
-    assert out["sha256_cycles"] > 0
+    without = residual_precompile_fit(pdf, {}, 0.0, "effective_cycles")
+    with_organic = residual_precompile_fit(
+        pdf, {"sha256_cycles": 17.0}, 0.0, "effective_cycles")
+    assert without["sha256_cycles"] > 0
+    assert with_organic["sha256_cycles"] == without["sha256_cycles"]
 
 
 def test_load_dataset_and_merkle_phase_fit(tmp_path):
