@@ -1677,6 +1677,8 @@ name = "eravm-prover-guest"
 version = "29.9.0"
 dependencies = [
  "airbender-sdk",
+ "bincode 2.0.1",
+ "serde",
  "zksync_airbender_verifier",
 ]
 

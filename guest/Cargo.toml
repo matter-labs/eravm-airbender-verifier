@@ -14,3 +14,8 @@ airbender = { workspace = true, features = ["std"] }
 # the sequencer-only circuit tracer: the proving guest never reads
 # `circuit_statistic`, so it saves in-circuit cycles.
 zksync_airbender_verifier = { path = "../crates/airbender_verifier", default-features = false }
+# Streaming input decode: same bincode v2 + `config::standard()` as
+# `AirbenderCodecV0`, driven from a `Reader` over the word transport so the
+# serialized blob is never materialized (peak input memory ~1x instead of ~2x).
+bincode = { version = "2", default-features = false, features = ["serde", "alloc"] }
+serde = { version = "1", features = ["derive"] }
