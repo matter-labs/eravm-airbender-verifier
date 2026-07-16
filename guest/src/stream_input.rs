@@ -176,6 +176,50 @@ mod tests {
     }
 
     #[test]
+    fn streaming_decode_matches_buffered_on_large_multiword_payload() {
+        // Exercises the word-pulling loop across many words and a large Vec<u8>
+        // that bincode reads in one big chunk — the shape of the real input.
+        #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+        struct Big {
+            header: u64,
+            blob: Vec<u8>,
+            tail: Vec<u32>,
+        }
+        let value = Big {
+            header: 0xdead_beef_0bad_f00d,
+            // 10_000 is not a multiple of 4 -> padded final word.
+            blob: (0..10_000u32).map(|i| (i * 31 + 7) as u8).collect(),
+            tail: (0..257u32).collect(),
+        };
+        let encoded = AirbenderCodecV0::encode(&value).expect("encode");
+        let buffered: Big = AirbenderCodecV0::decode(&encoded).expect("buffered");
+        assert_eq!(buffered, value);
+
+        let mut transport = MockTransport::new(frame(&encoded));
+        let streamed: Big = read_streaming_with(&mut transport).expect("streaming");
+        assert_eq!(streamed, value);
+    }
+
+    #[test]
+    fn streaming_decode_rejects_trailing_bytes_like_the_codec() {
+        // The buffered codec errors (`TrailingBytes`) when the frame carries
+        // more bytes than the value consumes; the streaming path must match.
+        let value = sample();
+        let mut encoded = AirbenderCodecV0::encode(&value).expect("encode");
+        encoded.extend_from_slice(&[0u8, 0, 0, 0, 0]); // 5 trailing bytes
+
+        assert!(
+            AirbenderCodecV0::decode::<Sample>(&encoded).is_err(),
+            "buffered codec must reject trailing bytes"
+        );
+        let mut transport = MockTransport::new(frame(&encoded));
+        assert!(
+            read_streaming_with::<Sample>(&mut transport).is_err(),
+            "streaming decode must reject trailing bytes too"
+        );
+    }
+
+    #[test]
     fn streaming_decode_handles_empty_and_aligned_payloads() {
         // Word-aligned payload (no final padding).
         #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
