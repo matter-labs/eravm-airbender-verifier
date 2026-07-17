@@ -12,6 +12,7 @@ pub use self::{
 mod bytecode;
 mod events;
 mod glue;
+mod program_cache;
 mod tracers;
 mod utils;
 mod version;

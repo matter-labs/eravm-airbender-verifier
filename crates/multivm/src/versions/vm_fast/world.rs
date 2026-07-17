@@ -18,6 +18,7 @@ use zksync_vm2::{
     Program, StorageSlot,
 };
 
+use super::program_cache::{ProgramCache, PROGRAM_CACHE_CAP_BYTES};
 use super::tracers::DynamicBytecodes;
 use crate::{interface::storage::ReadStorage, vm_latest::bootloader::EcRecoverCall};
 
@@ -25,17 +26,19 @@ use crate::{interface::storage::ReadStorage, vm_latest::bootloader::EcRecoverCal
 pub(super) struct World<S, T> {
     pub(super) storage: S,
     pub(super) dynamic_bytecodes: DynamicBytecodes,
-    program_cache: HashMap<U256, Program<T, Self>>,
+    program_cache: ProgramCache<T, Self>,
     pub(super) bytecode_cache: HashMap<U256, Vec<u8>>,
     pub(super) precompiles: OptimizedPrecompiles,
 }
 
 impl<S: ReadStorage, T: Tracer> World<S, T> {
-    pub(super) fn new(storage: S, program_cache: HashMap<U256, Program<T, Self>>) -> Self {
+    /// `initial_programs` holds the system-contract programs (default-AA, EVM
+    /// emulator); they are pinned in the program cache and never evicted.
+    pub(super) fn new(storage: S, initial_programs: HashMap<U256, Program<T, Self>>) -> Self {
         Self {
             storage,
             dynamic_bytecodes: DynamicBytecodes::default(),
-            program_cache,
+            program_cache: ProgramCache::new(initial_programs, PROGRAM_CACHE_CAP_BYTES),
             bytecode_cache: HashMap::default(),
             precompiles: OptimizedPrecompiles::default(),
         }
@@ -149,33 +152,36 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
 /// snapshot/rollback — there is nothing to undo.
 impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
     fn decommit(&mut self, hash: U256) -> Program<T, Self> {
-        self.program_cache
-            .entry(hash)
-            .or_insert_with(|| {
-                let cached = self
-                    .bytecode_cache
-                    .get(&hash)
-                    .map(|code| Program::new(code, false))
-                    .or_else(|| {
-                        self.dynamic_bytecodes
-                            .map(hash, |code| Program::new(code, false))
-                    });
+        // Cache hit (pinned system contract or a recently-decommitted program).
+        if let Some(program) = self.program_cache.get(hash) {
+            return program;
+        }
 
-                if let Some(cached) = cached {
-                    cached
-                } else {
-                    let code = self
-                        .storage
-                        .load_factory_dep(u256_to_h256(hash))
-                        .unwrap_or_else(|| {
-                            panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
-                        });
-                    let program = Program::new(&code, false);
-                    self.bytecode_cache.insert(hash, code);
-                    program
-                }
+        // Miss: rebuild the program from its bytecode. This is deterministic, so a
+        // program evicted from the (byte-bounded) cache is transparently reconstructed
+        // here on a later access — the cache never affects execution, only its cost.
+        let program = self
+            .bytecode_cache
+            .get(&hash)
+            .map(|code| Program::new(code, false))
+            .or_else(|| {
+                self.dynamic_bytecodes
+                    .map(hash, |code| Program::new(code, false))
             })
-            .clone()
+            .unwrap_or_else(|| {
+                let code = self
+                    .storage
+                    .load_factory_dep(u256_to_h256(hash))
+                    .unwrap_or_else(|| {
+                        panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
+                    });
+                let program = Program::new(&code, false);
+                self.bytecode_cache.insert(hash, code);
+                program
+            });
+
+        self.program_cache.insert(hash, program.clone());
+        program
     }
 
     fn decommit_code(&mut self, hash: U256) -> Vec<u8> {
