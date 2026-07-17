@@ -78,6 +78,13 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --exclude eravm-prover-guest --locked
 
+      # The guest is excluded from the workspace run above because it is normally
+      # built for riscv32 via `cargo-airbender`. Its host-testable logic (e.g. the
+      # streaming input decoder) still needs coverage, so run its unit tests
+      # explicitly against the host target.
+      - name: Run guest unit tests
+        run: cargo test -p eravm-prover-guest --locked
+
   vm-compare-batches:
     name: vm-compare-batches
     runs-on: matterlabs-ci-runner-high-performance

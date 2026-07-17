@@ -119,7 +119,14 @@ pub fn read_streaming_with<T: serde::de::DeserializeOwned>(
 
 /// Streaming counterpart to `airbender::guest::read`, reading from the CSR
 /// transport in real guest execution.
-#[cfg(target_arch = "riscv32")]
+///
+/// Like upstream `read`, this compiles on every target: `CsrTransport`
+/// implements `Transport` on the host too (as a panic stub), so a host-side
+/// `cargo check`/`cargo test` builds `main` without pulling in riscv32 intrinsics.
+/// It only ever runs for real on riscv32.
+// Only `main` (compiled out under `cfg(test)`) calls this, so it reads as dead
+// code in the test profile even though the real guest binary uses it.
+#[cfg_attr(test, allow(dead_code))]
 pub fn read_streaming<T: serde::de::DeserializeOwned>() -> Result<T, StreamError> {
     let mut transport = airbender::guest::CsrTransport;
     read_streaming_with(&mut transport)
@@ -213,14 +220,30 @@ mod tests {
             "buffered codec must reject trailing bytes"
         );
         let mut transport = MockTransport::new(frame(&encoded));
+        // Assert the *specific* variant: the value decoded fine but the frame
+        // carried extra bytes, so it must be `TrailingBytes` (not some unrelated
+        // decode error), matching the codec's `TrailingBytes` strictness.
+        let err = read_streaming_with::<Sample>(&mut transport)
+            .expect_err("streaming decode must reject trailing bytes too");
         assert!(
-            read_streaming_with::<Sample>(&mut transport).is_err(),
-            "streaming decode must reject trailing bytes too"
+            matches!(err, StreamError::TrailingBytes),
+            "expected StreamError::TrailingBytes, got {err:?}"
         );
     }
 
     #[test]
     fn streaming_decode_handles_empty_and_aligned_payloads() {
+        // Empty payload: a unit struct serializes to zero bytes, so the frame is
+        // just the length word `0` with no payload words. The decoder must pull
+        // no words and still report exhaustion (no spurious `TrailingBytes`).
+        #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+        struct Empty;
+        let encoded = AirbenderCodecV0::encode(&Empty).expect("encode");
+        assert!(encoded.is_empty(), "unit struct must encode to zero bytes");
+        let mut transport = MockTransport::new(frame(&encoded));
+        let streamed: Empty = read_streaming_with(&mut transport).expect("empty decode");
+        assert_eq!(streamed, Empty);
+
         // Word-aligned payload (no final padding).
         #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
         struct Aligned {
