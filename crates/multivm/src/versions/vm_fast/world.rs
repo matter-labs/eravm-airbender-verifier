@@ -194,16 +194,33 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
     }
 
     fn decommit_code(&mut self, hash: U256) -> Vec<u8> {
-        self.decommit(hash)
-            .code_page()
-            .as_ref()
-            .iter()
-            .flat_map(|u| {
-                let mut buffer = [0u8; 32];
-                u.to_big_endian(&mut buffer);
-                buffer
-            })
-            .collect()
+        // Return the raw bytecode bytes for the `CodeOracle` / EVM interpreter WITHOUT
+        // building a `Program`. The previous implementation went through `decommit`,
+        // which decodes every 8-byte word into an `Instruction` — instructions that are
+        // never executed for a bytecode queried this way. In particular EVM contract
+        // bytecode reaches the VM only through this path (a far call to an EVM address
+        // runs the *interpreter*, and the interpreter reads the target bytecode as raw
+        // bytes), so the decode was pure waste — it dominated the per-decommit cost and
+        // also pinned the useless decoded program in the cache.
+        //
+        // Resolve bytes from the same sources as `decommit`, in the same order.
+        let mut code = self
+            .bytecode_cache
+            .get(&hash)
+            .cloned()
+            .or_else(|| self.dynamic_bytecodes.map(hash, <[u8]>::to_vec))
+            .unwrap_or_else(|| {
+                self.storage
+                    .load_factory_dep(u256_to_h256(hash))
+                    .unwrap_or_else(|| {
+                        panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
+                    })
+            });
+        // The previous `code_page`-based path exposed whole 32-byte words only
+        // (`chunks_exact(32)`); reproduce that exactly. Bytecodes are word-aligned, so
+        // this is a no-op in practice.
+        code.truncate(code.len() - code.len() % 32);
+        code
     }
 
     fn precompiles(&self) -> &impl Precompiles {
