@@ -160,6 +160,17 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
         // Miss: rebuild the program from its bytecode. This is deterministic, so a
         // program evicted from the (byte-bounded) cache is transparently reconstructed
         // here on a later access — the cache never affects execution, only its cost.
+        //
+        // `bytecode_cache` holds only *published* bytecodes (deployed this run, via
+        // `insert_bytecodes`); those may not yet be in the committed storage snapshot,
+        // so we must serve them from here. A pre-existing bytecode is not cached: it is
+        // re-read from storage on each rebuild. We deliberately do NOT cache the
+        // storage-loaded bytes — doing so grew `bytecode_cache` by one copy per distinct
+        // decommitted contract with no eviction (a redundant duplicate of the resident
+        // input the storage snapshot already holds), a second unbounded memory sink
+        // alongside the program cache. Pre-existing bytecodes are already
+        // `is_bytecode_known` and are never published, so nothing downstream
+        // (`has_unpublished_bytecodes`, pubdata publication) needs them retained here.
         let program = self
             .bytecode_cache
             .get(&hash)
@@ -175,9 +186,7 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
                     .unwrap_or_else(|| {
                         panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
                     });
-                let program = Program::new(&code, false);
-                self.bytecode_cache.insert(hash, code);
-                program
+                Program::new(&code, false)
             });
 
         self.program_cache.insert(hash, program.clone());
