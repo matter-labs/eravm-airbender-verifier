@@ -10,6 +10,9 @@ members = [
   "crates/multivm",
   "crates/vm_compare",
   "crates/airbender_verifier",
+  "crates/cycle_estimator",
+  "crates/cycle_tracer",
+  "crates/cycle_model",
   "crates/types",
   "crates/vm_interface",
   "host",
@@ -26,6 +29,9 @@ default-members = [
   "crates/multivm",
   "crates/vm_compare",
   "crates/airbender_verifier",
+  "crates/cycle_estimator",
+  "crates/cycle_tracer",
+  "crates/cycle_model",
   "crates/types",
   "crates/vm_interface",
 ]
@@ -115,6 +121,9 @@ zksync_mini_merkle_tree = { path = "crates/mini_merkle_tree" }
 zksync_multivm = { path = "crates/multivm" }
 zksync_system_constants = { path = "crates/constants" }
 zksync_airbender_verifier = { path = "crates/airbender_verifier" }
+zksync-era-airbender-cycles-estimator = { path = "crates/cycle_estimator" }
+zksync-era-airbender-cycles-tracer = { path = "crates/cycle_tracer" }
+zksync_cycle_model = { path = "crates/cycle_model" }
 zksync_types = { path = "crates/types" }
 zksync_vm_compare = { path = "crates/vm_compare" }
 zksync_vm_interface = { path = "crates/vm_interface" }

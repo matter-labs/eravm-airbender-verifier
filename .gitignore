@@ -11,3 +11,10 @@ vks/*.bin
 vks/*.json
 testdata/era_mainnet_batches/binary/*.bin
 .DS_Store
+# Cycle-cost calibration outputs (datasets, extracted test batches, cost tables)
+artifacts/
+
+# Python caches (cycle_model scripts)
+__pycache__/
+.pytest_cache/
+*.pyc
