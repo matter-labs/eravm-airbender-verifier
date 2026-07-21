@@ -1,5 +1,17 @@
 # Changelog
 
+## [31.2.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v31.1.1...v31.2.0) (2026-07-21)
+
+
+### Features
+
+* enable Airbender precompile delegations in the fast VM ([#90](https://github.com/matter-labs/eravm-airbender-verifier/issues/90)) ([2d5b296](https://github.com/matter-labs/eravm-airbender-verifier/commit/2d5b296717063147cb0df13b42aca7acc1411e84))
+
+
+### Bug Fixes
+
+* **deps:** bump crossbeam-epoch to 0.9.20 (RUSTSEC-2026-0204) ([#87](https://github.com/matter-labs/eravm-airbender-verifier/issues/87)) ([a11a6fe](https://github.com/matter-labs/eravm-airbender-verifier/commit/a11a6fecbddfa654fe0fbe0579da83c9d806a0d0))
+
 ## [29.9.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v29.8.0...v29.9.0) (2026-07-06)
 
 
