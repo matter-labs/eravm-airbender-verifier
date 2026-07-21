@@ -91,8 +91,8 @@ airbender-codec = { git = "https://github.com/matter-labs/airbender-platform", t
 # workspace dep — a member's `default-features = false` is otherwise ignored.
 airbender-host = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3", default-features = false }
 airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform", tag = "v0.2.3" }
-circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
-zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", branch = "popzxc-airbender-precompiles" } # TODO: Must be pinned before merge
+circuit_sequencer_api = { git = "https://github.com/matter-labs/zksync-protocol", tag = "v0.153.13" }
+zk_evm_1_5_2 = { package = "zk_evm", git = "https://github.com/matter-labs/zksync-protocol", tag = "v0.153.13" }
 # `default-features = false` drops the wrapper's default `security_80` so it
 # doesn't collide with `security_100` — airbender-host's `SecurityLevel`
 # defaults to `Bits100`, which produces two unified proofs; the wrapper must
@@ -103,7 +103,7 @@ zkos-wrapper = { git = "https://github.com/matter-labs/zkos-wrapper/", branch = 
 # (via CSR calls) instead of executing the crypto as plain RISC-V code; on the
 # host it uses the same airbender-crypto implementation in software, so native
 # and in-guest execution stay in agreement.
-zksync_vm2 = { git = "https://github.com/matter-labs/vm2", rev = "4d110657a22025d4a49a563a7e119d754551b715", features = ["airbender-precompile-delegations"] } # TODO: pin to a tag before merge
+zksync_vm2 = { git = "https://github.com/matter-labs/vm2", tag = "v0.6.0", features = ["airbender-precompile-delegations"] }
 
 # Local dependencies in this workspace
 zksync_basic_types = { path = "crates/basic_types" }

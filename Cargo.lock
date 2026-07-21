@@ -1021,13 +1021,13 @@ dependencies = [
 
 [[package]]
 name = "circuit_sequencer_api"
-version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
+version = "0.153.13"
+source = "git+https://github.com/matter-labs/zksync-protocol?tag=v0.153.13#b60b7bde6cd5809593b4753c26e3072957c47e38"
 dependencies = [
  "derivative",
  "rayon",
  "serde",
- "zk_evm 0.153.12",
+ "zk_evm 0.153.13",
  "zksync_bellman 0.32.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -5808,8 +5808,8 @@ dependencies = [
 
 [[package]]
 name = "zk_evm"
-version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
+version = "0.153.13"
+source = "git+https://github.com/matter-labs/zksync-protocol?tag=v0.153.13#b60b7bde6cd5809593b4753c26e3072957c47e38"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -5817,7 +5817,7 @@ dependencies = [
  "serde",
  "serde_json",
  "static_assertions",
- "zk_evm_abstractions 0.153.12",
+ "zk_evm_abstractions 0.153.13",
 ]
 
 [[package]]
@@ -5834,8 +5834,8 @@ dependencies = [
 
 [[package]]
 name = "zk_evm_abstractions"
-version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
+version = "0.153.13"
+source = "git+https://github.com/matter-labs/zksync-protocol?tag=v0.153.13#b60b7bde6cd5809593b4753c26e3072957c47e38"
 dependencies = [
  "airbender-crypto",
  "anyhow",
@@ -5843,7 +5843,7 @@ dependencies = [
  "num_enum 0.6.1",
  "serde",
  "static_assertions",
- "zkevm_opcode_defs 0.153.12",
+ "zkevm_opcode_defs 0.153.13",
 ]
 
 [[package]]
@@ -5885,8 +5885,8 @@ dependencies = [
 
 [[package]]
 name = "zkevm_opcode_defs"
-version = "0.153.12"
-source = "git+https://github.com/matter-labs/zksync-protocol?branch=popzxc-airbender-precompiles#f4512f8616ec73edacb307f79a98ac6864af9b2d"
+version = "0.153.13"
+source = "git+https://github.com/matter-labs/zksync-protocol?tag=v0.153.13#b60b7bde6cd5809593b4753c26e3072957c47e38"
 dependencies = [
  "bitflags 2.10.0",
  "blake2 0.10.6",
@@ -6205,7 +6205,7 @@ dependencies = [
  "test-casing",
  "thiserror 2.0.18",
  "tracing",
- "zk_evm 0.153.12",
+ "zk_evm 0.153.13",
  "zksync_contracts",
  "zksync_mini_merkle_tree",
  "zksync_system_constants",
@@ -6273,20 +6273,20 @@ dependencies = [
 
 [[package]]
 name = "zksync_vm2"
-version = "0.5.0"
-source = "git+https://github.com/matter-labs/vm2?rev=4d110657a22025d4a49a563a7e119d754551b715#4d110657a22025d4a49a563a7e119d754551b715"
+version = "0.6.0"
+source = "git+https://github.com/matter-labs/vm2?tag=v0.6.0#606441cf657ae1fdf434f79c7c8753d1aa6b7136"
 dependencies = [
  "enum_dispatch",
  "primitive-types",
- "zk_evm_abstractions 0.153.12",
- "zkevm_opcode_defs 0.153.12",
+ "zk_evm_abstractions 0.153.13",
+ "zkevm_opcode_defs 0.153.13",
  "zksync_vm2_interface",
 ]
 
 [[package]]
 name = "zksync_vm2_interface"
-version = "0.5.0"
-source = "git+https://github.com/matter-labs/vm2?rev=4d110657a22025d4a49a563a7e119d754551b715#4d110657a22025d4a49a563a7e119d754551b715"
+version = "0.6.0"
+source = "git+https://github.com/matter-labs/vm2?tag=v0.6.0#606441cf657ae1fdf434f79c7c8753d1aa6b7136"
 dependencies = [
  "primitive-types",
 ]
@@ -6298,7 +6298,7 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "clap 4.5.57",
- "zk_evm 0.153.12",
+ "zk_evm 0.153.13",
  "zksync_airbender_verifier",
  "zksync_cli_utils",
  "zksync_multivm",
