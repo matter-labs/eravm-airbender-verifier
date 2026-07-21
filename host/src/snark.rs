@@ -3,7 +3,8 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::info;
 use zkos_wrapper::{
-    serialize_to_file, SnarkWrapper, SnarkWrapperConfig, SnarkWrapperProof, SnarkWrapperVK,
+    calculate_verification_key_hash, deserialize_from_file, serialize_to_file, CompressionVK,
+    RiscWrapperVK, SnarkWrapper, SnarkWrapperConfig, SnarkWrapperProof, SnarkWrapperVK,
 };
 
 // Mirror `zkos-wrapper`'s artifact names so operators can switch between the
@@ -23,6 +24,13 @@ pub struct SnarkOptions {
     pub save_intermediates: bool,
     pub bin: PathBuf,
     pub text: PathBuf,
+    /// Directory holding pre-generated VK JSON files under the same names the
+    /// pipeline itself writes (`risc_wrapper_vk.json`, `compression_vk.json`,
+    /// `snark_vk.json`). When set, `SnarkPipeline::new` reads any of those
+    /// that exist and feeds them to `SnarkWrapperConfig`, skipping the
+    /// multi-minute VK derivation; missing files are computed and written
+    /// back so a second process start sees the full cache.
+    pub vk_cache_dir: Option<PathBuf>,
 }
 
 // ==============================================================================
@@ -42,22 +50,37 @@ pub struct SnarkPipeline {
 
 impl SnarkPipeline {
     /// `snark_vk` is the pre-generated SNARK verifying key, loaded by the
-    /// caller (entry point). When `Some`, it is reused as-is; when `None`, the
-    /// VK is derived once from the setup chain at construction. Either way,
-    /// the VK is resolved up-front and cached so per-proof wraps never touch
-    /// it again.
+    /// caller (entry point). When `Some`, it is reused as-is and takes
+    /// precedence over a copy found in `options.vk_cache_dir`; when `None`
+    /// and no cached copy exists, the VK is derived once from the setup chain
+    /// at construction. Either way, the VK is resolved up-front and cached so
+    /// per-proof wraps never touch it again.
     pub fn new(options: &SnarkOptions, snark_vk: Option<SnarkWrapperVK>) -> Result<Self> {
+        let (risc_wrapper_vk, compression_vk, cached_snark_vk) =
+            load_cached_vks(options.vk_cache_dir.as_deref())?;
+        let snark_vk = snark_vk.or(cached_snark_vk);
+
         let mut wrapper = SnarkWrapper::new(SnarkWrapperConfig {
             bin: Some(options.bin.clone()),
             text: Some(options.text.clone()),
             trusted_setup: options.trusted_setup.clone(),
             threads: options.worker_threads,
             check_aux_params: true,
-            risc_wrapper_vk: None,
-            compression_vk: None,
+            risc_wrapper_vk,
+            compression_vk,
             snark_vk,
         })
         .context("while attempting to initialize the SNARK wrapper")?;
+
+        // For any VK that wasn't on disk, compute it now and write it back so
+        // the next process start picks it up from the cache instead of
+        // redoing the multi-minute derivation. Order matters: the wrapper
+        // computes each phase lazily and earlier-phase VKs are inputs to
+        // later ones.
+        if let Some(dir) = options.vk_cache_dir.as_deref() {
+            populate_vk_cache(&mut wrapper, dir)
+                .context("while attempting to populate the SNARK VK cache")?;
+        }
 
         wrapper
             .snark_vk()
@@ -195,6 +218,74 @@ fn save_wrapper_artifact<T: serde::Serialize>(artifact: &T, path: &Path) -> Resu
     let path_string = path.to_string_lossy().into_owned();
     serialize_to_file(artifact, &path_string)
         .with_context(|| format!("while attempting to serialize {}", path.display()))
+}
+
+fn load_cached_vks(
+    dir: Option<&Path>,
+) -> Result<(
+    Option<RiscWrapperVK>,
+    Option<CompressionVK>,
+    Option<SnarkWrapperVK>,
+)> {
+    let Some(dir) = dir else {
+        return Ok((None, None, None));
+    };
+
+    Ok((
+        load_optional_vk::<RiscWrapperVK>(&dir.join(RISC_WRAPPER_VK_FILE_NAME))?,
+        load_optional_vk::<CompressionVK>(&dir.join(COMPRESSION_VK_FILE_NAME))?,
+        load_optional_vk::<SnarkWrapperVK>(&dir.join(SNARK_VK_FILE_NAME))?,
+    ))
+}
+
+fn load_optional_vk<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let path_string = path.to_string_lossy().into_owned();
+    let vk = deserialize_from_file::<T>(&path_string)
+        .with_context(|| format!("while attempting to load cached VK from {}", path.display()))?;
+    info!(path = %path.display(), "Loaded cached SNARK wrapper VK");
+    Ok(Some(vk))
+}
+
+/// Eagerly walk the wrapper through every VK derivation, writing any that
+/// weren't already present in the cache directory. Each `*_vk()` accessor on
+/// the wrapper is a no-op when the VK is already known (loaded or computed).
+fn populate_vk_cache(wrapper: &mut SnarkWrapper, dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("while attempting to create {}", dir.display()))?;
+
+    let risc_wrapper_path = dir.join(RISC_WRAPPER_VK_FILE_NAME);
+    if !risc_wrapper_path.exists() {
+        let vk = wrapper
+            .risc_wrapper_vk()
+            .context("while attempting to compute wrapper phase 1 VK")?;
+        save_wrapper_artifact(vk, &risc_wrapper_path)?;
+        info!(path = %risc_wrapper_path.display(), "Cached RISC wrapper VK");
+    }
+
+    let compression_path = dir.join(COMPRESSION_VK_FILE_NAME);
+    if !compression_path.exists() {
+        let vk = wrapper
+            .compression_vk()
+            .context("while attempting to compute wrapper phase 2 VK")?;
+        save_wrapper_artifact(vk, &compression_path)?;
+        info!(path = %compression_path.display(), "Cached compression VK");
+    }
+
+    let snark_path = dir.join(SNARK_VK_FILE_NAME);
+    if !snark_path.exists() {
+        let vk = wrapper
+            .snark_vk()
+            .context("while attempting to compute wrapper phase 3 VK")?
+            .clone();
+        save_wrapper_artifact(&vk, &snark_path)?;
+        let vk_hash = calculate_verification_key_hash(vk);
+        info!(path = %snark_path.display(), ?vk_hash, "Cached SNARK VK");
+    }
+
+    Ok(())
 }
 
 fn save_wrapper_artifact_pair<TProof, TVk>(
