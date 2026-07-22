@@ -240,6 +240,7 @@ fn host_proves_fri_then_snark() {
         save_intermediates: false,
         bin: app_bin_path(&guest_dist_dir()),
         text: app_text_path(&guest_dist_dir()),
+        vk_cache_dir: None,
     };
     let mut pipeline =
         SnarkPipeline::new(&snark_options, snark_vk).expect("failed to build SNARK pipeline");
