@@ -7,8 +7,8 @@
 
 use anyhow::Result;
 use zksync_merkle_tree::{
-    BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry,
-    TreeLogEntryWithProof, ValueHash, TREE_DEPTH,
+    blake2_fold_merkle_path, BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction,
+    TreeLogEntry, TreeLogEntryWithProof, ValueHash, TREE_DEPTH,
 };
 use zksync_types::{StorageLog, H256, U256};
 
@@ -221,6 +221,15 @@ pub(crate) fn verify_paths_and_new_root(
     old_root_hash: ValueHash,
     mut enumeration_index: u64,
 ) -> anyhow::Result<(ValueHash, u64)> {
+    // The fold is served by `blake2_fold_merkle_path` (a fused blake2s
+    // `compress_node` fold, byte-identical to `hasher.fold_merkle_path` but with
+    // far less per-level marshalling glue). It is blake2s-specific, so assert the
+    // caller's hasher is in fact blake2s — production always passes `Blake2Hasher`.
+    debug_assert_eq!(
+        hasher.name(),
+        "blake2s256",
+        "blake2_fold_merkle_path requires the blake2s hasher",
+    );
     let metas = witness.merkle_paths;
     // Reject mismatched counts explicitly: the `zip` below would otherwise
     // silently truncate to the shorter side.
@@ -290,13 +299,13 @@ pub(crate) fn verify_paths_and_new_root(
                 TreeEntry::new(instruction.key(), leaf_index, value)
             }
         };
-        let prev_hash = hasher.fold_merkle_path(&full, prev_entry);
+        let prev_hash = blake2_fold_merkle_path(&full, prev_entry);
         anyhow::ensure!(
             prev_hash == root_hash,
             "Condition failed: `prev_hash == root_hash` ({prev_hash:?} vs {root_hash:?})",
         );
         if let TreeInstruction::Write(new_entry) = instruction {
-            let next_hash = hasher.fold_merkle_path(&full, new_entry);
+            let next_hash = blake2_fold_merkle_path(&full, new_entry);
             anyhow::ensure!(
                 next_hash == op_root,
                 "Condition failed: `next_hash == op.root_hash` ({next_hash:?} vs {op_root:?})",
