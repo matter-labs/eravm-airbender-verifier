@@ -89,6 +89,62 @@ impl dyn HashTree + '_ {
     }
 }
 
+/// Fused blake2s Merkle-path fold, byte-for-byte identical to
+/// `Blake2Hasher::fold_merkle_path` but far cheaper per level.
+///
+/// The generic fold re-inits a hasher and marshals both 32-byte operands into a
+/// fresh block every level. Instead we drive airbender-crypto's
+/// [`Blake2sPathHasher`](airbender_crypto::Blake2sPathHasher), which wraps the
+/// blake2s delegation's fused two-to-one `compress_node` primitive: the running
+/// hash stays in the evaluator across levels, so each level marshals only the
+/// 32-byte sibling and issues one delegated compression. The delegated hash and
+/// its inputs are unchanged, so the root is identical — this only removes the
+/// on-budget marshalling glue.
+///
+/// The seed is `blake2s(leaf_index_be(8) || value(32))`, matching
+/// `Blake2Hasher::hash_leaf`; each fold takes `sibling_on_left = key.bit(depth)`,
+/// matching the `sibling || node` vs `node || sibling` branch of the generic
+/// fold. Correctness is pinned by the differential tests below and the
+/// streaming/oracle tests, which fold every witness both ways and compare
+/// byte-for-byte.
+///
+/// # Panics
+///
+/// Panics if `path.len() > TREE_DEPTH` (a malformed proof); callers bound the
+/// expanded path to `TREE_DEPTH` before folding.
+pub fn blake2_fold_merkle_path(path: &[ValueHash], entry: TreeEntry) -> ValueHash {
+    use airbender_crypto::blake2s::Blake2sPathHasher;
+
+    assert!(
+        path.len() <= TREE_DEPTH,
+        "Merkle path longer than TREE_DEPTH"
+    );
+
+    // Leaf hash: blake2s( leaf_index.to_be_bytes() (8) || value (32) ), exactly
+    // as `Blake2Hasher::hash_leaf`.
+    let mut leaf_input = [0u8; 40];
+    leaf_input[..8].copy_from_slice(&entry.leaf_index.to_be_bytes());
+    leaf_input[8..].copy_from_slice(entry.value.as_bytes());
+    let mut hasher = Blake2sPathHasher::from_single_block(&leaf_input);
+
+    // `extend_merkle_path` fills the missing (top) levels with empty-subtree
+    // hashes, so level `depth < empty_count` uses `empty_subtree_hash(depth)` and
+    // the rest walk `path` in order — identical adjacency to the generic fold.
+    let empty_count = TREE_DEPTH - path.len();
+    for depth in 0..TREE_DEPTH {
+        let sibling = if depth < empty_count {
+            HashTree::empty_subtree_hash(&Blake2Hasher, depth)
+        } else {
+            path[depth - empty_count]
+        };
+        // `key.bit(depth)` set => the current node is the right child, i.e. the
+        // sibling is on the left => `blake2s(sibling || running)`.
+        hasher.fold(sibling.as_fixed_bytes(), entry.key.bit(depth));
+    }
+
+    ValueHash::from(hasher.finalize())
+}
+
 impl fmt::Debug for dyn HashTree + '_ {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("HashTree").finish_non_exhaustive()
@@ -221,5 +277,71 @@ impl HasherWithStats<'_> {
 
     pub fn empty_subtree_hash(&self, depth: usize) -> ValueHash {
         self.inner.empty_subtree_hash(depth)
+    }
+}
+
+#[cfg(test)]
+mod fused_fold_tests {
+    use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
+    use zksync_types::{H256, U256};
+
+    use super::{blake2_fold_merkle_path, HashTree};
+    use crate::types::{TreeEntry, ValueHash, TREE_DEPTH};
+
+    /// The fused `compress_node` fold must produce byte-identical roots to the
+    /// generic `Blake2Hasher::fold_merkle_path` for every (key, value, index,
+    /// path-length) shape, including full paths, short (empty-topped) paths, and
+    /// empty leaves.
+    fn assert_same(key: U256, value: ValueHash, leaf_index: u64, path: &[ValueHash]) {
+        let entry = TreeEntry {
+            key,
+            value,
+            leaf_index,
+        };
+        let generic = (&Blake2Hasher as &dyn HashTree).fold_merkle_path(path, entry);
+        let fused = blake2_fold_merkle_path(path, entry);
+        assert_eq!(generic, fused, "fused fold diverged from generic fold");
+    }
+
+    fn path_of(len: usize, seed: u8) -> Vec<ValueHash> {
+        (0..len)
+            .map(|i| {
+                H256::repeat_byte(
+                    seed.wrapping_add(i.to_le_bytes()[0])
+                        .wrapping_mul(7)
+                        .wrapping_add(1),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn matches_generic_full_path() {
+        assert_same(
+            U256::from_big_endian(&[0xA5; 32]),
+            H256::repeat_byte(0x3C),
+            42,
+            &path_of(TREE_DEPTH, 1),
+        );
+    }
+
+    #[test]
+    fn matches_generic_short_and_empty_paths() {
+        for len in [0usize, 1, 5, 200, TREE_DEPTH - 1, TREE_DEPTH] {
+            // varied keys to exercise every direction bit
+            assert_same(U256::zero(), H256::zero(), 0, &path_of(len, 9)); // empty leaf
+            assert_same(
+                U256::MAX,
+                H256::repeat_byte(0xFF),
+                u64::MAX,
+                &path_of(len, 17),
+            );
+            assert_same(
+                U256::from(0xdead_beef_u64),
+                H256::repeat_byte(0x11),
+                7,
+                &path_of(len, 33),
+            );
+        }
     }
 }

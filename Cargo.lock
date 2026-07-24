@@ -81,17 +81,18 @@ dependencies = [
 
 [[package]]
 name = "airbender-codec"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
+ "airbender-core",
  "bincode 2.0.1",
  "serde",
 ]
 
 [[package]]
 name = "airbender-core"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -129,9 +130,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "airbender-crypto"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
+dependencies = [
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "blake2 0.10.6",
+ "blake2s_u32",
+ "cfg-if",
+ "common_constants",
+ "const_for",
+ "educe",
+ "itertools 0.14.0",
+ "k256",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "p256",
+ "ripemd",
+ "ruint",
+ "seq-macro",
+ "sha2 0.10.9",
+ "sha3 0.10.8",
+ "zeroize",
+]
+
+[[package]]
 name = "airbender-guest"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "airbender-codec",
  "airbender-core",
@@ -141,8 +172,8 @@ dependencies = [
 
 [[package]]
 name = "airbender-host"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "airbender-codec",
  "airbender-core",
@@ -160,8 +191,8 @@ dependencies = [
 
 [[package]]
 name = "airbender-macros"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.44",
@@ -170,8 +201,8 @@ dependencies = [
 
 [[package]]
 name = "airbender-rt"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "getrandom 0.2.17",
  "riscv_common",
@@ -180,8 +211,8 @@ dependencies = [
 
 [[package]]
 name = "airbender-sdk"
-version = "0.2.3"
-source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.3#db2767d9ba871bb556ad8a2c8b4d39717f36cd47"
+version = "0.2.4"
+source = "git+https://github.com/matter-labs/airbender-platform?tag=v0.2.4#a350ee3e08bef4cbe2b7bc968966bee45bc98a17"
 dependencies = [
  "airbender-codec",
  "airbender-guest",
@@ -5837,7 +5868,7 @@ name = "zk_evm_abstractions"
 version = "0.153.13"
 source = "git+https://github.com/matter-labs/zksync-protocol?tag=v0.153.13#b60b7bde6cd5809593b4753c26e3072957c47e38"
 dependencies = [
- "airbender-crypto",
+ "airbender-crypto 0.2.3",
  "anyhow",
  "cfg-if",
  "num_enum 0.6.1",
@@ -5982,7 +6013,7 @@ dependencies = [
 name = "zksync_basic_types"
 version = "31.1.1"
 dependencies = [
- "airbender-crypto",
+ "airbender-crypto 0.2.4",
  "anyhow",
  "bincode 2.0.1",
  "const-decoder",
@@ -6072,7 +6103,7 @@ dependencies = [
 name = "zksync_crypto_primitives"
 version = "31.1.1"
 dependencies = [
- "airbender-crypto",
+ "airbender-crypto 0.2.4",
  "anyhow",
  "blake2 0.10.6",
  "hex",
@@ -6156,6 +6187,7 @@ dependencies = [
 name = "zksync_merkle_tree"
 version = "31.1.1"
 dependencies = [
+ "airbender-crypto 0.2.4",
  "anyhow",
  "assert_matches",
  "clap 4.5.57",

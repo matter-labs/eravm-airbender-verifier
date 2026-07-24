@@ -53,7 +53,7 @@ use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
 
 pub use crate::{
     errors::NoVersionError,
-    hasher::{HashTree, TreeRangeDigest},
+    hasher::{blake2_fold_merkle_path, HashTree, TreeRangeDigest},
     pruning::{MerkleTreePruner, MerkleTreePrunerHandle},
     storage::{Database, PatchSet, Patched, PruneDatabase, PrunePatchSet},
     types::{
