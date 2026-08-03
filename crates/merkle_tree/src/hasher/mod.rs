@@ -115,6 +115,8 @@ impl dyn HashTree + '_ {
 pub fn blake2_fold_merkle_path(path: &[ValueHash], entry: TreeEntry) -> ValueHash {
     use airbender_crypto::blake2s::Blake2sPathHasher;
 
+    // Load-bearing: `extend_merkle_path` computes `TREE_DEPTH - path.len()`, which
+    // would underflow (wrapping in release) on an over-long malformed path.
     assert!(
         path.len() <= TREE_DEPTH,
         "Merkle path longer than TREE_DEPTH"
@@ -127,16 +129,11 @@ pub fn blake2_fold_merkle_path(path: &[ValueHash], entry: TreeEntry) -> ValueHas
     leaf_input[8..].copy_from_slice(entry.value.as_bytes());
     let mut hasher = Blake2sPathHasher::from_single_block(&leaf_input);
 
-    // `extend_merkle_path` fills the missing (top) levels with empty-subtree
-    // hashes, so level `depth < empty_count` uses `empty_subtree_hash(depth)` and
-    // the rest walk `path` in order — identical adjacency to the generic fold.
-    let empty_count = TREE_DEPTH - path.len();
-    for depth in 0..TREE_DEPTH {
-        let sibling = if depth < empty_count {
-            HashTree::empty_subtree_hash(&Blake2Hasher, depth)
-        } else {
-            path[depth - empty_count]
-        };
+    // Siblings come from the *same* `extend_merkle_path` the generic fold uses —
+    // it fills the missing (top) levels with empty-subtree hashes — so the
+    // adjacency sequence cannot drift between the two folds.
+    let siblings: &dyn HashTree = &Blake2Hasher;
+    for (depth, sibling) in siblings.extend_merkle_path(path).enumerate() {
         // `key.bit(depth)` set => the current node is the right child, i.e. the
         // sibling is on the left => `blake2s(sibling || running)`.
         hasher.fold(sibling.as_fixed_bytes(), entry.key.bit(depth));
@@ -282,6 +279,7 @@ impl HasherWithStats<'_> {
 
 #[cfg(test)]
 mod fused_fold_tests {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
     use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
     use zksync_types::{H256, U256};
 
@@ -343,5 +341,45 @@ mod fused_fold_tests {
                 &path_of(len, 33),
             );
         }
+    }
+
+    /// Randomized differential sweep: random keys (so every level's direction bit
+    /// is exercised in both states), random values, leaf indices, path lengths
+    /// across the whole `0..=TREE_DEPTH` range, and *random* siblings rather than
+    /// the `repeat_byte` fillers above.
+    ///
+    /// Seeded rather than entropy-seeded: a byte-identity property on a
+    /// consensus-critical fold must fail reproducibly, not once per N CI runs.
+    /// The seed list is where to add entries if this ever needs widening.
+    #[test]
+    fn matches_generic_on_random_shapes() {
+        for seed in [0u64, 1, 0xdead_beef, 0x5eed_0f0f_0f0f_0f0f] {
+            let mut rng = StdRng::seed_from_u64(seed);
+            for _ in 0..64 {
+                let len = rng.gen_range(0..=TREE_DEPTH);
+                let path: Vec<ValueHash> = (0..len)
+                    .map(|_| H256::from(rng.gen::<[u8; 32]>()))
+                    .collect();
+                assert_same(
+                    U256::from_big_endian(&rng.gen::<[u8; 32]>()),
+                    H256::from(rng.gen::<[u8; 32]>()),
+                    rng.gen(),
+                    &path,
+                );
+            }
+        }
+    }
+
+    /// The documented panic. It is load-bearing: `extend_merkle_path` computes
+    /// `TREE_DEPTH - path.len()`, which wraps in release builds.
+    #[test]
+    #[should_panic(expected = "Merkle path longer than TREE_DEPTH")]
+    fn panics_on_over_long_path() {
+        let entry = TreeEntry {
+            key: U256::zero(),
+            value: H256::zero(),
+            leaf_index: 0,
+        };
+        blake2_fold_merkle_path(&path_of(TREE_DEPTH + 1, 5), entry);
     }
 }

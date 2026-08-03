@@ -387,7 +387,6 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     let (new_root_hash, new_enumeration_index) = crate::merkle_witness::verify_paths_and_new_root(
         input.merkle_paths,
         vm_logs,
-        &Blake2Hasher,
         old_root_hash,
         prev_enumeration_index,
     )?;
