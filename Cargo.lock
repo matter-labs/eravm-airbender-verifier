@@ -5985,6 +5985,7 @@ dependencies = [
  "bincode 2.0.1",
  "serde",
  "serde_json",
+ "talc",
  "tracing",
  "zksync_cli_utils",
  "zksync_contracts",

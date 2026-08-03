@@ -25,6 +25,11 @@ cycle-markers = ["dep:airbender"]
 # measure older-but-still-FastVM-supported batches. It leaves no trace in the guest
 # binary, so lib.rs requires `cycle-markers` alongside it to keep it CI-detectable.
 relax-version-pin = ["cycle-markers"]
+# `mem-markers` exposes the heap-probe counters and reports live/peak at each
+# verify() phase boundary. Purely observational and host-only — every tool that
+# drives it runs natively, so unlike the two flags above it never affects a proved
+# guest. Still default-off: it adds stderr output and a public module.
+mem-markers = []
 
 [dependencies]
 # Only pulled in under `cycle-markers` (calibration guest build).
@@ -54,3 +59,19 @@ zksync_contracts.workspace = true
 bincode.workspace = true
 
 serde_json.workspace = true
+# `talc_timeline` runs the verifier under the guest's own allocator, natively.
+# `counters` is what exposes the claimed/available footprint the tool reports.
+talc = { version = "4.4.3", default-features = false, features = ["lock_api", "counters"] }
+
+# The heap benchmarking examples all need the probe counters compiled in.
+[[example]]
+name = "mem_check"
+required-features = ["mem-markers"]
+
+[[example]]
+name = "mem_timeline"
+required-features = ["mem-markers"]
+
+[[example]]
+name = "talc_timeline"
+required-features = ["mem-markers"]

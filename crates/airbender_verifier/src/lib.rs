@@ -115,6 +115,21 @@ fn phase_marker() {
     airbender::guest::cycle_marker();
 }
 
+/// Heap-probe counters for the memory benchmarking tools. Off by default; see
+/// `docs/benchmarking.md`.
+#[cfg(feature = "mem-markers")]
+pub mod mem_probe;
+
+/// Report the live/peak heap at a phase boundary when `mem-markers` is on; a
+/// no-op otherwise. Placed alongside `phase_marker()` so cycle and memory
+/// attribution use the same boundaries and can be read against each other.
+#[inline(always)]
+#[allow(unused_variables)]
+fn phase_mem(label: &str) {
+    #[cfg(feature = "mem-markers")]
+    mem_probe::checkpoint(label);
+}
+
 /// A trait for the computations that can be verified in TEE.
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
@@ -185,17 +200,18 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
     phase_marker(); // marker 0: begin `setup`
-                    // Pin the protocol version to the single one this verifier is built for.
-                    // `protocol_version` is operator-supplied and only *gates* commitment fields
-                    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
-                    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
-                    // malicious witness could substitute a behavior-compatible version undetectably.
-                    // The verifier ships one guest binary + VK set tied to `latest()`.
-                    //
-                    // `relax-version-pin` (calibration only) drops this so older-but-still-
-                    // FastVM-supported batches can be measured; the `is_supported_by_fast_vm`
-                    // guard below still holds. It cannot be enabled without `cycle-markers`
-                    // (see the `compile_error!` above), which CI detects in the guest binary.
+    phase_mem("execute:start");
+    // Pin the protocol version to the single one this verifier is built for.
+    // `protocol_version` is operator-supplied and only *gates* commitment fields
+    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
+    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
+    // malicious witness could substitute a behavior-compatible version undetectably.
+    // The verifier ships one guest binary + VK set tied to `latest()`.
+    //
+    // `relax-version-pin` (calibration only) drops this so older-but-still-
+    // FastVM-supported batches can be measured; the `is_supported_by_fast_vm`
+    // guard below still holds. It cannot be enabled without `cycle-markers`
+    // (see the `compile_error!` above), which CI detects in the guest binary.
     #[cfg(not(feature = "relax-version-pin"))]
     anyhow::ensure!(
         input.system_env.version == ProtocolVersionId::latest(),
@@ -395,6 +411,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
     phase_marker(); // marker 1: end `setup`, begin `vm_execution`
+    phase_mem("end setup");
     let vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
 
     let mut vm_out = execute_vm(
@@ -424,6 +441,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
     )?;
 
     phase_marker(); // marker 2: end `vm_execution`, begin `merkle_verification`
+    phase_mem("end vm_execution");
     let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
     let prev_enumeration_index = enumeration_index; // = input.merkle_paths.next_enumeration_index()
                                                     // NOTE: do not wrap this call with `.with_context(...)`. It surfaces the
@@ -467,6 +485,7 @@ pub fn verify_commitment(
     commitment_input: CommitmentInput,
 ) -> anyhow::Result<VerificationResult> {
     phase_marker(); // marker 3: end `merkle_verification`, begin `commitment`
+    phase_mem("end merkle_verification");
     anyhow::ensure!(
         state.zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
         "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
@@ -587,6 +606,7 @@ pub fn verify_commitment(
     );
 
     phase_marker(); // marker 4: end `commitment`
+    phase_mem("end commitment");
     Ok(VerificationResult {
         value_hash: state.new_root_hash,
         batch_number: state.batch_number,
