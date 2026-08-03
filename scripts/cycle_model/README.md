@@ -150,9 +150,16 @@ proved), so the estimate is used conservatively:
    the corpus never constrained, e.g. ec_pairing/modexp). A margin can't rescue a
    zero coefficient, so such a batch is rejected outright rather than trusted.
 2. **Safety margin** — `conservative(margin)` / `fits(limit, margin)` pad the
-   prediction. The model systematically under-predicts a couple of percent
-   (hold-out: 43/49 batches, worst −1.83%), so ~1.05–1.10 covers ordinary
-   variance; pick per risk tolerance.
+   prediction. On the 49-batch 513xxx hold-out the committed table **over-predicts
+   on all 49** (MAPE 0.75%, worst +1.48%, never under) — the asymmetric τ=0.9 fit
+   and the opcode-cost floors deliberately lean that way, trading a little
+   over-prediction on organic batches for not under-pricing attacker-controlled
+   ones. A margin of ~1.05–1.10 therefore covers model drift and unseen batch
+   shapes rather than correcting a known bias; pick per risk tolerance.
+
+   Do not read this as "the model is safe without a margin": it is measured on 49
+   organic batches from one range, and a coefficient the corpus never constrained
+   can still be wrong in either direction (hence the coverage guard above).
 3. **Pin precompile costs** (below) so the priced set is sound and complete — the
    real fix behind the coverage guard.
 
@@ -185,13 +192,27 @@ producing an under-estimate.
   plus one per verify() phase (`setup`, `vm_execution`, `merkle_verification`,
   `commitment`) over raw phase cycles, each `cycles = base + Σ coeff·feature`,
   fit by non-negative least squares. The total is the number to gate on.
-- **Phase drivers**: `vm_execution` ← opcode-family + crypto counts;
-  `merkle_verification` ← merkle_leaf_count + state_diff_count (proof + tree
-  update); `setup` ← used_bytecode_bytes/count + storage_key_count (bytecode
-  hashing dominates, ~63 cyc/byte); `commitment` ← pubdata_bytes (near-constant).
-- **Hold-out accuracy** (fit on 122 batches, validated on 49 disjoint): total
-  R²=0.9991, MAPE 0.45%; setup & merkle_verification R²≈1.0000; commitment is
-  near-constant so its R² is a low-variance artifact (absolute MAPE ~0.7%).
+- **Phase drivers of the committed table** (`crates/cycle_estimator/model/cost_table.json`,
+  fit on the 21-feature dataset at `testdata/cycle_model/dataset.json`):
+  `vm_execution` ← opcode-family + crypto counts (r²=0.99995);
+  `merkle_verification` ← merkle_leaf_count (r²=0.9947);
+  `setup` ← merkle_leaf_count + transaction_count (r²=0.8467);
+  `commitment` ← pubdata_bytes (r²=0.8682, near-constant so its r² is a
+  low-variance artifact).
+- **Gating uses `total`, not the phases.** The per-phase fits are a diagnostic
+  breakdown; `total` is the aggregate predictor and the number to gate on
+  (r²=0.99995 in-sample).
+- **A richer feature set exists but is not what is committed.** A later 27-feature
+  dataset adds `used_bytecode_bytes`/`used_bytecode_count`/`storage_key_count`/
+  `state_diff_count`/`system_log_count`/`initial_heap_words`, which should model
+  `setup` far better than merkle_leaf_count + transaction_count do (bytecode
+  hashing dominates that phase). Re-fitting on those is the obvious next
+  improvement; the committed table does not price them, so `PHASE_FEATURES` in
+  `fit_cost_model.py` and this list must be re-read together after any re-fit.
+- **Out-of-sample accuracy**: MAPE 0.87%, max 1.60% on the 49-batch 513xxx
+  hold-out, with errors almost entirely over-prediction (the safe direction) — see
+  the thresholds in `crates/cycle_estimator/tests/model_regression.rs`, which is
+  the CI guard for exactly this.
 
 ## Tests
 
