@@ -78,8 +78,8 @@ The practical consequence: the 122-row training dataset behind the committed cos
 table was measured from the `506xxx` set, so that **fit is not reproducible from
 these batches on current code** — which is exactly why the measured dataset is
 committed at `testdata/cycle_model/dataset.json`. Re-measuring a training corpus
-today means using `513xxx` (with `relax-version-pin`) or exporting fresh v31
-batches.
+today means using `513xxx` (with `relax-version-pin`) or exporting fresh v31 batches
+— see [`docs/generating-batches.md`](../../docs/generating-batches.md).
 
 ## Cycle-Model Hold-Out Set (`513601`–`513649`)
 
@@ -114,7 +114,9 @@ the test synthesizes the gap adversarially instead.
 
 `900065.bin.gz` is **not** a mainnet batch. It is a synthetic v31 batch generated
 from a local Era node with 140,059 unique cold storage reads (the `9000xx` prefix
-marks it synthetic; `65` is its source batch number). It is the regression fixture
+marks it synthetic; `65` is its source batch number) — see
+[`docs/generating-batches.md`](../../docs/generating-batches.md) for how to produce
+one. It is the regression fixture
 for the streaming Merkle-proof verification (the RAM-exhaustion DoS fix): the
 pre-fix path expanded every storage proof to full depth at once (~1.15 GiB here),
 OOMing the bounded guest heap.

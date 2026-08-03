@@ -12,6 +12,9 @@ Start here, then follow the links for depth:
   — pricing precompiles the mainnet corpus never calls.
 - [`testdata/era_mainnet_batches/README.md`](../testdata/era_mainnet_batches/README.md)
   — the corpus, and **which batches decode on which build**.
+- [`generating-batches.md`](generating-batches.md) — producing fresh fixtures from a
+  local Era node, which is the only way to get a corpus wider than the ~57 usable
+  batches in-repo.
 
 ---
 
