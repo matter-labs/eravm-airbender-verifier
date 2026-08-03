@@ -5978,6 +5978,7 @@ name = "zksync_airbender_verifier"
 version = "31.1.1"
 dependencies = [
  "airbender-codec",
+ "airbender-sdk",
  "anyhow",
  "ark-bls12-381",
  "ark-ff 0.5.0",

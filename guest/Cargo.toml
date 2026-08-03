@@ -7,6 +7,14 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[features]
+# Build the guest with verify() phase cycle markers, for offline cycle-cost
+# calibration ONLY (docs/benchmarking.md). NEVER enable for a proved guest: the
+# markers emit CSR 0x7ff, which scripts/check_guest_riscv_code.sh rejects — and
+# `relax-version-pin` additionally drops a soundness check.
+cycle-markers = ["zksync_airbender_verifier/cycle-markers"]
+relax-version-pin = ["zksync_airbender_verifier/relax-version-pin"]
+
 [dependencies]
 airbender = { workspace = true, features = ["std"] }
 # Explicit path dep (not `workspace = true`) so `default-features = false` is

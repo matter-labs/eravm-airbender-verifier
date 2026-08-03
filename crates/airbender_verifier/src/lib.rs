@@ -78,6 +78,43 @@ pub struct VerificationResult {
     pub pubdata_input: Option<Vec<u8>>,
 }
 
+// `relax-version-pin` disables a soundness check (see `execute`) and leaves NO
+// trace in the guest binary, so no artifact inspection can catch a guest built
+// with it. It is therefore tied to a flag that IS detectable: markers compile to
+// `csrrw x0, 0x7ff, x0`, and `scripts/check_guest_riscv_code.sh` (run in both
+// ci-check and release-artifacts) fails any CSR outside its allowlist. So a guest
+// with the pin relaxed necessarily trips that check.
+//
+// Cargo.toml enforces the pairing structurally (`relax-version-pin =
+// ["cycle-markers"]`), which is why this assertion should be unreachable. It is
+// kept as a tripwire: it fires if that implication is ever dropped from the
+// manifest, turning a silent loss of detectability into a build failure.
+#[cfg(all(feature = "relax-version-pin", not(feature = "cycle-markers")))]
+compile_error!(
+    "`relax-version-pin` is a calibration-only escape hatch: it disables the \
+     protocol-version pin, which no guest-artifact check can detect. Enable it only \
+     together with `cycle-markers`, whose CSR 0x7ff *is* detected by \
+     scripts/check_guest_riscv_code.sh. See docs/benchmarking.md."
+);
+
+/// Emit an Airbender cycle-marker boundary when the `cycle-markers` feature is
+/// enabled; a no-op otherwise. The offline cycle-cost calibration harness turns
+/// the feature on for its bench guest build only — markers must never ship in a
+/// proved guest, and CI enforces that via the CSR allowlist in
+/// `scripts/check_guest_riscv_code.sh`.
+///
+/// The fixed sequence of calls (start, then the three phase boundaries, then
+/// end = 5 markers over one `verify()`) is the contract the host uses to
+/// attribute per-phase cycles; keep it in lockstep with the harness's
+/// `phase_labels()`. `zksync_cycle_model::runner::phases_from_markers` errors if
+/// it does not observe exactly that many, so moving a boundary fails loudly
+/// rather than silently reattributing cycles.
+#[inline(always)]
+fn phase_marker() {
+    #[cfg(feature = "cycle-markers")]
+    airbender::guest::cycle_marker();
+}
+
 /// A trait for the computations that can be verified in TEE.
 pub trait Verify {
     fn verify(self) -> anyhow::Result<VerificationResult>;
@@ -147,12 +184,19 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
-    // Pin the protocol version to the single one this verifier is built for.
-    // `protocol_version` is operator-supplied and only *gates* commitment fields
-    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
-    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
-    // malicious witness could substitute a behavior-compatible version undetectably.
-    // The verifier ships one guest binary + VK set tied to `latest()`.
+    phase_marker(); // marker 0: begin `setup`
+                    // Pin the protocol version to the single one this verifier is built for.
+                    // `protocol_version` is operator-supplied and only *gates* commitment fields
+                    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
+                    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
+                    // malicious witness could substitute a behavior-compatible version undetectably.
+                    // The verifier ships one guest binary + VK set tied to `latest()`.
+                    //
+                    // `relax-version-pin` (calibration only) drops this so older-but-still-
+                    // FastVM-supported batches can be measured; the `is_supported_by_fast_vm`
+                    // guard below still holds. It cannot be enabled without `cycle-markers`
+                    // (see the `compile_error!` above), which CI detects in the guest binary.
+    #[cfg(not(feature = "relax-version-pin"))]
     anyhow::ensure!(
         input.system_env.version == ProtocolVersionId::latest(),
         "unsupported protocol version {:?}; this verifier supports only {:?}",
@@ -350,6 +394,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
 
     let storage_snapshot = StorageSnapshot::new(storage, factory_deps);
     let storage_view = StorageView::new(storage_snapshot).to_rc_ptr();
+    phase_marker(); // marker 1: end `setup`, begin `vm_execution`
     let vm = FastVerifierVm::fast(input.l1_batch_env, input.system_env, storage_view);
 
     let mut vm_out = execute_vm(
@@ -378,6 +423,7 @@ pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState
         "VM output is missing final_bootloader_memory — required for the bootloader heap commitment",
     )?;
 
+    phase_marker(); // marker 2: end `vm_execution`, begin `merkle_verification`
     let vm_logs = std::mem::take(&mut vm_out.final_execution_state.deduplicated_storage_logs);
     let prev_enumeration_index = enumeration_index; // = input.merkle_paths.next_enumeration_index()
                                                     // NOTE: do not wrap this call with `.with_context(...)`. It surfaces the
@@ -420,6 +466,7 @@ pub fn verify_commitment(
     state: VmExecutionState,
     commitment_input: CommitmentInput,
 ) -> anyhow::Result<VerificationResult> {
+    phase_marker(); // marker 3: end `merkle_verification`, begin `commitment`
     anyhow::ensure!(
         state.zk_porter_available == zksync_system_constants::ZKPORTER_IS_AVAILABLE,
         "zk_porter_available from witness ({}) does not match the L1 chain constant ({}) — \
@@ -539,6 +586,7 @@ pub fn verify_commitment(
         hashes.commitment,
     );
 
+    phase_marker(); // marker 4: end `commitment`
     Ok(VerificationResult {
         value_hash: state.new_root_hash,
         batch_number: state.batch_number,
@@ -1356,7 +1404,12 @@ mod tests {
         assert_eq!(input, decoded);
     }
 
+    /// Pins the default build's behavior: the version check is active unless
+    /// `relax-version-pin` is on. Gated so a calibration build (which deliberately
+    /// drops the pin to measure older batches) doesn't fail this instead of
+    /// reporting the real intent.
     #[test]
+    #[cfg(not(feature = "relax-version-pin"))]
     fn execute_rejects_non_target_protocol_version() {
         let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
         // A non-target version must be rejected by the version pin, which is the

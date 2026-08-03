@@ -15,14 +15,32 @@ pub fn phase_labels() -> [&'static str; 4] {
 /// Diff consecutive cumulative marks into per-label cycle counts. `markers`
 /// holds one mark per emitted boundary in execution order; `labels[i]` names the
 /// region between mark `i` and mark `i + 1`.
-pub fn phases_from_markers(markers: &CycleMarker, labels: &[&str]) -> BTreeMap<String, u64> {
+///
+/// Requires exactly `labels.len() + 1` marks. A guest whose `phase_marker()` calls
+/// have drifted — a boundary moved, dropped, or added by a later refactor — would
+/// otherwise yield a short phase map that fits without complaint, silently
+/// misattributing cycles across phases. Fail loudly instead.
+pub fn phases_from_markers(
+    markers: &CycleMarker,
+    labels: &[&str],
+) -> anyhow::Result<BTreeMap<String, u64>> {
+    let expected = labels.len() + 1;
+    anyhow::ensure!(
+        markers.markers.len() == expected,
+        "guest emitted {} cycle markers, expected {} (one per phase boundary for \
+         phases {labels:?}). The `phase_marker()` sequence in \
+         crates/airbender_verifier/src/lib.rs has drifted from `phase_labels()`.",
+        markers.markers.len(),
+        expected,
+    );
+
     let mut out = BTreeMap::new();
     for (i, label) in labels.iter().enumerate() {
-        if let (Some(before), Some(after)) = (markers.markers.get(i), markers.markers.get(i + 1)) {
-            out.insert(label.to_string(), after.diff(before).cycles);
-        }
+        let before = &markers.markers[i];
+        let after = &markers.markers[i + 1];
+        out.insert(label.to_string(), after.diff(before).cycles);
     }
-    out
+    Ok(out)
 }
 
 /// Ground-truth guest measurements for one batch.
@@ -59,7 +77,7 @@ pub fn run_guest(
 
     Ok(GuestMeasurement {
         raw_cycles: execution.cycles_executed as u64,
-        phase_cycles: phases_from_markers(&markers, &phase_labels()),
+        phase_cycles: phases_from_markers(&markers, &phase_labels())?,
         // `delegation_counter` is a HashMap; collect into a BTreeMap for a
         // stable, deterministic column order in the dataset.
         delegations: markers
@@ -82,16 +100,41 @@ mod tests {
         }
     }
 
+    fn markers_of(cycles: &[u64]) -> CycleMarker {
+        CycleMarker {
+            markers: cycles.iter().copied().map(mark).collect(),
+            delegation_counter: Default::default(),
+        }
+    }
+
     #[test]
     fn phases_diff_consecutive_marks() {
-        let markers = CycleMarker {
-            markers: vec![mark(0), mark(100), mark(350), mark(400), mark(500)],
-            delegation_counter: Default::default(),
-        };
-        let phases = phases_from_markers(&markers, &phase_labels());
+        let markers = markers_of(&[0, 100, 350, 400, 500]);
+        let phases = phases_from_markers(&markers, &phase_labels()).unwrap();
         assert_eq!(phases["setup"], 100);
         assert_eq!(phases["vm_execution"], 250);
         assert_eq!(phases["merkle_verification"], 50);
         assert_eq!(phases["commitment"], 100);
+    }
+
+    /// A drifted guest (boundary moved, dropped, or added) must fail rather than
+    /// silently produce a short phase map that would be fit as if complete.
+    #[test]
+    fn rejects_wrong_marker_count() {
+        for cycles in [
+            vec![],
+            vec![0],
+            vec![0, 100, 350, 400],           // one boundary dropped
+            vec![0, 100, 350, 400, 500, 600], // one boundary added
+        ] {
+            let n = cycles.len();
+            let err = phases_from_markers(&markers_of(&cycles), &phase_labels())
+                .expect_err("wrong marker count must be rejected");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(&format!("emitted {n} cycle markers")) && msg.contains("expected 5"),
+                "error should name actual and expected counts, got: {msg}"
+            );
+        }
     }
 }
