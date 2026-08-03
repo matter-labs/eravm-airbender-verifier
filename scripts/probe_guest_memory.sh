@@ -30,9 +30,20 @@ backup="$(mktemp)"; cp "$cfg" "$backup"
 restore() { cp "$backup" "$cfg"; rm -f "$backup"; }
 trap restore EXIT
 
-# Point the existing _heap_size defsym at the requested size for this build.
-perl -0pi -e "s/--defsym=_heap_size=\d+/--defsym=_heap_size=$bytes/" "$cfg"
-grep -q "_heap_size=$bytes" "$cfg" || { echo "error: could not set _heap_size defsym in $cfg" >&2; exit 1; }
+# Set the heap for this build. `_heap_size` is `PROVIDE`d (= 768M) by
+# riscv_common's link.x, and a `--defsym` overrides that default — so this works
+# whether or not the checked-in config pins a size of its own. If it already pins
+# one, retarget it; otherwise inject the link-arg next to the linker-script args.
+if grep -q -- "--defsym=_heap_size=" "$cfg"; then
+  perl -0pi -e "s/--defsym=_heap_size=\d+/--defsym=_heap_size=$bytes/" "$cfg"
+else
+  perl -0pi -e "s|(\n\s*)(\"-C\",\s*\"link-arg=-Tmemory\.x\",)|\$1\"-C\", \"link-arg=--defsym=_heap_size=$bytes\",\$1\$2|" "$cfg"
+fi
+grep -q -- "--defsym=_heap_size=$bytes" "$cfg" || {
+  echo "error: could not set _heap_size defsym in $cfg" >&2
+  echo "       (expected a '-C link-arg=-Tmemory.x' entry in [build].rustflags to anchor to)" >&2
+  exit 1
+}
 
 echo "[probe] building guest with ${heap_mib} MiB heap ..." >&2
 ( cd "$repo_root/guest" && cargo airbender build >/dev/null 2>&1 ) \
@@ -47,7 +58,9 @@ cargo run --release -p eravm-prover-host --locked -- \
 rc=$?
 set -e
 if [ "$rc" -eq 0 ]; then
-  cyc=$(grep -m1 -oE 'cycles=[0-9]+' "$log" || true)
+  # The host logs `cycles=N` with ANSI colour escapes between the field name and
+  # the `=`, so strip them before matching or the literal pattern never hits.
+  cyc=$(sed $'s/\033\\[[0-9;]*m//g' "$log" | grep -m1 -oE 'cycles=[0-9]+' || true)
   echo "RESULT: FITS at ${heap_mib} MiB (${cyc:-cycles=?})"
 else
   sz=$(grep -A1 'memory allocation of' "$log" | grep -m1 -oE '[0-9]{3,}' || true)

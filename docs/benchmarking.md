@@ -74,13 +74,23 @@ predictably.
 For the number that actually decides whether a batch fits, bisect the guest heap:
 
 ```sh
-scripts/probe_guest_memory.sh 84730.bin.gz 400   # -> FITS or OOM(<bytes>)
-scripts/probe_guest_memory.sh 84730.bin.gz 300
+$ scripts/probe_guest_memory.sh 84730.bin.gz 400
+RESULT: FITS at 400 MiB (cycles=1052307371)
+$ scripts/probe_guest_memory.sh 84730.bin.gz 192
+RESULT: FITS at 192 MiB (cycles=1052307371)
+$ scripts/probe_guest_memory.sh 84730.bin.gz 128
+RESULT: OOM at 128 MiB (failed allocation: 63800000 bytes)
 ```
 
-The smallest heap at which the batch still completes is its true peak demand. The
-script rebuilds the guest with that `_heap_size` and restores the production
-setting on exit.
+So batch 84730's true in-guest peak is between **128 and 192 MiB** — against a
+native `mem_peak` proxy of 105 MB. That gap is the point: the proxy understated the
+real demand by 25–80% here, so size decisions belong to this tool, not to
+`mem_peak`. The smallest heap at which the batch still completes is its peak
+demand.
+
+The script overrides `_heap_size` (which riscv_common's `link.x` `PROVIDE`s at
+768M), rebuilds the guest, and restores your config on exit — including if it
+fails.
 
 ### Where the heap goes, not just how much
 
