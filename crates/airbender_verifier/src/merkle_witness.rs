@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use zksync_merkle_tree::{
-    BlockOutputWithProofs, HashTree, TreeEntry, TreeInstruction, TreeLogEntry,
+    blake2_fold_merkle_path, BlockOutputWithProofs, TreeEntry, TreeInstruction, TreeLogEntry,
     TreeLogEntryWithProof, ValueHash, TREE_DEPTH,
 };
 use zksync_types::{StorageLog, H256, U256};
@@ -203,8 +203,12 @@ fn expand_full_path_into(
 /// - Pass 1: classify each witness leaf, bind it to the VM storage-log key, and
 ///   map it to a `TreeInstruction`. No Merkle path is expanded.
 /// - Pass 2: expand each path lazily and fold it against the running root via
-///   `merkle_tree`'s own `HashTree::fold_merkle_path` — reused, not
-///   reimplemented, so the consensus fold is identical.
+///   `merkle_tree`'s own `blake2_fold_merkle_path` — the consensus-critical fold
+///   lives there, not here. It is the fused blake2s specialization of
+///   `HashTree::fold_merkle_path`, byte-identical to it (pinned by differential
+///   tests in `merkle_tree`) and blake2s-only, which is why this function takes
+///   no hasher: the protocol tree hasher *is* blake2s, and hardcoding it removes
+///   any chance of folding with the wrong one.
 ///
 /// Running all of Pass 1 before any fold guarantees a witness-shape or binding
 /// error surfaces before a cryptographic fold error.
@@ -217,7 +221,6 @@ fn expand_full_path_into(
 pub(crate) fn verify_paths_and_new_root(
     witness: WitnessInputMerklePaths,
     vm_logs: Vec<StorageLog>,
-    hasher: &dyn HashTree,
     old_root_hash: ValueHash,
     mut enumeration_index: u64,
 ) -> anyhow::Result<(ValueHash, u64)> {
@@ -290,13 +293,13 @@ pub(crate) fn verify_paths_and_new_root(
                 TreeEntry::new(instruction.key(), leaf_index, value)
             }
         };
-        let prev_hash = hasher.fold_merkle_path(&full, prev_entry);
+        let prev_hash = blake2_fold_merkle_path(&full, prev_entry);
         anyhow::ensure!(
             prev_hash == root_hash,
             "Condition failed: `prev_hash == root_hash` ({prev_hash:?} vs {root_hash:?})",
         );
         if let TreeInstruction::Write(new_entry) = instruction {
-            let next_hash = hasher.fold_merkle_path(&full, new_entry);
+            let next_hash = blake2_fold_merkle_path(&full, new_entry);
             anyhow::ensure!(
                 next_hash == op_root,
                 "Condition failed: `next_hash == op.root_hash` ({next_hash:?} vs {op_root:?})",
@@ -391,7 +394,10 @@ mod streaming_tests {
     // ---------------------------------------------------------------------
     use anyhow::Context;
     use zksync_crypto_primitives::hasher::blake2::Blake2Hasher;
-    // `HashTree`, `StorageLog`, `H256` come in via `use super::*`.
+    // The oracle still folds through the generic `HashTree` path; production no
+    // longer does, so the trait is imported here rather than at module scope.
+    // `StorageLog`, `H256` come in via `use super::*`.
+    use zksync_merkle_tree::HashTree;
     use zksync_types::{AccountTreeId, StorageKey, H160};
 
     use crate::generate_tree_instructions;
@@ -427,7 +433,7 @@ mod streaming_tests {
         idx: u64,
     ) {
         let expect = reference(witness.clone(), vm_logs.clone(), old_root, idx);
-        let got = verify_paths_and_new_root(witness, vm_logs, &Blake2Hasher, old_root, idx);
+        let got = verify_paths_and_new_root(witness, vm_logs, old_root, idx);
         match (expect, got) {
             (Ok(a), Ok(b)) => assert_eq!(a, b, "streaming result diverged from oracle"),
             (Err(_), Err(_)) => {}
@@ -495,9 +501,8 @@ mod streaming_tests {
         let witness = witness_of(vec![meta]);
 
         // Prove it is a genuine ACCEPT (not merely a matching reject).
-        let got =
-            verify_paths_and_new_root(witness.clone(), vec![log], &Blake2Hasher, empty_root(), 5)
-                .expect("missing-key read on empty tree must verify");
+        let got = verify_paths_and_new_root(witness.clone(), vec![log], empty_root(), 5)
+            .expect("missing-key read on empty tree must verify");
         assert_eq!(
             got,
             (empty_root(), 5),
@@ -556,14 +561,9 @@ mod streaming_tests {
 
         let oracle_err = reference(witness.clone(), vm_logs.clone(), empty_root(), 0)
             .expect_err("oracle must reject the multi-fault witness");
-        let streaming_err = verify_paths_and_new_root(
-            witness.clone(),
-            vm_logs.clone(),
-            &Blake2Hasher,
-            empty_root(),
-            0,
-        )
-        .expect_err("streaming must reject the multi-fault witness");
+        let streaming_err =
+            verify_paths_and_new_root(witness.clone(), vm_logs.clone(), empty_root(), 0)
+                .expect_err("streaming must reject the multi-fault witness");
 
         let oracle_msg = oracle_err.to_string();
         let streaming_msg = streaming_err.to_string();
@@ -696,8 +696,7 @@ mod streaming_tests {
         );
         let witness = witness_of(vec![m0, m1]);
 
-        let res =
-            verify_paths_and_new_root(witness, vec![log0, log1], &Blake2Hasher, empty_root(), 0);
+        let res = verify_paths_and_new_root(witness, vec![log0, log1], empty_root(), 0);
         assert!(
             res.is_err(),
             "streaming must reject a malformed longer-than-first path"
