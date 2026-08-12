@@ -138,15 +138,35 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
 /// Thus, if storage is reverted correctly, additional EVM bytecodes occupy the cache, but are unreachable.
 ///
 /// The cache keys are additionally bound to the cached content at insertion
-/// time: `insert_bytecodes` and `TransactionData::new` compute factory-dep
-/// hashes from the supplied bytecodes, the EVM deploy tracer hashes the
-/// published bytecode before inserting it, and the storage fallback in
-/// `decommit()` caches what storage resolved for the requested hash. No path
-/// re-verifies content when serving a cache hit — reachability is gated by the
-/// storage checks above — but a leftover entry from a reverted transaction
-/// attempt can only return the same bytecode the requesting hash already
-/// resolves to. For that reason these caches are intentionally left out of VM
-/// snapshot/rollback — there is nothing to undo.
+/// time: `TransactionData::new` computes factory-dep hashes from the supplied
+/// bytecodes; `insert_bytecodes_with_hashes` assumes the provided hashes match,
+/// and the EVM deploy tracer hashes the published bytecode before inserting it.
+/// No path re-verifies content when serving a cache hit — reachability is gated
+/// by the storage checks above — but a leftover entry from a reverted
+/// transaction attempt can only return the same bytecode the requesting hash
+/// already resolves to. For that reason these caches are intentionally left out
+/// of VM snapshot/rollback — there is nothing to undo.
+///
+/// Diverges from zksync-era: the storage fallback in `decommit()` does not write
+/// the loaded bytecode back into `bytecode_cache`. That write-back kept one
+/// `Vec<u8>` per distinct decommitted contract, never evicted, duplicating bytes
+/// the storage snapshot already holds. Upstream syncs must not reinstate it;
+/// `tests::storage_loaded_bytecode_is_not_cached` pins this.
+///
+/// So `bytecode_cache` holds only pushed transactions' factory deps
+/// (`insert_bytecodes_with_hashes`, from `push_transaction_inner` before each
+/// execution attempt), which the snapshot need not contain yet. Neither reader
+/// looks up anything else: `published_bytecodes` takes its hashes from
+/// `BytecodeL1PublicationRequested`, which the bootloader emits only for the
+/// emitting transaction's own `factoryDeps`; `has_unpublished_bytecodes` reads
+/// that transaction's compressed-bytecode list. In the latter the
+/// `is_bytecode_known` disjunct is always false — the list is pre-filtered to
+/// hashes unknown at push time, and `storage` does not observe in-VM writes — so
+/// the cache lookup alone decides it.
+///
+/// Snapshot reads and decoding are deterministic, and `program_cache` is
+/// unbounded, so each bytecode is loaded and decoded once per batch. Giving that
+/// cache an eviction policy would make a reload reachable.
 impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
     fn decommit(&mut self, hash: U256) -> Program<T, Self> {
         self.program_cache
@@ -170,9 +190,8 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
                         .unwrap_or_else(|| {
                             panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
                         });
-                    let program = Program::new(&code, false);
-                    self.bytecode_cache.insert(hash, code);
-                    program
+                    // Deliberately not cached; see the docs on this `impl`.
+                    Program::new(&code, false)
                 }
             })
             .clone()
@@ -226,5 +245,66 @@ impl Precompiles for OptimizedPrecompiles {
             }
         }
         LegacyPrecompiles.call_precompile(address_low, memory, aux_input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zksync_types::{StorageKey, StorageValue};
+    use zksync_vm2::World as _;
+
+    use super::*;
+
+    /// Minimal [`ReadStorage`] serving one factory dep and counting the loads.
+    #[derive(Debug, Default)]
+    struct CountingStorage {
+        factory_deps: HashMap<H256, Vec<u8>>,
+        loads: usize,
+    }
+
+    impl ReadStorage for CountingStorage {
+        fn read_value(&mut self, _key: &StorageKey) -> StorageValue {
+            H256::zero()
+        }
+
+        fn is_write_initial(&mut self, _key: &StorageKey) -> bool {
+            true
+        }
+
+        fn load_factory_dep(&mut self, hash: H256) -> Option<Vec<u8>> {
+            self.loads += 1;
+            self.factory_deps.get(&hash).cloned()
+        }
+
+        fn get_enumeration_index(&mut self, _key: &StorageKey) -> Option<u64> {
+            None
+        }
+    }
+
+    /// A storage-resident bytecode is served from the snapshot and never written
+    /// back into `bytecode_cache`. Guards the divergence documented on the impl.
+    #[test]
+    fn storage_loaded_bytecode_is_not_cached() {
+        let hash = U256::from(1);
+        let mut storage = CountingStorage::default();
+        storage
+            .factory_deps
+            .insert(u256_to_h256(hash), vec![0_u8; 32]);
+
+        let mut world = World::<_, ()>::new(storage, HashMap::new());
+        let program = world.decommit(hash);
+
+        assert_eq!(world.storage.loads, 1);
+        assert!(
+            world.bytecode_cache.is_empty(),
+            "storage-loaded bytecode must not be retained in `bytecode_cache`"
+        );
+
+        // `program_cache` memoizes, so a second decommit neither re-reads storage
+        // nor re-decodes.
+        let again = world.decommit(hash);
+        assert_eq!(world.storage.loads, 1);
+        assert_eq!(program.code_page(), again.code_page());
+        assert!(world.bytecode_cache.is_empty());
     }
 }
