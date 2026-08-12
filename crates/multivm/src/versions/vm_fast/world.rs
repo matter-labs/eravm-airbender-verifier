@@ -69,6 +69,49 @@ impl<S: ReadStorage, T: Tracer> World<S, T> {
         // The code storage slot is always read during tx validation / execution anyway.
         self.storage.read_value(&get_code_key(address)).is_zero()
     }
+
+    /// Resolves the raw bytecode for `hash` from the byte-level sources, in the order
+    /// `decommit()` established: pushed transactions' factory deps (`bytecode_cache`),
+    /// EVM bytecodes published in this run (`dynamic_bytecodes`), then the storage
+    /// fallback. This is the single copy of that chain — `decommit()` and
+    /// `decommit_code()` must resolve identically, so neither duplicates it.
+    ///
+    /// Does NOT consult `program_cache`. The pre-seeded system contracts (default AA,
+    /// and the EVM emulator when configured) exist *only* there — no byte-level source
+    /// is guaranteed to contain them (in the verifier, the factory-dep witness does
+    /// not) — so a caller that can be queried for those hashes must check
+    /// `program_cache` first or this panics.
+    fn raw_bytecode(&mut self, hash: U256) -> Vec<u8> {
+        self.bytecode_cache
+            .get(&hash)
+            .cloned()
+            .or_else(|| self.dynamic_bytecodes.map(hash, <[u8]>::to_vec))
+            .unwrap_or_else(|| {
+                // Deliberately not written back to `bytecode_cache`; see the docs on
+                // the `zksync_vm2::World` impl below.
+                self.storage
+                    .load_factory_dep(u256_to_h256(hash))
+                    .unwrap_or_else(|| {
+                        panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
+                    })
+            })
+    }
+
+    /// Re-encodes a decoded program's code page as bytes. The code page holds whole
+    /// 32-byte words only (`Program::new` chunks the bytecode with `chunks_exact(32)`),
+    /// so this returns `bytecode[..len - len % 32]` for the original bytecode.
+    fn code_page_bytes(program: &Program<T, Self>) -> Vec<u8> {
+        program
+            .code_page()
+            .as_ref()
+            .iter()
+            .flat_map(|word| {
+                let mut buffer = [0u8; 32];
+                word.to_big_endian(&mut buffer);
+                buffer
+            })
+            .collect()
+    }
 }
 
 impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
@@ -165,49 +208,53 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
 /// the cache lookup alone decides it.
 ///
 /// Snapshot reads and decoding are deterministic, and `program_cache` is
-/// unbounded, so each bytecode is loaded and decoded once per batch. Giving that
-/// cache an eviction policy would make a reload reachable.
+/// unbounded, so each far-called bytecode is loaded and decoded once per batch.
+/// Giving that cache an eviction policy would make a reload reachable.
+///
+/// Diverges from zksync-era: `decommit_code()` does not decode. Upstream routes
+/// it through `decommit()`, decoding the bytecode and pinning the resulting
+/// program in `program_cache`; here it serves an already-decoded program's code
+/// page if one exists (which also keeps the pre-seeded system contracts
+/// reachable — see `raw_bytecode`) and raw bytes otherwise, deferring the
+/// decode until a far call actually needs it. Repeat queries for a bytecode
+/// that is never far-called re-resolve the bytes each time — O(len) per query,
+/// the same order as the code-page re-encode upstream performs on its
+/// `program_cache` hit, and decommit pricing lives in vm2's `WorldDiff`, not
+/// here — so this changes cost distribution, never bytes, gas, or committed
+/// outputs. `tests::decommit_code_serves_preseeded_system_contracts` and
+/// `tests::decommit_code_fetches_raw_bytes_without_decoding` pin this.
 impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
     fn decommit(&mut self, hash: U256) -> Program<T, Self> {
-        self.program_cache
-            .entry(hash)
-            .or_insert_with(|| {
-                let cached = self
-                    .bytecode_cache
-                    .get(&hash)
-                    .map(|code| Program::new(code, false))
-                    .or_else(|| {
-                        self.dynamic_bytecodes
-                            .map(hash, |code| Program::new(code, false))
-                    });
-
-                if let Some(cached) = cached {
-                    cached
-                } else {
-                    let code = self
-                        .storage
-                        .load_factory_dep(u256_to_h256(hash))
-                        .unwrap_or_else(|| {
-                            panic!("VM tried to decommit nonexistent bytecode: {hash:?}");
-                        });
-                    // Deliberately not cached; see the docs on this `impl`.
-                    Program::new(&code, false)
-                }
-            })
-            .clone()
+        if let Some(program) = self.program_cache.get(&hash) {
+            return program.clone();
+        }
+        let program = Program::new(&self.raw_bytecode(hash), false);
+        self.program_cache.insert(hash, program.clone());
+        program
     }
 
     fn decommit_code(&mut self, hash: U256) -> Vec<u8> {
-        self.decommit(hash)
-            .code_page()
-            .as_ref()
-            .iter()
-            .flat_map(|u| {
-                let mut buffer = [0u8; 32];
-                u.to_big_endian(&mut buffer);
-                buffer
-            })
-            .collect()
+        // An already-decoded program is authoritative: the pre-seeded system contracts
+        // (default AA / EVM emulator) exist *only* in `program_cache` — falling through
+        // to `raw_bytecode` for them would panic in the verifier, whose factory-dep
+        // witness does not carry them. Same source priority as `decommit()`.
+        if let Some(program) = self.program_cache.get(&hash) {
+            return Self::code_page_bytes(program);
+        }
+
+        // Serve raw bytes WITHOUT building a `Program`: decoding every 8-byte word
+        // into an `Instruction` is wasted work for a bytecode queried this way — in
+        // particular EVM contract bytecode, which reaches the VM only through this
+        // path (the interpreter reads it as data) and previously paid a full
+        // instruction decode plus a `program_cache` slot for a program that never
+        // runs. The decode is deferred, not eliminated: if the same bytecode is
+        // far-called later, `decommit()` decodes it then.
+        let mut code = self.raw_bytecode(hash);
+        // Reproduce the code-page view exactly: whole 32-byte words only. Bytecodes
+        // are word-aligned (`validate_bytecode` gates every source), so this is a
+        // no-op in practice.
+        code.truncate(code.len() - code.len() % 32);
+        code
     }
 
     fn precompiles(&self) -> &impl Precompiles {
@@ -306,5 +353,75 @@ mod tests {
         assert_eq!(world.storage.loads, 1);
         assert_eq!(program.code_page(), again.code_page());
         assert!(world.bytecode_cache.is_empty());
+    }
+
+    /// A bytecode present only in `program_cache` — how `Vm::custom` seeds the
+    /// default AA and the EVM emulator — must be served by `decommit_code` without
+    /// touching storage. In the verifier the factory-dep witness does not contain
+    /// the base system contracts, so falling through to the storage fallback would
+    /// abort the guest on a permissionless `CodeOracle` query for their hashes.
+    #[test]
+    fn decommit_code_serves_preseeded_system_contracts() {
+        let mut code = vec![1_u8; 32];
+        code.extend_from_slice(&[2_u8; 32]);
+        let hash = U256::from(0x0100);
+        let program_cache = HashMap::from([(hash, Program::new(&code, false))]);
+        // Storage deliberately lacks the factory dep, like the guest's snapshot.
+        let mut world = World::<_, ()>::new(CountingStorage::default(), program_cache);
+
+        assert_eq!(world.decommit_code(hash), code);
+        assert_eq!(
+            world.storage.loads, 0,
+            "a pre-seeded program must be served without consulting storage"
+        );
+    }
+
+    /// `decommit_code` serves a storage-resident bytecode as raw bytes: no decode,
+    /// no `program_cache` entry, no `bytecode_cache` retention — and byte-identical
+    /// to the whole-word view `decommit`'s code page exposes.
+    #[test]
+    fn decommit_code_fetches_raw_bytes_without_decoding() {
+        let hash = U256::from(1);
+        let mut code = vec![3_u8; 32];
+        code.extend_from_slice(&[4_u8; 32]);
+        let mut storage = CountingStorage::default();
+        storage
+            .factory_deps
+            .insert(u256_to_h256(hash), code.clone());
+        let mut world = World::<_, ()>::new(storage, HashMap::new());
+
+        let bytes = world.decommit_code(hash);
+        assert_eq!(bytes, code);
+        assert!(
+            world.program_cache.is_empty(),
+            "the raw fetch must not decode the bytecode or pin a `Program`"
+        );
+        assert!(world.bytecode_cache.is_empty());
+
+        // The raw view must match what a far-call decommit exposes...
+        let program = world.decommit(hash);
+        assert_eq!(
+            bytes,
+            World::<CountingStorage, ()>::code_page_bytes(&program)
+        );
+        // ...and once decoded, `decommit_code` serves the decoded program instead of
+        // re-reading storage.
+        assert_eq!(world.decommit_code(hash), code);
+        assert_eq!(world.storage.loads, 2);
+    }
+
+    /// The raw path exposes whole 32-byte words only, exactly like the code-page
+    /// view it replaces (`chunks_exact(32)` drops a partial trailing word). Real
+    /// bytecodes are word-aligned; this pins the behavior should that ever change.
+    #[test]
+    fn decommit_code_exposes_whole_words_only() {
+        let hash = U256::from(2);
+        let mut storage = CountingStorage::default();
+        storage
+            .factory_deps
+            .insert(u256_to_h256(hash), vec![5_u8; 65]);
+        let mut world = World::<_, ()>::new(storage, HashMap::new());
+
+        assert_eq!(world.decommit_code(hash), vec![5_u8; 64]);
     }
 }
