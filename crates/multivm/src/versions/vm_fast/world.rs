@@ -77,10 +77,11 @@ impl<S: ReadStorage, T: Tracer> World<S, T> {
     /// `decommit_code()` must resolve identically, so neither duplicates it.
     ///
     /// Does NOT consult `program_cache`. The pre-seeded system contracts (default AA,
-    /// and the EVM emulator when configured) exist *only* there — no byte-level source
-    /// is guaranteed to contain them (in the verifier, the factory-dep witness does
-    /// not) — so a caller that can be queried for those hashes must check
-    /// `program_cache` first or this panics.
+    /// and the EVM emulator when configured) exist *only* there, and no byte-level
+    /// source is *guaranteed* to contain them — the factory-dep witness usually ships
+    /// what the batch decommits, but nothing the guest checks enforces that for the
+    /// pre-seeded pair — so a caller that can be queried for those hashes must check
+    /// `program_cache` first or this can panic.
     fn raw_bytecode(&mut self, hash: U256) -> Vec<u8> {
         self.bytecode_cache
             .get(&hash)
@@ -208,8 +209,8 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::StorageInterface for World<S, T> {
 /// the cache lookup alone decides it.
 ///
 /// Snapshot reads and decoding are deterministic, and `program_cache` is
-/// unbounded, so each far-called bytecode is loaded and decoded once per batch.
-/// Giving that cache an eviction policy would make a reload reachable.
+/// unbounded, so each far-called bytecode is decoded at most once per batch.
+/// Giving that cache an eviction policy would make a re-decode reachable.
 ///
 /// Diverges from zksync-era: `decommit_code()` does not decode. Upstream routes
 /// it through `decommit()`, decoding the bytecode and pinning the resulting
@@ -235,9 +236,10 @@ impl<S: ReadStorage, T: Tracer> zksync_vm2::World<T> for World<S, T> {
 
     fn decommit_code(&mut self, hash: U256) -> Vec<u8> {
         // An already-decoded program is authoritative: the pre-seeded system contracts
-        // (default AA / EVM emulator) exist *only* in `program_cache` — falling through
-        // to `raw_bytecode` for them would panic in the verifier, whose factory-dep
-        // witness does not carry them. Same source priority as `decommit()`.
+        // (default AA / EVM emulator) exist *only* in `program_cache`, and the byte
+        // sources are not guaranteed to carry them (nothing the guest checks enforces
+        // it), so this must not fall through for them. Same source priority as
+        // `decommit()`.
         if let Some(program) = self.program_cache.get(&hash) {
             return Self::code_page_bytes(program);
         }
@@ -357,9 +359,9 @@ mod tests {
 
     /// A bytecode present only in `program_cache` — how `Vm::custom` seeds the
     /// default AA and the EVM emulator — must be served by `decommit_code` without
-    /// touching storage. In the verifier the factory-dep witness does not contain
-    /// the base system contracts, so falling through to the storage fallback would
-    /// abort the guest on a permissionless `CodeOracle` query for their hashes.
+    /// touching storage: the factory-dep witness is not guaranteed to contain base
+    /// system contracts, so `decommit_code` must never rely on it for pre-seeded
+    /// hashes. Pins the `program_cache`-first source priority.
     #[test]
     fn decommit_code_serves_preseeded_system_contracts() {
         let mut code = vec![1_u8; 32];
@@ -408,6 +410,25 @@ mod tests {
         // re-reading storage.
         assert_eq!(world.decommit_code(hash), code);
         assert_eq!(world.storage.loads, 2);
+    }
+
+    /// Pushed transactions' factory deps (`bytecode_cache`) are served before the
+    /// storage fallback, without a storage load. Keys are content-bound to the bytes
+    /// in production; the two sources differ here only to make the priority
+    /// observable.
+    #[test]
+    fn decommit_code_prefers_cached_bytecode_over_storage() {
+        let hash = U256::from(3);
+        let cached = vec![6_u8; 32];
+        let mut storage = CountingStorage::default();
+        storage
+            .factory_deps
+            .insert(u256_to_h256(hash), vec![7_u8; 32]);
+        let mut world = World::<_, ()>::new(storage, HashMap::new());
+        world.bytecode_cache.insert(hash, cached.clone());
+
+        assert_eq!(world.decommit_code(hash), cached);
+        assert_eq!(world.storage.loads, 0);
     }
 
     /// The raw path exposes whole 32-byte words only, exactly like the code-page
