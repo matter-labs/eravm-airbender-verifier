@@ -35,10 +35,16 @@
 #
 # Usage:
 #   check_guest_memory_layout.sh <app.elf> [--expect-heap-mib N]
-#                               [--ram-top-mib N] [--nm PATH]
+#                               [--expect-stack-mib N] [--ram-top-mib N] [--nm PATH]
 #
 #   --expect-heap-mib N   require `_eheap - _sheap` to be exactly N MiB.
 #                         Omit to report the layout without pinning a size.
+#   --expect-stack-mib N  require `_sstack - _estack` to be exactly N MiB
+#                         (default 64 = link.x's `PROVIDE(_hart_stack_size = 64M)`).
+#                         Checked by default because that PROVIDE can change at an
+#                         airbender bump exactly like the heap one, and the stack
+#                         sits below `.heap`: moving it moves `_sheap`, changing
+#                         app.bin and both VKs while the arena stays 952 MiB.
 #   --ram-top-mib N       top of the RAM region in MiB (default 1024 = the
 #                         Airbender machine's address space: memory.x ROM 4M +
 #                         RAM 1020M). Only change this alongside an upstream
@@ -63,6 +69,7 @@ MIB=$((1024 * 1024))
 # --- Argument parsing ---------------------------------------------------------
 ELF=""
 EXPECT_HEAP_MIB=""
+EXPECT_STACK_MIB=64
 RAM_TOP_MIB=1024
 NM="${NM:-}"
 
@@ -71,6 +78,9 @@ while [[ $# -gt 0 ]]; do
     --expect-heap-mib)
       [[ $# -ge 2 && -n "$2" ]] || die "--expect-heap-mib requires a number"
       EXPECT_HEAP_MIB="$2"; shift 2 ;;
+    --expect-stack-mib)
+      [[ $# -ge 2 && -n "$2" ]] || die "--expect-stack-mib requires a number"
+      EXPECT_STACK_MIB="$2"; shift 2 ;;
     --ram-top-mib)
       [[ $# -ge 2 && -n "$2" ]] || die "--ram-top-mib requires a number"
       RAM_TOP_MIB="$2"; shift 2 ;;
@@ -89,13 +99,28 @@ done
 [[ -f "$ELF" ]] || die "no such file: $ELF"
 [[ -z "$EXPECT_HEAP_MIB" || "$EXPECT_HEAP_MIB" =~ ^[0-9]+$ ]] \
   || die "--expect-heap-mib must be a non-negative integer"
+[[ "$EXPECT_STACK_MIB" =~ ^[0-9]+$ ]] || die "--expect-stack-mib must be a non-negative integer"
 [[ "$RAM_TOP_MIB" =~ ^[0-9]+$ ]] || die "--ram-top-mib must be a non-negative integer"
 
 # Normalize to base 10 once: the regexes above accept a leading zero, which bash
 # arithmetic would read as octal — silently for `02000`, and as a hard expansion
 # error for `0952`.
 [[ -z "$EXPECT_HEAP_MIB" ]] || EXPECT_HEAP_MIB=$((10#$EXPECT_HEAP_MIB))
+EXPECT_STACK_MIB=$((10#$EXPECT_STACK_MIB))
 RAM_TOP_MIB=$((10#$RAM_TOP_MIB))
+
+# --- Sanity: must be a 32-bit RISC-V ELF --------------------------------------
+# The sibling check_guest_riscv_code.sh gates on llvm-objdump --file-headers; the
+# same guard from the ELF header itself avoids resolving a second llvm tool. Without
+# it, a wrong artifact reaches the symbol read and is reported as a stripping
+# problem, which is not what went wrong.
+elf_bytes() { od -An -tu1 -j "$1" -N "$2" -- "$ELF" | tr -s ' \n' ' '; }
+read -r e0 e1 e2 e3 eclass <<<"$(elf_bytes 0 5)"
+[[ "$e0 $e1 $e2 $e3" == "127 69 76 70" ]] || die "$ELF is not an ELF file"
+(( eclass == 1 )) || die "$ELF is not a 32-bit ELF (EI_CLASS=$eclass) — expected the riscv32 guest, not the host binary"
+read -r m0 m1 <<<"$(elf_bytes 18 2)"           # e_machine, little-endian
+(( m0 + (m1 << 8) == 243 )) \
+  || die "$ELF is not a RISC-V ELF (e_machine=$((m0 + (m1 << 8))), expected 243) — wrong artifact"
 
 # --- Tool discovery -----------------------------------------------------------
 # Same anchoring as check_guest_riscv_code.sh: resolve llvm-nm from the toolchain
@@ -187,9 +212,14 @@ fail() {
 (( ESTACK == 4 * MIB )) \
   || fail "_estack $(hex "$ESTACK") != 4 MiB — boot_sequence::init() asserts _estack == ROM_BYTE_SIZE and will abort the guest"
 
-(( STACK_SIZE > 0 )) || fail "empty .stack region ($(hex "$ESTACK") .. $(hex "$SSTACK"))"
 (( SHEAP >= SSTACK )) \
   || fail "_sheap $(hex "$SHEAP") overlaps the stack region (ends $(hex "$SSTACK"))"
+
+# The stack is sized by link.x's PROVIDE(_hart_stack_size = 64M), so it drifts by
+# the same routes as the heap PROVIDE — and because .heap follows it, a change
+# moves _sheap and rewrites app.bin (and both VKs) with the arena still exact.
+(( STACK_SIZE == EXPECT_STACK_MIB * MIB )) \
+  || fail "stack is $(mib "$STACK_SIZE"), expected ${EXPECT_STACK_MIB} MiB — _hart_stack_size changed, which moves _sheap and both VKs"
 
 if [[ -n "$EXPECT_HEAP_MIB" ]]; then
   expect_bytes=$((EXPECT_HEAP_MIB * MIB))
