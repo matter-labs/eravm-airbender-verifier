@@ -157,11 +157,9 @@ jobs:
             --min-insns 500000
 
       # The heap arena is a link-time constant (`--defsym=_heap_size` in
-      # guest/.cargo/config.toml, overriding riscv_common link.x's 768 MiB
-      # PROVIDE). Assert it: any RUSTFLAGS / `--config build.rustflags` override
-      # REPLACES that array, silently reverting the guest to 768 MiB — a valid
-      # binary whose app.bin no longer matches the registered VK, which only
-      # surfaces as rejected proofs on L1. See the script header.
+      # guest/.cargo/config.toml) and is baked into both VKs, so a guest built
+      # with an unintended arena matches no registered VK. See the script header
+      # for the drift paths this catches.
       - name: Check guest memory layout
         # keep in sync with the identical 'Check guest memory layout' step in release-artifacts.yaml
         working-directory: ./guest

@@ -66,8 +66,7 @@ jobs:
 
       # Same memory-layout gate as ci-check's guest-build: the released artifact
       # must carry the intended heap arena, since the VK is derived from this
-      # exact app.bin. A dropped `--defsym=_heap_size` reverts it to
-      # riscv_common's 768 MiB default. See the script header.
+      # exact app.bin. See the script header.
       - name: Check guest memory layout
         # keep in sync with the identical 'Check guest memory layout' step in ci-check.yaml
         working-directory: ./guest

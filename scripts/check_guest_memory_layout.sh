@@ -4,28 +4,29 @@
 #
 # The guest's heap arena is a LINK-TIME constant: `riscv_common`'s link.x
 # `PROVIDE(_heap_size = 768M)`, overridden in guest/.cargo/config.toml with
-# `-C link-arg=--defsym=_heap_size=<bytes>`. Two failure modes make that worth
-# asserting on every build:
+# `-C link-arg=--defsym=_heap_size=<bytes>`. The arena is baked into app.bin and
+# therefore into both verification keys, so a guest built with an unintended one
+# is a guest no registered VK accepts. Drift paths this catches:
 #
-#   1. A silent revert to the 768 MiB default. `[build] rustflags` in
-#      guest/.cargo/config.toml is REPLACED (not merged) by a RUSTFLAGS /
-#      CARGO_ENCODED_RUSTFLAGS env var or a `--config build.rustflags=[...]`
-#      override, which drops the `--defsym`. The result is a perfectly valid
-#      guest with a DIFFERENT app.bin sha than the registered verification key:
-#      every proof it produces is rejected on L1, and nothing before settlement
-#      notices. This check turns that into a build failure.
+#   * a rustflags list RE-AUTHORED without the `--defsym` — a Dockerfile, a CI
+#     matrix, a downstream build, or a re-scaffold. This is the concrete one:
+#     `cargo airbender new` emits a guest .cargo/config.toml carrying
+#     `-Tmemory.x`/`-Tlink.x` but NO `--defsym`, so a config reconciled against
+#     that template links fine and silently falls back to 768 MiB;
+#   * an upstream `PROVIDE(_heap_size = ...)` change at the next airbender bump;
+#   * a change in `--defsym`-vs-`PROVIDE` precedence in a new toolchain;
+#   * `.rodata`/`.bss` growth pushing `_sheap` off its expected 2 MiB slot.
 #
-#   2. Silent loss of arena to static growth. `.heap` starts at the 2 MiB-aligned
-#      end of .bss, so new .rodata/.bss pushes `_sheap` up. Overshooting RAM is
-#      already caught by the linker ("section '.heap' will not fit in region
-#      'RAM'"), but a heap that merely ends up somewhere unintended is not.
+# (A whole-array RUSTFLAGS override is NOT one of them: it drops `-Tmemory.x`
+# / `-Tlink.x` and the getrandom cfg with the `--defsym`, so the build fails
+# loudly rather than silently reverting. The reachable shape is always a list
+# that KEEPS the linker scripts and loses only the `--defsym`.)
 #
-# The machine's address space is exactly 1 GiB — `riscv_transpiler`'s
-# `jit::RAM_SIZE`/`MAX_RAM_SIZE` and airbender-host's `DEFAULT_RAM_BOUND_BYTES`
-# are both `1 << 30`, and the simulator indexes that array with `get_unchecked`
-# behind a `debug_assert` only — so `_eheap` above the RAM top would be an
-# out-of-bounds host access in a release prover, not a clean error. Hence the
-# explicit ceiling assert here as well.
+# The machine's address space is 1 GiB (`riscv_transpiler`'s `jit::RAM_SIZE`;
+# airbender-host defaults `ram_bound` to the same `1 << 30`), and the simulator
+# indexes that array with `get_unchecked` behind a `debug_assert` only — so
+# `_eheap` above the RAM top would be an out-of-bounds host access in a release
+# prover, not a clean error. Hence the explicit ceiling assert here as well.
 #
 # Usage:
 #   check_guest_memory_layout.sh <app.elf> [--expect-heap-mib N]
@@ -84,6 +85,12 @@ done
 [[ -z "$EXPECT_HEAP_MIB" || "$EXPECT_HEAP_MIB" =~ ^[0-9]+$ ]] \
   || die "--expect-heap-mib must be a non-negative integer"
 [[ "$RAM_TOP_MIB" =~ ^[0-9]+$ ]] || die "--ram-top-mib must be a non-negative integer"
+
+# Normalize to base 10 once: the regexes above accept a leading zero, which bash
+# arithmetic would read as octal — silently for `02000`, and as a hard expansion
+# error for `0952`.
+[[ -z "$EXPECT_HEAP_MIB" ]] || EXPECT_HEAP_MIB=$((10#$EXPECT_HEAP_MIB))
+RAM_TOP_MIB=$((10#$RAM_TOP_MIB))
 
 # --- Tool discovery -----------------------------------------------------------
 # Same anchoring as check_guest_riscv_code.sh: resolve llvm-nm from the toolchain
@@ -150,11 +157,12 @@ guest RAM layout ($ELF):
   .stack   $(hex "$ESTACK") .. $(hex "$SSTACK")   $(mib "$STACK_SIZE") (grows down from _sstack)
   .heap    $(hex "$SHEAP") .. $(hex "$EHEAP")   $(mib "$HEAP_SIZE") ($HEAP_SIZE bytes)
   RAM top  $(hex "$RAM_TOP")                 $(mib "$RAM_TOP") — machine address space
-  unused   $(mib $((RAM_TOP - EHEAP))) above _eheap
+  unused   $(mib $(( EHEAP <= RAM_TOP ? RAM_TOP - EHEAP : 0 ))) above _eheap
 EOF
 
 # --- Assertions ---------------------------------------------------------------
 FAILURES=0
+CHECKED=0
 fail() {
   echo "FAIL: $*" >&2
   FAILURES=$((FAILURES + 1))
@@ -184,12 +192,26 @@ if [[ -n "$EXPECT_HEAP_MIB" ]]; then
     fail "heap is $(mib "$HEAP_SIZE") ($HEAP_SIZE bytes), expected ${EXPECT_HEAP_MIB} MiB ($expect_bytes bytes)"
     if (( HEAP_SIZE == 768 * MIB )); then
       echo "hint: 768 MiB is riscv_common link.x's PROVIDE default — the" >&2
-      echo "      '--defsym=_heap_size=...' link-arg in guest/.cargo/config.toml did not reach" >&2
-      echo "      the linker. A RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS env var or a" >&2
-      echo "      '--config build.rustflags=[...]' override REPLACES that array. This guest" >&2
-      echo "      would not match the registered verification key." >&2
+      echo "      '--defsym=_heap_size=...' link-arg did not reach the linker. Either the flag" >&2
+      echo "      was edited out of guest/.cargo/config.toml, or this build used a rustflags" >&2
+      echo "      list re-authored without it (note: the 'cargo airbender new' scaffold ships" >&2
+      echo "      -Tmemory.x/-Tlink.x but no --defsym). This guest matches no registered VK." >&2
+    else
+      # Not the PROVIDE default, so the arena was set deliberately and one of the
+      # sites that state it was left behind. They are independent on purpose — the
+      # config is the cause, the workflows are a separate assertion of intent — so
+      # the fix is to move them together, never to derive one from the other.
+      echo "hint: the linked arena is neither the expected value nor link.x's 768 MiB default," >&2
+      echo "      so it was changed deliberately somewhere. If that change is intended, update" >&2
+      echo "      ALL of these together:" >&2
+      echo "        - guest/.cargo/config.toml        --defsym=_heap_size=<bytes>  (the cause)" >&2
+      echo "        - .github/workflows/ci-check.yaml           --expect-heap-mib" >&2
+      echo "        - .github/workflows/release-artifacts.yaml  --expect-heap-mib" >&2
+      echo "        - README.md 'Guest memory (heap arena)'     (prose only; nothing checks it)" >&2
+      echo "      and remember it changes app.bin, so both VKs must be regenerated." >&2
     fi
   fi
+  CHECKED=1
 fi
 
 if (( FAILURES > 0 )); then
@@ -198,6 +220,8 @@ if (( FAILURES > 0 )); then
 fi
 
 if [[ -n "$EXPECT_HEAP_MIB" ]]; then
+  # The success message must never outlive the comparison that earns it.
+  (( CHECKED )) || die "internal: the heap size was never compared — refusing to report success"
   echo "OK: heap is exactly ${EXPECT_HEAP_MIB} MiB and the layout is within the 1 GiB machine RAM"
 else
   echo "OK: layout is within the 1 GiB machine RAM (no --expect-heap-mib given, size not pinned)"
