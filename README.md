@@ -197,6 +197,15 @@ cargo run --release -p eravm-prover-host --features gpu_snark -- gen-vks \
     --trusted-setup setup_gpu.key
 ```
 
+### Guest memory (heap arena)
+
+The guest runs on a fixed heap of **952 MiB**, pinned by `-C link-arg=--defsym=_heap_size=998244352` in [`guest/.cargo/config.toml`](guest/.cargo/config.toml); without it the arena would be the 768 MiB default that the pinned `riscv_common` `link.x` provides. The Airbender machine's address space is exactly 1 GiB (`riscv_transpiler`'s `jit::RAM_SIZE`, airbender-host's `DEFAULT_RAM_BOUND_BYTES`), laid out by `memory.x` as ROM 4 MiB + RAM 1020 MiB, and `.heap` starts at the 2 MiB-aligned end of `.bss` (70 MiB today) — so **954 MiB is the hard maximum** and 952 leaves one alignment slot of cushion for static growth.
+
+Two consequences worth knowing:
+
+- **The arena size is VK-relevant.** It is baked into `app.bin` (the `lui` immediate that materializes `_eheap`), so changing it changes the guest sha and therefore both verification keys: it ships as a patch upgrade like any other guest change, never as a runtime knob. [`scripts/check_guest_memory_layout.sh`](scripts/check_guest_memory_layout.sh) asserts the linked arena on every CI guest build — a dropped `--defsym` (any `RUSTFLAGS` or `--config build.rustflags` override replaces that array) would otherwise yield a valid guest that no registered VK accepts, visible only as rejected proofs.
+- **Overshooting fails loudly.** A value larger than the RAM region can hold is a link error (`section '.heap' will not fit in region 'RAM'`), never a silent overrun into memory the prover does not have.
+
 ### CUDA-free builds
 
 The FRI prover always runs on GPU (Airbender's CUDA `gpu_prover`), so the default build links CUDA. The default-on `gpu_fri` cargo feature gates that dependency, so a `--no-default-features` build of `eravm-prover-host` is completely CUDA-free — it can verify FRI proofs and wrap them into SNARKs on CPU, but cannot generate FRI proofs:

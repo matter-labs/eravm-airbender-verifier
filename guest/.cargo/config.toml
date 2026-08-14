@@ -2,6 +2,17 @@
 target = "riscv32im-risc0-zkvm-elf"
 rustflags = [
   "-C", "target-feature=+m,-unaligned-scalar-mem,+relax",
+  # Heap arena = 952 MiB (952 * 1048576; --defsym takes a byte count, not a
+  # `952M` suffix), overriding riscv_common link.x's `PROVIDE(_heap_size = 768M)`.
+  # The machine's address space is exactly 1 GiB (riscv_transpiler `jit::RAM_SIZE`,
+  # airbender-host `DEFAULT_RAM_BOUND_BYTES`; memory.x = ROM 4 MiB + RAM 1020 MiB)
+  # and `.heap` follows .bss 2 MiB-aligned at `_sheap` = 70 MiB, so 954 MiB is the
+  # hard maximum — 952 keeps one alignment slot spare so ~3.8 MiB of future
+  # .rodata/.bss growth cannot break the link. Overshooting is a link error, never
+  # a silent overrun. This value is baked into app.bin and therefore into both VKs
+  # (README "Guest memory (heap arena)"); scripts/check_guest_memory_layout.sh
+  # asserts it on every CI guest build.
+  "-C", "link-arg=--defsym=_heap_size=998244352",
   "-C", "link-arg=-Tmemory.x",
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=--save-temps",
