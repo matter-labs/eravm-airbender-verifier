@@ -203,7 +203,7 @@ The guest runs on a fixed heap of **952 MiB**, pinned by a `-C link-arg=--defsym
 
 Two consequences worth knowing:
 
-- **The arena size is VK-relevant.** It is baked into `app.bin` (the `lui` immediate that materializes `_eheap`), so changing it changes the guest sha and therefore both verification keys: it ships as a patch upgrade like any other guest change, never as a runtime knob. [`scripts/check_guest_memory_layout.sh`](scripts/check_guest_memory_layout.sh) asserts the linked arena on every CI guest build, so a guest built without the flag — a partial copy of these rustflags elsewhere, an upstream `PROVIDE` change, `.bss` growth moving `_sheap` — fails the build instead of shipping as a binary no registered VK accepts.
+- **The arena size is VK-relevant.** It is baked into `app.bin` (the `lui` immediate that materializes `_eheap`), so changing it changes the guest sha and therefore both verification keys: it ships as a patch upgrade like any other guest change, never as a runtime knob. [`scripts/check_guest_memory_layout.sh`](scripts/check_guest_memory_layout.sh) asserts the linked arena on every CI guest build, so a guest built without the flag — a rustflags list re-authored without it (the `cargo airbender new` scaffold is exactly that shape), an upstream `PROVIDE` change, a toolchain precedence change — fails the build instead of shipping as a binary no registered VK accepts.
 - **Overshooting fails loudly.** A value larger than the RAM region can hold is a link error (`section '.heap' will not fit in region 'RAM'`), never a silent overrun into memory the prover does not have.
 
 ### CUDA-free builds

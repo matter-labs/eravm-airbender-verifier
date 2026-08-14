@@ -13,9 +13,14 @@
 #     `cargo airbender new` emits a guest .cargo/config.toml carrying
 #     `-Tmemory.x`/`-Tlink.x` but NO `--defsym`, so a config reconciled against
 #     that template links fine and silently falls back to 768 MiB;
-#   * an upstream `PROVIDE(_heap_size = ...)` change at the next airbender bump;
-#   * a change in `--defsym`-vs-`PROVIDE` precedence in a new toolchain;
-#   * `.rodata`/`.bss` growth pushing `_sheap` off its expected 2 MiB slot.
+#   * an upstream `PROVIDE(_heap_size = ...)` change at the next airbender bump
+#     (a plain script assignment would beat the `--defsym` outright);
+#   * a change in `--defsym`-vs-`PROVIDE` precedence in a new toolchain.
+#
+# NOT caught, by design: `.rodata`/`.bss` growth moving `_sheap` up one 2 MiB slot.
+# The arena size is unchanged and the link still succeeds, so there is nothing to
+# reject; pinning `_sheap` would turn that benign growth into a build failure, and
+# past the cushion the linker fails on its own.
 #
 # (A whole-array RUSTFLAGS override is NOT one of them: it drops `-Tmemory.x`
 # / `-Tlink.x` and the getrandom cfg with the `--defsym`, so the build fails
