@@ -82,8 +82,24 @@ PHASE_FEATURES = {
 #     coefficient as a pseudo-intercept, which the online path (which omits it)
 #     silently drops.
 #   - initial_heap_words: a witness-only quantity, unavailable at sequencing time.
-# The base term absorbs their (near-constant) contribution instead.
-TOTAL_EXCLUDE = {"system_log_count", "initial_heap_words"}
+#   - used_bytecode_bytes / used_bytecode_count / storage_key_count: no online
+#     producer exists (the vm2/legacy tracer cannot emit them and BatchContext
+#     does not carry them — `git grep used_bytecode_bytes` hits only the enum and
+#     the offline fixtures). They are collinear with the ONLINE `decommit_cycles`
+#     (bytecode volume) and `merkle_leaf_count` respectively, so excluding them
+#     forces the per-byte bytecode cost onto `decommit_cycles` in `total` — where
+#     the deployed estimator can actually supply it — instead of letting NNLS park
+#     it on an offline feature the sequencer feeds as 0 (which silently prices a
+#     decommit flood at ~0: 22.7x under). They remain available to the per-phase
+#     `setup` fit (insight-only), just never to `total`.
+# The base term absorbs the near-constant ones' contribution instead.
+TOTAL_EXCLUDE = {
+    "system_log_count",
+    "initial_heap_words",
+    "used_bytecode_bytes",
+    "used_bytecode_count",
+    "storage_key_count",
+}
 
 # Precompile crypto features, calibrated separately from synthetic precompile-heavy
 # batches (see scripts/precompile_calibration/). They are ~0 in the organic mainnet
