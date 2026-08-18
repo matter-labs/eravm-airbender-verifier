@@ -59,9 +59,13 @@ ALLOWED_MNEMONICS=(
 
 # `csrrw` is allowed only against these CSRs — Airbender's CSR-mapped guest
 # I/O transport (0x7c0, airbender_core::wire::CsrTransport) and the delegated
-# hash precompiles (0x7c7 blake2, 0x7cb keccak). Any other CSR (or any other
-# csr* mnemonic) is not something the circuit proves and fails the check.
-ALLOWED_CSRS=(0x7c0 0x7c7 0x7cb)
+# precompile circuits: 0x7c7 blake2s, 0x7ca bigint-ops-with-control (the BN254
+# and secp field arithmetic behind the delegated ecrecover/ecadd/ecmul/
+# ecpairing/secp256r1 precompiles), 0x7cb keccak. These CSR offsets are
+# NON_DETERMINISM_CSR (0x7c0) + {7, 10, 11} per common_constants::delegation_types.
+# Any other CSR (or any other csr* mnemonic) is not something the circuit proves
+# and fails the check.
+ALLOWED_CSRS=(0x7c0 0x7c7 0x7ca 0x7cb)
 
 # Defined-symbol names that indicate soft-float arithmetic was linked in.
 # Covers the compiler-builtins float intrinsics families: arithmetic

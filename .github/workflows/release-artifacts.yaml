@@ -64,6 +64,17 @@ jobs:
             --baseline ../scripts/guest_softfloat_baseline.txt \
             --min-insns 500000
 
+      # Same memory-layout gate as ci-check's guest-build: the released artifact
+      # must carry the intended heap arena, since the VK is derived from this
+      # exact app.bin. See the script header.
+      - name: Check guest memory layout
+        # keep in sync with the identical 'Check guest memory layout' step in ci-check.yaml
+        working-directory: ./guest
+        run: |
+          bash ../scripts/check_guest_memory_layout.sh \
+            ../target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+            --expect-heap-mib 952
+
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:
