@@ -135,9 +135,12 @@ mod tests {
             witness.push_merkle_path(log.clone());
         }
 
-        for (i, log) in witness.merkle_paths.iter().enumerate() {
-            let expected_merkle_path_len = if i == 0 { 256 } else { 1 };
-            assert_eq!(log.merkle_paths.len(), expected_merkle_path_len);
+        // These siblings are not empty-subtree constants, so nothing is stripped:
+        // each path is stored exactly as pushed, independently of the others. (The
+        // old delta form stored `[256, 1, 1, …]` here — every later entry's size
+        // was a function of entry 0.)
+        for log in &witness.merkle_paths {
+            assert_eq!(log.merkle_paths.len(), 256);
         }
 
         let logs_from_witness: Vec<_> = witness.into_merkle_paths().collect();

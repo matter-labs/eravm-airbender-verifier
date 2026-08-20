@@ -252,14 +252,12 @@ impl ZkSyncTree {
         let mut witness = WitnessInputMerklePaths::new(starting_leaf_count + 1);
         witness.reserve(output.logs.len());
         for (log, instruction) in output.logs.iter().zip(instructions) {
-            let empty_levels_end = TREE_DEPTH - log.merkle_path.len();
-            let empty_subtree_hashes =
-                (0..empty_levels_end).map(|i| Blake2Hasher.empty_subtree_hash(i));
-            let merkle_paths = log.merkle_path.iter().copied();
-            let merkle_paths = empty_subtree_hashes
-                .chain(merkle_paths)
-                .map(|hash| hash.0)
-                .collect();
+            // Stored truncated to the populated depth: the levels below it are
+            // empty subtrees, and every fold re-prepends exactly those constants
+            // (`extend_merkle_path`). Padding here and stripping it again in
+            // `push_merkle_path` would be pure work, and the witness the guest
+            // holds is the same either way.
+            let merkle_paths = log.merkle_path.iter().map(|hash| hash.0).collect();
 
             let value_written = match instruction {
                 TreeInstruction::Write(entry) => entry.value.0,

@@ -142,6 +142,31 @@ pub fn blake2_fold_merkle_path(path: &[ValueHash], entry: TreeEntry) -> ValueHas
     ValueHash::from(hasher.finalize())
 }
 
+/// Length of the leading run of `path` already holding the canonical empty-subtree
+/// hash for its level — what `extend_merkle_path` regenerates when absent.
+///
+/// Fold-invariant for any input, adversarial included: each dropped element equals
+/// the constant the fold substitutes, so `fold(path) == fold(&path[n..])` and no
+/// accept/reject decision moves. Blake2-specific (the only hasher the proof path
+/// folds with).
+///
+/// Paths are bottom-up and omit the *bottom* levels, so `path[i]` sits at depth
+/// `TREE_DEPTH - path.len() + i`. Comparing against `empty_subtree_hash(i)` rather
+/// than `base + i` is right only for a full-depth path and silently misses the
+/// padding of an already-shortened one.
+///
+/// Over-long paths (`> TREE_DEPTH`) occupy no defined level: nothing is trimmed,
+/// and the caller's bound rejects them.
+pub fn empty_subtree_prefix_len(path: &[[u8; 32]]) -> usize {
+    let Some(base) = TREE_DEPTH.checked_sub(path.len()) else {
+        return 0;
+    };
+    path.iter()
+        .enumerate()
+        .take_while(|(i, hash)| Blake2Hasher.empty_subtree_hash(base + *i).0 == **hash)
+        .count()
+}
+
 impl fmt::Debug for dyn HashTree + '_ {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("HashTree").finish_non_exhaustive()
@@ -368,6 +393,90 @@ mod fused_fold_tests {
                 );
             }
         }
+    }
+
+    /// Fold-invariance of `empty_subtree_prefix_len` — the property the witness
+    /// trimming relies on: dropping a path's leading canonical empty-subtree run
+    /// cannot change the root it folds to, for *any* input.
+    ///
+    /// Covers, per random shape: a full-depth padded path (what the old producer
+    /// emitted), a **partially** stripped one (what a legacy delta-compacted
+    /// witness carries — the case that exercises the depth offset), one with no
+    /// empty prefix at all, and the degenerate all-empty path.
+    #[test]
+    fn trimming_the_empty_prefix_does_not_change_the_fold() {
+        use crate::hasher::empty_subtree_prefix_len;
+
+        let empty_at = |depth: usize| Blake2Hasher.empty_subtree_hash(depth).0;
+        let as_hashes =
+            |p: &[[u8; 32]]| -> Vec<ValueHash> { p.iter().map(|h| ValueHash::from(*h)).collect() };
+        let mut rng = StdRng::seed_from_u64(0x00c0_ffee);
+        let mut saw_partial_trim = false;
+        for _ in 0..128 {
+            let populated = rng.gen_range(0..=TREE_DEPTH);
+            let tail: Vec<[u8; 32]> = (0..populated).map(|_| rng.gen::<[u8; 32]>()).collect();
+            let padded: Vec<[u8; 32]> = (0..TREE_DEPTH - populated)
+                .map(empty_at)
+                .chain(tail.iter().copied())
+                .collect();
+            // Legacy stored form: padded, then cut to `stored_len >= populated`,
+            // so it keeps `stored_len - populated` empty hashes at depths
+            // `TREE_DEPTH - stored_len ..`.
+            let stored_len = rng.gen_range(populated..=TREE_DEPTH);
+            let legacy = padded[TREE_DEPTH - stored_len..].to_vec();
+            let all_empty: Vec<[u8; 32]> = (0..TREE_DEPTH).map(empty_at).collect();
+
+            let entry = TreeEntry {
+                key: U256::from_big_endian(&rng.gen::<[u8; 32]>()),
+                value: H256::from(rng.gen::<[u8; 32]>()),
+                leaf_index: rng.gen(),
+            };
+            for path in [padded, legacy.clone(), tail.clone(), all_empty] {
+                let keep = empty_subtree_prefix_len(&path);
+                let trimmed = &path[keep..];
+                assert_eq!(
+                    blake2_fold_merkle_path(&as_hashes(&path), entry),
+                    blake2_fold_merkle_path(&as_hashes(trimmed), entry),
+                    "trimming {keep} of {} hashes changed the fold",
+                    path.len(),
+                );
+            }
+            // The legacy form's surplus must actually be recognised — the whole
+            // point — not merely be fold-invariant by being left alone.
+            let recognised = empty_subtree_prefix_len(&legacy);
+            assert_eq!(
+                recognised,
+                stored_len - populated,
+                "legacy surplus prefix not recognised (stored {stored_len}, populated {populated})"
+            );
+            saw_partial_trim |= recognised > 0 && legacy.len() < TREE_DEPTH;
+        }
+        assert!(saw_partial_trim, "the partially-stripped case never ran");
+    }
+
+    /// An over-long path occupies no well-defined levels, so NOTHING may be
+    /// trimmed from it — it must stay over-long and be rejected by the caller's
+    /// bound rather than be shortened into validity.
+    ///
+    /// This pins the `checked_sub` guard specifically: with `saturating_sub` the
+    /// function indexes `EMPTY_TREE_HASHES` out of bounds and this test panics.
+    /// The index-vs-depth offset is pinned elsewhere (by
+    /// `trimming_the_empty_prefix_does_not_change_the_fold` and
+    /// `witness::tests::trim_empty_prefixes_normalises_…`); the `checked_sub`
+    /// early return means *this* test cannot discriminate it.
+    #[test]
+    fn empty_prefix_len_trims_nothing_from_an_over_long_path() {
+        use crate::hasher::empty_subtree_prefix_len;
+
+        let over_long: Vec<[u8; 32]> = (0..=TREE_DEPTH + 4)
+            .map(|d| Blake2Hasher.empty_subtree_hash(d.min(TREE_DEPTH)).0)
+            .collect();
+        assert_eq!(empty_subtree_prefix_len(&over_long), 0);
+        // Exactly-TREE_DEPTH is the boundary that *is* trimmable.
+        let full: Vec<[u8; 32]> = (0..TREE_DEPTH)
+            .map(|d| Blake2Hasher.empty_subtree_hash(d).0)
+            .collect();
+        assert_eq!(empty_subtree_prefix_len(&full), TREE_DEPTH);
     }
 
     /// The documented panic. It is load-bearing: `extend_merkle_path` computes

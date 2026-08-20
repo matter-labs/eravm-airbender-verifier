@@ -146,7 +146,15 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// Commitment-input-dependent checks (prev binding, blob verification) are
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
-pub fn execute(input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
+    // Reclaim the witness's redundant empty-subtree prefixes before the VM runs:
+    // the witness stays resident until the Merkle fold at the end, so it is additive
+    // with every execution-time memory sink. Fold-invariant, so no accept/reject
+    // decision moves. Load-bearing against a legacy-format witness, whose surplus
+    // per entry is `depth(entry 0) - depth(entry i)` — and entry 0 is the smallest
+    // `(address, key)` touched, so one slot ground next to it inflates every entry.
+    input.merkle_paths.trim_empty_prefixes();
+
     // Pin the protocol version to the single one this verifier is built for.
     // `protocol_version` is operator-supplied and only *gates* commitment fields
     // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
