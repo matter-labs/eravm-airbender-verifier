@@ -161,6 +161,121 @@ OPCODE_FLOORS = {
     "transient_storage_read": 500,
     "average_op": 236,
     "near_call_count": 236,
+    # --- collinear-zeroed buckets (added 2026-08-19) ------------------------
+    # NNLS prices these at exactly 0 on organic mainnet: each is near-perfectly
+    # collinear with costlier priced work that absorbs its cost (far_call with
+    # near_call_count/storage_read at |r| > 0.99; uma_read with
+    # rich_addressing_op). The TOTAL stays accurate, but a batch DOMINATED by
+    # one bucket is then priced at ~0 on that axis. A zero coefficient is
+    # invisible to every guard: `unpriced_used` keys on a feature's ABSENCE
+    # from the table, not on its value (model.rs:148), and
+    # `extrapolated_features` only watches the rich-addressing share — which a
+    # degenerate flood has none of. Floors only ever RAISE a prediction, so
+    # they are strictly conservative for the seal gate.
+    #
+    # far_call: `far_call r0, r0, @self` is a complete attack iteration at
+    # exactly 183 ergs (STORAGE_READ_IO_PRICE 150 + CALL_LIKE_ERGS_COST 20 +
+    # 8+2+1+1+1; the code-hash sload is inside the 183) with ZERO
+    # rich_addressing_op — the ABI register may be r0 and the exception handler
+    # is a free back-edge. With no batch-level gas cap, ~46 txs x 80M gas reach
+    # ~20M far calls (46*80e6/183 = 20.1M).
+    #
+    # NOT priced at zero before this floor: the Ret<Panic> back-edge bumps
+    # `average_op` (tracer.rs:80, `Opcode::Ret(_) => FeatureId::AverageOp`),
+    # which is floored at 236 — so the flood was under-priced ~15x, not
+    # infinitely. Still load-bearing: at 236 the flood predicts 4.7e9 and the
+    # gate ACCEPTS a batch whose true cost is >=72e9, past the 2^36 budget; at
+    # 15,000 it predicts 300e9 and the gate rejects.
+    #
+    # 15,000 is a deliberately conservative STOPGAP, not a measurement. The
+    # empirical anchors, all well below it:
+    #   6,156  fitted far_call, 49-batch total fit (effective cycles)
+    #   5,794  fitted far_call, 176-batch vm_execution phase fit (raw cycles)
+    #   ~3.6k  measured per-iteration intercept B, the floor a bare iteration
+    #          cannot go below. Across every arm and mode in stackbench
+    #          dos-cycle-test/results/stack-clear/RESULTS.md:134-143 it spans
+    #          3,555-3,755 (dense-master mode 1 = 3,723; S115 = 3,680;
+    #          S124 = 3,607). The pinned v0.6.3 (be1e50b) carries chunked-stack
+    #          machinery (SlotChunk/zeroed_chunk) that the plain dense revs lack
+    #          but does not map cleanly onto one bench arm, so the band — not any
+    #          single arm — is the honest anchor. The cost is the `pointer_flags`
+    #          Bitset reset, NOT Stack::zero, which runs only on pool REUSE.
+    # 15,000 is ~2.4x the highest anchor, chosen to leave headroom for the
+    # per-call work none of these isolate (code-hash storage read, decommit +
+    # program-cache lookups, two heap allocations, 512-byte register wipe).
+    # It is NOT de-staled from the old table's 15,004: a warm far call does no
+    # blake2/keccak, so the ~2.06x delegation speedup never applied to it.
+    # REPLACE WITH A DIRECT MEASUREMENT (~1 day) — this value is not derived
+    # from one, and its closeness to the old coefficient is not evidence.
+    "far_call": 15000,
+    # decommit: the CodeOracle.decommitCode repeat path refunds the ergs but
+    # still re-resolves the bytes O(len) per query (vm_fast/world.rs:237-260),
+    # and `decommit_cycles` does NOT cover it — that counter fires only on a
+    # FRESH decommit. For a 2 MiB contract this value is ~4x under on that
+    # path, and ~70x under on the program_cache-hit rebuild (world.rs:104-115)
+    # an attacker can force with a single far call. Not de-staled either.
+    "decommit": 285000,
+    "event": 2287,
+    "uma_read": 77,
+    # --- crypto precompiles (added 2026-08-19) -----------------------------
+    # These previously came from `residual_precompile_fit` on SYNTHETIC batches
+    # (--precompile-dataset). No such dataset exists for the delegation guest —
+    # regenerating one needs a local era node (scripts/precompile_calibration) —
+    # so this refit ran WITHOUT it and the values below are pinned literals
+    # carried forward from the pre-delegation table.
+    #
+    # ⚠️ UNITS: despite the `_cycles` names these are CALL COUNTS, so a
+    # coefficient is the cost of ONE call and must be compared against a
+    # per-call derivation, never a per-cycle figure. Both live paths emit 1:
+    # OptimizedPrecompiles' fast path returns `CycleStats::EcRecover(1)`
+    # directly (vm_fast/world.rs:292), and everything else falls through to
+    # LegacyPrecompiles, which forwards `ecrecover_function`'s round count —
+    # and that is `const NUM_ROUNDS: usize = 1` in zk_evm's ECRecoverPrecompile
+    # (zk_evm_abstractions/src/precompiles/ecrecover.rs:33). Sanity check: the
+    # corpus averages ~1,026/batch, consistent with one signature check per tx.
+    #
+    # Four have zero volume in all 176 organic batches (columns absent
+    # entirely), so the organic fit cannot price them at any corpus size and
+    # their floors are FREE organically. Their values are carried forward from
+    # the pre-delegation table where that is conservative against
+    # native_cost_conversion.md's per-call derivation (secp256r1 16.2x over,
+    # ec_add 3.2x, ec_pairing ~9.6x).
+    #
+    # TWO are raised to that derivation instead, because carrying the old value
+    # forward is NOT conservative for them:
+    #   ec_recover_cycles — the only one with real organic volume
+    #     (~1,026 calls/batch). Unfloored the fit gives 230,993 = 0.63x the
+    #     derived 368,000 (240,000 raw + 32,000 bigint delegations at the
+    #     target's own w=4). It is in SAFETY_CRITICAL_FEATURES and
+    #     unprivileged-callable (every ecrecover), and because it is PRESENT
+    #     `unpriced_used` can never flag it. NOTE the old table's 11,467,511 is
+    #     NOT a valid floor here: at 1,026 calls/batch it prices ecrecover at
+    #     ~98% of an entire mean batch (11.8e9 of 12.0e9) and drives organic
+    #     MAPE to 106.7%. That value is a residual-fit artifact, not a per-call
+    #     cost, and this refit correcting it 49.6x downward is a FIX, not a
+    #     regression.
+    #   ec_mul_cycles — 201,185 is 0.25x the derived 811,000 (647,000 +
+    #     41,000 x 4). Pre-existing under-pricing, not introduced here, but free
+    #     to close (zero organic volume).
+    # Cost of both floors on organic traffic: 1.17% per batch.
+    #
+    # These previously came from `residual_precompile_fit` on SYNTHETIC batches
+    # (--precompile-dataset). No such dataset exists for the delegation guest —
+    # regenerating one needs a local era node (scripts/precompile_calibration) —
+    # so this refit ran WITHOUT it and these are pinned literals. Kept PRESENT
+    # rather than absent deliberately: absence would trip `unpriced_used` and
+    # reject every batch touching a pairing outright, a liveness regression
+    # against the deployed table. The tradeoff is real — presence disarms the
+    # one fail-closed guard that would otherwise catch under-pricing here.
+    # At the doc's provisional d~40 (rather than w=4) ec_recover would derive to
+    # 1,520,000 and ec_mul to 2,287,000; that costs ~11% organically, so it is
+    # deliberately NOT applied while d is unpinned. Re-measure all six.
+    "ec_add_cycles": 185724,
+    "ec_mul_cycles": 811000,
+    "ec_pairing_cycles": 66604671,
+    "mod_exp_cycles": 952644,
+    "secp256r1_verify_cycles": 12665313,
+    "ec_recover_cycles": 368000,
 }
 
 
@@ -181,8 +296,19 @@ def apply_opcode_floors(table: dict) -> list:
 #   1991 = Blake2 round function (+7)  -> BLAKE_DELEGATION_COEFFICIENT  = 16
 #   1995 = Keccak special5      (+11)  -> KECCAK_DELEGATION_COEFFICIENT = 4
 # The guest delegates keccak (1995), so keccak is NOT software here. The U256/
-# bigint delegation (1994, +10, weight 4) exists but does not appear in this
-# corpus. Any delegation id NOT in this map raises an error in load_dataset — a
+# bigint delegation (1994, +10, weight 4) appears in ALL 176 batches of the
+# delegation-guest corpus (7.43e9 counts -> 2.97e10 weighted cycles = 1.31% of
+# corpus effective, 18.9% of delegation cost) — the earlier note that it 'does
+# not appear in this corpus' was true only of the pre-delegation corpus.
+# TODO(unverified): the 16/4/4 weights have NO authoritative source in-tree and
+# are attributed above to zksync-os's `native_with_delegations!`, but per
+# native_cost_conversion.md that macro supplies delegation COUNTS, and its own
+# calibration puts a delegation at d ~ 40 raw cycles — 2.5-10x from 16/4/4. The
+# two in-tree documents disagree; a microbench should pin d. Sensitivity: refits
+# at w(1994) in {0,2,4,8,16,40} leave fitted far_call at 0.0 and worst-under at
+# 0.000%, moving MAPE only 11.85%->10.49%, so conclusions hold — but the
+# absolute SCALE of the effective-cycle target against the real native budget
+# does not (d=40 would raise corpus effective +13.2%). Any delegation id NOT in this map raises an error in load_dataset — a
 # fail-safe against silently under-counting a new/enabled delegation.
 DELEGATION_WEIGHTS = {"1991": 16, "1994": 4, "1995": 4}
 
@@ -390,7 +516,8 @@ def main():
             report.append(f"| {feat} | {fitted:,.2f} | {floor:,.0f} |")
     result["total"] = {"features": total_table, "base": float(base), "r2": r2}
     # Calibration envelope for the compute-vector guard. rich_addressing_op is left
-    # UNDER-priced (coef ~71 vs true ~236) because flooring it wrecks organic
+    # UNDER-priced (coef ~117 after the 2026-08-19 refit, was ~71, vs true ~236)
+    # because flooring it wrecks organic
     # accuracy; instead the estimator flags any batch where rich_addressing's SHARE
     # of the prediction exceeds what organic batches ever reach (absolute count
     # can't separate them — big mainnet batches have more rich ops than an attack

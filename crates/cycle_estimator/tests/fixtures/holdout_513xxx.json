@@ -1,8 +1,8 @@
 [
  {
   "batch_number": 513601,
-  "raw_cycles": 16649121486,
-  "effective_cycles": 17054407638,
+  "raw_cycles": 6797472491,
+  "effective_cycles": 7442071263,
   "features": {
    "counts": {
     "rich_addressing_op": 5322271,
@@ -37,8 +37,8 @@
  },
  {
   "batch_number": 513602,
-  "raw_cycles": 14582775603,
-  "effective_cycles": 14939349535,
+  "raw_cycles": 7286264440,
+  "effective_cycles": 7846911304,
   "features": {
    "counts": {
     "rich_addressing_op": 7023484,
@@ -73,8 +73,8 @@
  },
  {
   "batch_number": 513603,
-  "raw_cycles": 11870943954,
-  "effective_cycles": 12176113598,
+  "raw_cycles": 7436578113,
+  "effective_cycles": 7910722705,
   "features": {
    "counts": {
     "rich_addressing_op": 7359554,
@@ -109,8 +109,8 @@
  },
  {
   "batch_number": 513604,
-  "raw_cycles": 11528675943,
-  "effective_cycles": 11838067699,
+  "raw_cycles": 7012704333,
+  "effective_cycles": 7484229797,
   "features": {
    "counts": {
     "rich_addressing_op": 7420474,
@@ -145,8 +145,8 @@
  },
  {
   "batch_number": 513605,
-  "raw_cycles": 13938739597,
-  "effective_cycles": 14275618997,
+  "raw_cycles": 7344787170,
+  "effective_cycles": 7883122742,
   "features": {
    "counts": {
     "rich_addressing_op": 7099561,
@@ -181,8 +181,8 @@
  },
  {
   "batch_number": 513606,
-  "raw_cycles": 13882730571,
-  "effective_cycles": 14235706595,
+  "raw_cycles": 7333996566,
+  "effective_cycles": 7883643502,
   "features": {
    "counts": {
     "rich_addressing_op": 7099286,
@@ -217,8 +217,8 @@
  },
  {
   "batch_number": 513607,
-  "raw_cycles": 14084985980,
-  "effective_cycles": 14425723904,
+  "raw_cycles": 7590381736,
+  "effective_cycles": 8135445700,
   "features": {
    "counts": {
     "rich_addressing_op": 7117076,
@@ -253,8 +253,8 @@
  },
  {
   "batch_number": 513608,
-  "raw_cycles": 11486261653,
-  "effective_cycles": 11770587917,
+  "raw_cycles": 6951070433,
+  "effective_cycles": 7403649961,
   "features": {
    "counts": {
     "rich_addressing_op": 7448659,
@@ -289,8 +289,8 @@
  },
  {
   "batch_number": 513609,
-  "raw_cycles": 14657002050,
-  "effective_cycles": 15049927974,
+  "raw_cycles": 6596916686,
+  "effective_cycles": 7198812510,
   "features": {
    "counts": {
     "rich_addressing_op": 5257381,
@@ -325,8 +325,8 @@
  },
  {
   "batch_number": 513610,
-  "raw_cycles": 9904910396,
-  "effective_cycles": 10220659860,
+  "raw_cycles": 4103915301,
+  "effective_cycles": 4569243765,
   "features": {
    "counts": {
     "rich_addressing_op": 2578507,
@@ -361,8 +361,8 @@
  },
  {
   "batch_number": 513611,
-  "raw_cycles": 10209215036,
-  "effective_cycles": 10518401292,
+  "raw_cycles": 4111718476,
+  "effective_cycles": 4574351552,
   "features": {
    "counts": {
     "rich_addressing_op": 2485980,
@@ -397,8 +397,8 @@
  },
  {
   "batch_number": 513612,
-  "raw_cycles": 11675085100,
-  "effective_cycles": 12024526536,
+  "raw_cycles": 4800315769,
+  "effective_cycles": 5321450337,
   "features": {
    "counts": {
     "rich_addressing_op": 3581980,
@@ -433,8 +433,8 @@
  },
  {
   "batch_number": 513613,
-  "raw_cycles": 11266087207,
-  "effective_cycles": 11594610911,
+  "raw_cycles": 4249386266,
+  "effective_cycles": 4749086650,
   "features": {
    "counts": {
     "rich_addressing_op": 2853650,
@@ -469,8 +469,8 @@
  },
  {
   "batch_number": 513614,
-  "raw_cycles": 10955798609,
-  "effective_cycles": 11283818473,
+  "raw_cycles": 4413247677,
+  "effective_cycles": 4905534437,
   "features": {
    "counts": {
     "rich_addressing_op": 2955473,
@@ -505,8 +505,8 @@
  },
  {
   "batch_number": 513615,
-  "raw_cycles": 17104331611,
-  "effective_cycles": 17561271239,
+  "raw_cycles": 8077277063,
+  "effective_cycles": 8766566623,
   "features": {
    "counts": {
     "rich_addressing_op": 6577338,
@@ -541,8 +541,8 @@
  },
  {
   "batch_number": 513616,
-  "raw_cycles": 13571593483,
-  "effective_cycles": 13972925763,
+  "raw_cycles": 7878670080,
+  "effective_cycles": 8472037656,
   "features": {
    "counts": {
     "rich_addressing_op": 6946230,
@@ -577,8 +577,8 @@
  },
  {
   "batch_number": 513617,
-  "raw_cycles": 16171830590,
-  "effective_cycles": 16614698178,
+  "raw_cycles": 8214272908,
+  "effective_cycles": 8880855300,
   "features": {
    "counts": {
     "rich_addressing_op": 6568401,
@@ -613,8 +613,8 @@
  },
  {
   "batch_number": 513618,
-  "raw_cycles": 16304534280,
-  "effective_cycles": 16745715280,
+  "raw_cycles": 7786156182,
+  "effective_cycles": 8455126530,
   "features": {
    "counts": {
     "rich_addressing_op": 6568119,
@@ -649,8 +649,8 @@
  },
  {
   "batch_number": 513619,
-  "raw_cycles": 10935800212,
-  "effective_cycles": 11266702420,
+  "raw_cycles": 4672605441,
+  "effective_cycles": 5164046129,
   "features": {
    "counts": {
     "rich_addressing_op": 3074296,
@@ -685,8 +685,8 @@
  },
  {
   "batch_number": 513620,
-  "raw_cycles": 11084215637,
-  "effective_cycles": 11412569737,
+  "raw_cycles": 4590753377,
+  "effective_cycles": 5082503069,
   "features": {
    "counts": {
     "rich_addressing_op": 2992393,
@@ -721,8 +721,8 @@
  },
  {
   "batch_number": 513621,
-  "raw_cycles": 11190785752,
-  "effective_cycles": 11520822376,
+  "raw_cycles": 4755053356,
+  "effective_cycles": 5253007380,
   "features": {
    "counts": {
     "rich_addressing_op": 3781460,
@@ -757,8 +757,8 @@
  },
  {
   "batch_number": 513622,
-  "raw_cycles": 12485462476,
-  "effective_cycles": 12852203200,
+  "raw_cycles": 5707825314,
+  "effective_cycles": 6251620730,
   "features": {
    "counts": {
     "rich_addressing_op": 4012702,
@@ -793,8 +793,8 @@
  },
  {
   "batch_number": 513623,
-  "raw_cycles": 13401905599,
-  "effective_cycles": 13804329163,
+  "raw_cycles": 6168363807,
+  "effective_cycles": 6760577775,
   "features": {
    "counts": {
     "rich_addressing_op": 4164738,
@@ -829,8 +829,8 @@
  },
  {
   "batch_number": 513624,
-  "raw_cycles": 10666722421,
-  "effective_cycles": 11003430853,
+  "raw_cycles": 4765931226,
+  "effective_cycles": 5258871990,
   "features": {
    "counts": {
     "rich_addressing_op": 3096269,
@@ -865,8 +865,8 @@
  },
  {
   "batch_number": 513625,
-  "raw_cycles": 16230634125,
-  "effective_cycles": 16690477797,
+  "raw_cycles": 7716634357,
+  "effective_cycles": 8402591753,
   "features": {
    "counts": {
     "rich_addressing_op": 5981418,
@@ -901,8 +901,8 @@
  },
  {
   "batch_number": 513626,
-  "raw_cycles": 9743952484,
-  "effective_cycles": 10036546064,
+  "raw_cycles": 3891163254,
+  "effective_cycles": 4332000846,
   "features": {
    "counts": {
     "rich_addressing_op": 2934314,
@@ -937,8 +937,8 @@
  },
  {
   "batch_number": 513627,
-  "raw_cycles": 12762833550,
-  "effective_cycles": 13130407042,
+  "raw_cycles": 5761421197,
+  "effective_cycles": 6311356157,
   "features": {
    "counts": {
     "rich_addressing_op": 3938810,
@@ -973,8 +973,8 @@
  },
  {
   "batch_number": 513628,
-  "raw_cycles": 15916699649,
-  "effective_cycles": 16383063529,
+  "raw_cycles": 7653848260,
+  "effective_cycles": 8336155888,
   "features": {
    "counts": {
     "rich_addressing_op": 5439756,
@@ -1009,8 +1009,8 @@
  },
  {
   "batch_number": 513629,
-  "raw_cycles": 12610175065,
-  "effective_cycles": 12991566857,
+  "raw_cycles": 5815051695,
+  "effective_cycles": 6371990399,
   "features": {
    "counts": {
     "rich_addressing_op": 3873081,
@@ -1045,8 +1045,8 @@
  },
  {
   "batch_number": 513630,
-  "raw_cycles": 13721959144,
-  "effective_cycles": 14123538324,
+  "raw_cycles": 6624896522,
+  "effective_cycles": 7217580034,
   "features": {
    "counts": {
     "rich_addressing_op": 4495545,
@@ -1081,8 +1081,8 @@
  },
  {
   "batch_number": 513631,
-  "raw_cycles": 10046082708,
-  "effective_cycles": 10363354228,
+  "raw_cycles": 4394054855,
+  "effective_cycles": 4860327411,
   "features": {
    "counts": {
     "rich_addressing_op": 2580713,
@@ -1117,8 +1117,8 @@
  },
  {
   "batch_number": 513632,
-  "raw_cycles": 12918423340,
-  "effective_cycles": 13309959956,
+  "raw_cycles": 6404010288,
+  "effective_cycles": 6973458088,
   "features": {
    "counts": {
     "rich_addressing_op": 4702153,
@@ -1153,8 +1153,8 @@
  },
  {
   "batch_number": 513633,
-  "raw_cycles": 11158279059,
-  "effective_cycles": 11532532347,
+  "raw_cycles": 5607567068,
+  "effective_cycles": 6139096316,
   "features": {
    "counts": {
     "rich_addressing_op": 4157193,
@@ -1189,8 +1189,8 @@
  },
  {
   "batch_number": 513634,
-  "raw_cycles": 11971135717,
-  "effective_cycles": 12325957433,
+  "raw_cycles": 5393565392,
+  "effective_cycles": 5920928804,
   "features": {
    "counts": {
     "rich_addressing_op": 4207332,
@@ -1225,8 +1225,8 @@
  },
  {
   "batch_number": 513635,
-  "raw_cycles": 9360108841,
-  "effective_cycles": 9668101453,
+  "raw_cycles": 4278484678,
+  "effective_cycles": 4725611238,
   "features": {
    "counts": {
     "rich_addressing_op": 2735397,
@@ -1261,8 +1261,8 @@
  },
  {
   "batch_number": 513636,
-  "raw_cycles": 13360523953,
-  "effective_cycles": 13747275089,
+  "raw_cycles": 5787265865,
+  "effective_cycles": 6365771737,
   "features": {
    "counts": {
     "rich_addressing_op": 3972499,
@@ -1297,8 +1297,8 @@
  },
  {
   "batch_number": 513637,
-  "raw_cycles": 12518787447,
-  "effective_cycles": 12873136207,
+  "raw_cycles": 5114676808,
+  "effective_cycles": 5651110892,
   "features": {
    "counts": {
     "rich_addressing_op": 3469642,
@@ -1333,8 +1333,8 @@
  },
  {
   "batch_number": 513638,
-  "raw_cycles": 12522347451,
-  "effective_cycles": 12895711423,
+  "raw_cycles": 5259939694,
+  "effective_cycles": 5815229362,
   "features": {
    "counts": {
     "rich_addressing_op": 3685379,
@@ -1369,8 +1369,8 @@
  },
  {
   "batch_number": 513639,
-  "raw_cycles": 10175717169,
-  "effective_cycles": 10502639757,
+  "raw_cycles": 4798018360,
+  "effective_cycles": 5273500292,
   "features": {
    "counts": {
     "rich_addressing_op": 3240040,
@@ -1405,8 +1405,8 @@
  },
  {
   "batch_number": 513640,
-  "raw_cycles": 8781975955,
-  "effective_cycles": 9064584531,
+  "raw_cycles": 3530414825,
+  "effective_cycles": 3951304009,
   "features": {
    "counts": {
     "rich_addressing_op": 2360852,
@@ -1441,8 +1441,8 @@
  },
  {
   "batch_number": 513641,
-  "raw_cycles": 10922257901,
-  "effective_cycles": 11263140837,
+  "raw_cycles": 5379748524,
+  "effective_cycles": 5876605452,
   "features": {
    "counts": {
     "rich_addressing_op": 3257439,
@@ -1477,8 +1477,8 @@
  },
  {
   "batch_number": 513642,
-  "raw_cycles": 16141028082,
-  "effective_cycles": 16578425526,
+  "raw_cycles": 7605366140,
+  "effective_cycles": 8266353372,
   "features": {
    "counts": {
     "rich_addressing_op": 6669414,
@@ -1513,8 +1513,8 @@
  },
  {
   "batch_number": 513643,
-  "raw_cycles": 16463572382,
-  "effective_cycles": 16908849174,
+  "raw_cycles": 7793862400,
+  "effective_cycles": 8463823756,
   "features": {
    "counts": {
     "rich_addressing_op": 6487928,
@@ -1549,8 +1549,8 @@
  },
  {
   "batch_number": 513644,
-  "raw_cycles": 15787708386,
-  "effective_cycles": 16196557734,
+  "raw_cycles": 7219887588,
+  "effective_cycles": 7847367416,
   "features": {
    "counts": {
     "rich_addressing_op": 6804033,
@@ -1585,8 +1585,8 @@
  },
  {
   "batch_number": 513645,
-  "raw_cycles": 16851082959,
-  "effective_cycles": 17278427071,
+  "raw_cycles": 7803556808,
+  "effective_cycles": 8468383328,
   "features": {
    "counts": {
     "rich_addressing_op": 6611848,
@@ -1621,8 +1621,8 @@
  },
  {
   "batch_number": 513646,
-  "raw_cycles": 15211198716,
-  "effective_cycles": 15621833048,
+  "raw_cycles": 6524186483,
+  "effective_cycles": 7150305911,
   "features": {
    "counts": {
     "rich_addressing_op": 4529006,
@@ -1657,8 +1657,8 @@
  },
  {
   "batch_number": 513647,
-  "raw_cycles": 18358479934,
-  "effective_cycles": 18834914650,
+  "raw_cycles": 8205189547,
+  "effective_cycles": 8933560307,
   "features": {
    "counts": {
     "rich_addressing_op": 6410789,
@@ -1693,8 +1693,8 @@
  },
  {
   "batch_number": 513648,
-  "raw_cycles": 14898708916,
-  "effective_cycles": 15334877704,
+  "raw_cycles": 6773408302,
+  "effective_cycles": 7414958154,
   "features": {
    "counts": {
     "rich_addressing_op": 5175301,
@@ -1729,8 +1729,8 @@
  },
  {
   "batch_number": 513649,
-  "raw_cycles": 14756665345,
-  "effective_cycles": 15148614889,
+  "raw_cycles": 6129460139,
+  "effective_cycles": 6733436363,
   "features": {
    "counts": {
     "rich_addressing_op": 4656645,

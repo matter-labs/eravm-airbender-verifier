@@ -59,9 +59,19 @@ pub struct Calibration {
 }
 
 /// Multiplier applied to the calibration envelope before flagging extrapolation —
-/// headroom so ordinary organic variance never trips the guard (organic max share
-/// ~4.5%, so the trip point sits ~8%, while every measured compute-attack batch is
-/// 11–56%).
+/// headroom so ordinary organic variance never trips the guard.
+///
+/// ⚠️ The 2026-08-19 delegation refit WIDENED this envelope 2.75×:
+/// `rich_addressing_share_max` went 0.0423 → 0.1165, moving the trip point from
+/// ~7.6% to ~21.0%. The previous note here ("organic max ~4.5%, trip point ~8%,
+/// every measured compute-attack batch is 11–56%") no longer holds — a batch in
+/// the 11–21% band now passes the guard where it used to trip. Observed effect:
+/// the `mem_high` adversarial fixture batch flipped `in_cal=false` → `in_cal=true`
+/// (it stays covered, so no invariant breaks, but the margin is gone). The
+/// widening is a genuine property of the 176-batch corpus, not a bug — organic
+/// arithmetic share really is higher on the delegation guest, because delegating
+/// blake2/keccak shrinks the non-arithmetic denominator. Revisit whether 1.8 is
+/// still the right factor against the wider envelope.
 const EXTRAPOLATION_FACTOR: f64 = 1.8;
 
 /// The full fitted cost model: an aggregate `total` predictor over effective cycles
@@ -152,9 +162,16 @@ impl CostModel {
     /// Features whose contribution pushes the batch OUTSIDE the model's calibration
     /// envelope, so the (linear) prediction cannot be trusted and the caller must
     /// fail safe. Currently guards the compute vector: `rich_addressing_op` is
-    /// under-priced by ~3× (coef ~71 vs true ~236) — harmless organically, where it
+    /// under-priced by ~2× — `total.rich_addressing_op` is ~117 after the
+    /// 2026-08-19 refit (was ~71) against a true per-op cost of ~236. NB the
+    /// figure that matters here is the one in `total`, which is what this guard
+    /// and every seal decision read; `phases.vm_execution.rich_addressing_op` is
+    /// a different number (~163, up from ~2.30, since delegating blake2/keccak
+    /// freed that fit from crypto collinearity) and appears EARLIER in
+    /// cost_table.json, so it is easy to misread as this one. Being under-priced
+    /// is harmless organically, where arithmetic
     /// rides alongside priced storage, but a batch dominated by pure arithmetic is
-    /// under-estimated ~3×. Flagged when arithmetic's share of the prediction
+    /// under-estimated ~2×. Flagged when arithmetic's share of the prediction
     /// exceeds the organic envelope × [`EXTRAPOLATION_FACTOR`]. Returns empty when
     /// the table carries no calibration data (guard disabled).
     ///
