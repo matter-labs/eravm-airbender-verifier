@@ -97,9 +97,14 @@ impl CycleEstimate {
 
     /// Whether the batch fits under `limit` after applying `margin`. **Fails
     /// safe**: an unreliable estimate (unpriced precompiles) OR an out-of-envelope
-    /// batch (compute-dominated / extrapolating) never reports a fit, so a batch
-    /// the model can't price or can't be trusted to price forces the caller to
-    /// reject/split rather than silently ship an over-limit batch.
+    /// batch (compute-dominated / extrapolating) never reports a fit.
+    ///
+    /// ⚠️ A property of this function, not of any deployed gate. era's
+    /// `CyclesCriterion` never calls it: it reads [`Self::is_reliable`] /
+    /// [`Self::is_within_calibration`] directly, gates `ProofWillFail` on the
+    /// estimate being TRUSTED, and answers distrust with `IncludeAndSeal` — so
+    /// distrust removes the only path that would exclude the tx. A new fail-safe
+    /// signal must fold into one of the two trust predicates to have any effect.
     pub fn fits(&self, limit: u64, margin: f64) -> bool {
         self.is_reliable() && self.is_within_calibration() && self.conservative(margin) <= limit
     }

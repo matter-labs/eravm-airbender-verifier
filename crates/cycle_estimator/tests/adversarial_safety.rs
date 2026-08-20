@@ -7,8 +7,14 @@
 //! measured with cycle_bench. Left unhardened, the worst under-predicted ~9×
 //! (transient storage, priced 0) and ~3× (pure arithmetic). The gate must, for
 //! every batch, EITHER cover it within the seal margin OR refuse to price it
-//! (unpriced precompile / out-of-calibration), so it can never silently ship an
-//! over-budget batch. This locks in the OPCODE_FLOORS + calibration-envelope guard.
+//! (unpriced precompile / out-of-calibration). This locks in the OPCODE_FLOORS +
+//! calibration-envelope guard.
+//!
+//! ⚠️ SCOPE. This shows the estimator never *silently* under-prices — not that
+//! an over-budget batch cannot ship. Declining to certify only helps if the
+//! consumer refuses, and era's `CyclesCriterion` answers distrust with
+//! `IncludeAndSeal` (see `CycleEstimate::fits`). The four rows exempted below
+//! are therefore the shapes production keeps rather than refuses.
 //!
 //! ⚠️ MIXED MEASUREMENT VINTAGES — read before adding or re-tuning a row. Each
 //! row carries a `guest` field (ignored by the deserializer, informational). Eight
@@ -103,7 +109,13 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
         // The core invariant: any batch the gate would TRUST (reliable + within the
         // calibration envelope) must be covered by conservative(margin). A batch
         // the gate distrusts (extrapolated / unpriced) is allowed to under-predict
-        // because fits() refuses it anyway.
+        // here, because `fits()` would refuse it.
+        //
+        // That exemption covers 4 of the 9 rows (worst: `pure_compute`, 2.19x
+        // under) and is NOT a claim that they are handled safely downstream — the
+        // deployed consumer does not take the `fits()` path. This asserts that the
+        // ESTIMATOR does not lie, not that the sequencer is protected; tightening
+        // it needs the consumer to refuse a distrusted tx-level estimate.
         assert!(
             !trustworthy || covered,
             "{}: gate trusts it yet conservative(margin)={} < actual={} — live under-estimation vector",
