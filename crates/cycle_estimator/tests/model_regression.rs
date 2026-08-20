@@ -49,10 +49,15 @@ const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
 //
 // KNOWN LIMITATION: this fixture is 513xxx (Version29) only, and it is the
 // LOW-error family — the 506xxx half of the same corpus runs to +20.45%, median
-// +15.84%. The 4 available v31 batches are UNDER-predicted by 2.56%, which would
-// fail MAX_UNDER_PCT; they are out-of-distribution for a v29-fit table, but it
-// means this assertion is only verified on the family in the fixture. Widen the
-// fixture (and re-check both bounds) when a v31 corpus exists.
+// +15.84%. Of the 4 available v31 batches, 84730/84731/84732 are UNDER-predicted
+// by 2.56% and so would fail MAX_UNDER_PCT — but those three are one ~1.28e9-cycle
+// workload measured three times, not three data points, and the only LARGE real
+// v31 batch (900065, 26.6e9 cyc) OVER-predicts by 2.61%. All four stay covered by
+// the seal gate's 1.05 margin (1.246e9 * 1.05 = 1.309e9 > 1.279e9 actual), so this
+// is a fit-accuracy gap on out-of-distribution batches, not a live
+// seal-then-cannot-prove vector. It does mean the assertion below is only verified
+// on the family in the fixture: widen the fixture (and re-check both bounds) when
+// a real v31 corpus exists.
 const MAX_MAPE_PCT: f64 = 13.5;
 const MAX_SINGLE_ERR_PCT: f64 = 17.5;
 const MAX_UNDER_PCT: f64 = 0.0;

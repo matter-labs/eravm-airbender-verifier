@@ -61,11 +61,11 @@ pub struct Calibration {
 /// Multiplier applied to the calibration envelope before flagging extrapolation —
 /// headroom so ordinary organic variance never trips the guard.
 ///
-/// ⚠️ The 2026-08-19 delegation refit WIDENED this envelope 2.75×:
-/// `rich_addressing_share_max` went 0.0423 → 0.1165, moving the trip point from
-/// ~7.6% to ~21.0%. The previous note here ("organic max ~4.5%, trip point ~8%,
+/// ⚠️ The 2026-08-19 delegation refit WIDENED this envelope 2.73×:
+/// `rich_addressing_share_max` went 0.0423 → 0.1154, moving the trip point from
+/// ~7.6% to ~20.8%. The previous note here ("organic max ~4.5%, trip point ~8%,
 /// every measured compute-attack batch is 11–56%") no longer holds — a batch in
-/// the 11–21% band now passes the guard where it used to trip. Observed effect:
+/// the 11–20.8% band now passes the guard where it used to trip. Observed effect:
 /// the `mem_high` adversarial fixture batch flipped `in_cal=false` → `in_cal=true`
 /// (it stays covered, so no invariant breaks, but the margin is gone). The
 /// widening is a genuine property of the 176-batch corpus, not a bug — organic
