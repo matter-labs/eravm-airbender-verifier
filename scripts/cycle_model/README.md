@@ -155,7 +155,14 @@ proved), so the estimate is used conservatively:
 1. **Coverage guard** — `is_reliable()` / `fits()` fail safe when the batch uses
    a `SAFETY_CRITICAL_FEATURES` precompile the model prices at ~0 (a coefficient
    the corpus never constrained, e.g. ec_pairing/modexp). A margin can't rescue a
-   zero coefficient, so such a batch is rejected outright rather than trusted.
+   zero coefficient, so `fits()` reports no fit for such a batch rather than
+   trusting it.
+
+   > ⚠️ "Reports no fit" is not "is rejected" — refusing is the consumer's job,
+   > and today's consumer does not. zksync-era's `CyclesCriterion` never calls
+   > `fits()`, gates `ProofWillFail` on the estimate being *trusted*, and answers
+   > distrust with `IncludeAndSeal`. A new consumer must implement the refusal
+   > itself.
 2. **Safety margin** — `conservative(margin)` / `fits(limit, margin)` pad the
    prediction. The model systematically under-predicts a couple of percent
    (hold-out: 43/49 batches, worst −1.83%), so ~1.05–1.10 covers ordinary
