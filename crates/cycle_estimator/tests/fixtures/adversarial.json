@@ -3,6 +3,7 @@
   "batch_number": 69,
   "label": "transient_distinct_key",
   "effective_cycles": 15014154815,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 4823106,
@@ -36,6 +37,7 @@
   "batch_number": 70,
   "label": "compute_mem_low",
   "effective_cycles": 3203568941,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 16023260,
@@ -68,6 +70,7 @@
   "batch_number": 71,
   "label": "mem_high",
   "effective_cycles": 9449433956,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 19223414,
@@ -100,6 +103,7 @@
   "batch_number": 72,
   "label": "context_ops",
   "effective_cycles": 3409951393,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 12823274,
@@ -132,6 +136,7 @@
   "batch_number": 73,
   "label": "pure_compute",
   "effective_cycles": 8744844368,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 24023259,
@@ -161,33 +166,34 @@
   }
  },
  {
-  "batch_number": 74,
-  "label": "storage_reads_80k",
-  "effective_cycles": 27606969375,
+  "batch_number": 900065,
+  "label": "storage_reads_140k",
+  "effective_cycles": 26600614853,
+  "guest": "delegation guest, sha256 9228b6e21c4d29795ac7f7be8225995a1678d5a7bc8df8544f8259f91751bb76 (phase-marker build, 2026-08-19)",
   "features": {
    "counts": {
-    "rich_addressing_op": 349429,
-    "average_op": 5096,
-    "storage_read": 80165,
-    "storage_write": 105,
-    "event": 49,
-    "precompile_call": 140,
-    "far_call": 327,
-    "uma_write": 3003,
-    "uma_read": 2305,
-    "keccak256_cycles": 142,
-    "ec_recover_cycles": 5,
-    "decommit_cycles": 4705,
-    "storage_application": 80085,
-    "transaction_count": 5,
-    "near_call_count": 1469,
-    "pubdata_bytes": 657,
-    "merkle_leaf_count": 80065,
-    "used_bytecode_bytes": 390208,
-    "used_bytecode_count": 20,
-    "storage_key_count": 80094,
-    "initial_heap_words": 382,
-    "state_diff_count": 15,
+    "rich_addressing_op": 583686,
+    "average_op": 4007,
+    "storage_read": 140128,
+    "storage_write": 83,
+    "event": 40,
+    "precompile_call": 105,
+    "far_call": 248,
+    "uma_write": 2452,
+    "uma_read": 1920,
+    "keccak256_cycles": 105,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4679,
+    "storage_application": 140074,
+    "transaction_count": 4,
+    "near_call_count": 1158,
+    "pubdata_bytes": 505,
+    "merkle_leaf_count": 140059,
+    "used_bytecode_bytes": 388576,
+    "used_bytecode_count": 19,
+    "storage_key_count": 140085,
+    "initial_heap_words": 307,
+    "state_diff_count": 12,
     "system_log_count": 10
    }
   }
@@ -196,6 +202,7 @@
   "batch_number": 75,
   "label": "transient_plus_context",
   "effective_cycles": 24523523692,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 30025802,
@@ -230,6 +237,7 @@
   "batch_number": 76,
   "label": "transient_bounded",
   "effective_cycles": 27419539965,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 23035097,
@@ -263,6 +271,7 @@
   "batch_number": 79,
   "label": "transient_reads_1p2M",
   "effective_cycles": 2530265726,
+  "guest": "pre-delegation (introduced 2026-07-09, commit cd46640)",
   "features": {
    "counts": {
     "rich_addressing_op": 6023116,
