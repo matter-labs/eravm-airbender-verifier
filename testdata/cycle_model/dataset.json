@@ -1,8 +1,132 @@
 [
  {
+  "batch_number": 84730,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 42542,
+    "average_op": 7402,
+    "storage_read": 244,
+    "storage_write": 142,
+    "event": 86,
+    "precompile_call": 226,
+    "far_call": 499,
+    "uma_write": 4349,
+    "uma_read": 3351,
+    "keccak256_cycles": 259,
+    "ec_recover_cycles": 7,
+    "decommit_cycles": 8377,
+    "storage_application": 124,
+    "transaction_count": 7,
+    "near_call_count": 2126,
+    "pubdata_bytes": 665,
+    "merkle_leaf_count": 88,
+    "used_bytecode_bytes": 601440,
+    "used_bytecode_count": 25,
+    "storage_key_count": 121,
+    "initial_heap_words": 568,
+    "state_diff_count": 21,
+    "system_log_count": 10
+   }
+  },
+  "raw_cycles": 1062542802,
+  "phase_cycles": {
+   "commitment": 139325898,
+   "merkle_verification": 29338713,
+   "setup": 55384039,
+   "vm_execution": 772764214
+  },
+  "delegations": {
+   "1991": 10248880,
+   "1994": 287484,
+   "1995": 12837869
+  }
+ },
+ {
+  "batch_number": 84731,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 42542,
+    "average_op": 7402,
+    "storage_read": 244,
+    "storage_write": 142,
+    "event": 86,
+    "precompile_call": 226,
+    "far_call": 499,
+    "uma_write": 4349,
+    "uma_read": 3351,
+    "keccak256_cycles": 259,
+    "ec_recover_cycles": 7,
+    "decommit_cycles": 8377,
+    "storage_application": 124,
+    "transaction_count": 7,
+    "near_call_count": 2126,
+    "pubdata_bytes": 657,
+    "merkle_leaf_count": 88,
+    "used_bytecode_bytes": 601440,
+    "used_bytecode_count": 25,
+    "storage_key_count": 121,
+    "initial_heap_words": 559,
+    "state_diff_count": 20,
+    "system_log_count": 10
+   }
+  },
+  "raw_cycles": 1062402229,
+  "phase_cycles": {
+   "commitment": 139320812,
+   "merkle_verification": 29285843,
+   "setup": 55382620,
+   "vm_execution": 772684997
+  },
+  "delegations": {
+   "1991": 10246310,
+   "1994": 288719,
+   "1995": 12835273
+  }
+ },
+ {
+  "batch_number": 84732,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 42542,
+    "average_op": 7402,
+    "storage_read": 244,
+    "storage_write": 142,
+    "event": 86,
+    "precompile_call": 226,
+    "far_call": 499,
+    "uma_write": 4349,
+    "uma_read": 3351,
+    "keccak256_cycles": 259,
+    "ec_recover_cycles": 7,
+    "decommit_cycles": 8377,
+    "storage_application": 124,
+    "transaction_count": 7,
+    "near_call_count": 2126,
+    "pubdata_bytes": 666,
+    "merkle_leaf_count": 88,
+    "used_bytecode_bytes": 601440,
+    "used_bytecode_count": 25,
+    "storage_key_count": 121,
+    "initial_heap_words": 568,
+    "state_diff_count": 21,
+    "system_log_count": 10
+   }
+  },
+  "raw_cycles": 1062552577,
+  "phase_cycles": {
+   "commitment": 139334620,
+   "merkle_verification": 29338817,
+   "setup": 55381183,
+   "vm_execution": 772771858
+  },
+  "delegations": {
+   "1991": 10248880,
+   "1994": 289122,
+   "1995": 12837869
+  }
+ },
+ {
   "batch_number": 513601,
-  "raw_cycles": 6797472491,
-  "effective_cycles": 7442071263,
   "features": {
    "counts": {
     "rich_addressing_op": 5322271,
@@ -33,12 +157,22 @@
     "state_diff_count": 1430,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6797476066,
+  "phase_cycles": {
+   "commitment": 147045875,
+   "merkle_verification": 368314800,
+   "setup": 525671413,
+   "vm_execution": 4948469430
+  },
+  "delegations": {
+   "1991": 23363590,
+   "1994": 30967125,
+   "1995": 36728208
   }
  },
  {
   "batch_number": 513602,
-  "raw_cycles": 7286264440,
-  "effective_cycles": 7846911304,
   "features": {
    "counts": {
     "rich_addressing_op": 7023484,
@@ -69,12 +203,22 @@
     "state_diff_count": 1066,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7286270271,
+  "phase_cycles": {
+   "commitment": 144852959,
+   "merkle_verification": 299105987,
+   "setup": 564528797,
+   "vm_execution": 5521386125
+  },
+  "delegations": {
+   "1991": 20626540,
+   "1994": 22213017,
+   "1995": 35442539
   }
  },
  {
   "batch_number": 513603,
-  "raw_cycles": 7436578113,
-  "effective_cycles": 7910722705,
   "features": {
    "counts": {
     "rich_addressing_op": 7359554,
@@ -105,12 +249,22 @@
     "state_diff_count": 692,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7436573749,
+  "phase_cycles": {
+   "commitment": 142482134,
+   "merkle_verification": 231565323,
+   "setup": 578116676,
+   "vm_execution": 5794227381
+  },
+  "delegations": {
+   "1991": 17953740,
+   "1994": 12046416,
+   "1995": 34674772
   }
  },
  {
   "batch_number": 513604,
-  "raw_cycles": 7012704333,
-  "effective_cycles": 7484229797,
   "features": {
    "counts": {
     "rich_addressing_op": 7420474,
@@ -141,12 +295,22 @@
     "state_diff_count": 749,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7012689172,
+  "phase_cycles": {
+   "commitment": 142835030,
+   "merkle_verification": 233063561,
+   "setup": 521685772,
+   "vm_execution": 5467696449
+  },
+  "delegations": {
+   "1991": 18043690,
+   "1994": 12594626,
+   "1995": 33111980
   }
  },
  {
   "batch_number": 513605,
-  "raw_cycles": 7344787170,
-  "effective_cycles": 7883122742,
   "features": {
    "counts": {
     "rich_addressing_op": 7099561,
@@ -177,12 +341,22 @@
     "state_diff_count": 907,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7344813019,
+  "phase_cycles": {
+   "commitment": 143685105,
+   "merkle_verification": 270724474,
+   "setup": 525077298,
+   "vm_execution": 5704792775
+  },
+  "delegations": {
+   "1991": 19495740,
+   "1994": 19549523,
+   "1995": 37051410
   }
  },
  {
   "batch_number": 513606,
-  "raw_cycles": 7333996566,
-  "effective_cycles": 7883643502,
   "features": {
    "counts": {
     "rich_addressing_op": 7099286,
@@ -213,12 +387,22 @@
     "state_diff_count": 1056,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7333995018,
+  "phase_cycles": {
+   "commitment": 144951363,
+   "merkle_verification": 294421227,
+   "setup": 534507918,
+   "vm_execution": 5628623999
+  },
+  "delegations": {
+   "1991": 20449210,
+   "1994": 19376032,
+   "1995": 36238862
   }
  },
  {
   "batch_number": 513607,
-  "raw_cycles": 7590381736,
-  "effective_cycles": 8135445700,
   "features": {
    "counts": {
     "rich_addressing_op": 7117076,
@@ -249,12 +433,22 @@
     "state_diff_count": 930,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7590373950,
+  "phase_cycles": {
+   "commitment": 143766584,
+   "merkle_verification": 277620492,
+   "setup": 517665656,
+   "vm_execution": 5956676060
+  },
+  "delegations": {
+   "1991": 19763020,
+   "1994": 18874236,
+   "1995": 38339675
   }
  },
  {
   "batch_number": 513608,
-  "raw_cycles": 6951070433,
-  "effective_cycles": 7403649961,
   "features": {
    "counts": {
     "rich_addressing_op": 7448659,
@@ -285,12 +479,22 @@
     "state_diff_count": 581,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6951075531,
+  "phase_cycles": {
+   "commitment": 141945243,
+   "merkle_verification": 198268271,
+   "setup": 469604583,
+   "vm_execution": 5560052180
+  },
+  "delegations": {
+   "1991": 16671310,
+   "1994": 12624676,
+   "1995": 33834966
   }
  },
  {
   "batch_number": 513609,
-  "raw_cycles": 6596916686,
-  "effective_cycles": 7198812510,
   "features": {
    "counts": {
     "rich_addressing_op": 5257381,
@@ -321,12 +525,22 @@
     "state_diff_count": 1495,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6596930089,
+  "phase_cycles": {
+   "commitment": 147720399,
+   "merkle_verification": 349269966,
+   "setup": 537259820,
+   "vm_execution": 4780613138
+  },
+  "delegations": {
+   "1991": 22726230,
+   "1994": 24767709,
+   "1995": 34801327
   }
  },
  {
   "batch_number": 513610,
-  "raw_cycles": 4103915301,
-  "effective_cycles": 4569243765,
   "features": {
    "counts": {
     "rich_addressing_op": 2578507,
@@ -357,12 +571,22 @@
     "state_diff_count": 905,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4103919396,
+  "phase_cycles": {
+   "commitment": 144361275,
+   "merkle_verification": 241272563,
+   "setup": 375330494,
+   "vm_execution": 2808141460
+  },
+  "delegations": {
+   "1991": 18460030,
+   "1994": 18049358,
+   "1995": 24442638
   }
  },
  {
   "batch_number": 513611,
-  "raw_cycles": 4111718476,
-  "effective_cycles": 4574351552,
   "features": {
    "counts": {
     "rich_addressing_op": 2485980,
@@ -393,12 +617,22 @@
     "state_diff_count": 892,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4111713708,
+  "phase_cycles": {
+   "commitment": 144220297,
+   "merkle_verification": 230084446,
+   "setup": 402249260,
+   "vm_execution": 2797554435
+  },
+  "delegations": {
+   "1991": 18046260,
+   "1994": 19194788,
+   "1995": 24278441
   }
  },
  {
   "batch_number": 513612,
-  "raw_cycles": 4800315769,
-  "effective_cycles": 5321450337,
   "features": {
    "counts": {
     "rich_addressing_op": 3581980,
@@ -429,12 +663,22 @@
     "state_diff_count": 1169,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4800327051,
+  "phase_cycles": {
+   "commitment": 145666744,
+   "merkle_verification": 289208431,
+   "setup": 388230925,
+   "vm_execution": 3379577933
+  },
+  "delegations": {
+   "1991": 20361830,
+   "1994": 21300550,
+   "1995": 27535772
   }
  },
  {
   "batch_number": 513613,
-  "raw_cycles": 4249386266,
-  "effective_cycles": 4749086650,
   "features": {
    "counts": {
     "rich_addressing_op": 2853650,
@@ -465,12 +709,22 @@
     "state_diff_count": 1045,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4249383833,
+  "phase_cycles": {
+   "commitment": 145126838,
+   "merkle_verification": 256273361,
+   "setup": 325869807,
+   "vm_execution": 2999652317
+  },
+  "delegations": {
+   "1991": 19089680,
+   "1994": 22115732,
+   "1995": 26450644
   }
  },
  {
   "batch_number": 513614,
-  "raw_cycles": 4413247677,
-  "effective_cycles": 4905534437,
   "features": {
    "counts": {
     "rich_addressing_op": 2955473,
@@ -501,12 +755,22 @@
     "state_diff_count": 975,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4413263895,
+  "phase_cycles": {
+   "commitment": 144613533,
+   "merkle_verification": 258442979,
+   "setup": 379546423,
+   "vm_execution": 3079516652
+  },
+  "delegations": {
+   "1991": 19123090,
+   "1994": 20390882,
+   "1995": 26188448
   }
  },
  {
   "batch_number": 513615,
-  "raw_cycles": 8077277063,
-  "effective_cycles": 8766566623,
   "features": {
    "counts": {
     "rich_addressing_op": 6577338,
@@ -537,12 +801,22 @@
     "state_diff_count": 1775,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 8077278312,
+  "phase_cycles": {
+   "commitment": 148520823,
+   "merkle_verification": 450447391,
+   "setup": 734337866,
+   "vm_execution": 5725004791
+  },
+  "delegations": {
+   "1991": 26565810,
+   "1994": 27468312,
+   "1995": 38590838
   }
  },
  {
   "batch_number": 513616,
-  "raw_cycles": 7878670080,
-  "effective_cycles": 8472037656,
   "features": {
    "counts": {
     "rich_addressing_op": 6946230,
@@ -573,12 +847,22 @@
     "state_diff_count": 1497,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7878679366,
+  "phase_cycles": {
+   "commitment": 146661491,
+   "merkle_verification": 373499117,
+   "setup": 609750420,
+   "vm_execution": 5895274443
+  },
+  "delegations": {
+   "1991": 23605170,
+   "1994": 15470560,
+   "1995": 38450654
   }
  },
  {
   "batch_number": 513617,
-  "raw_cycles": 8214272908,
-  "effective_cycles": 8880855300,
   "features": {
    "counts": {
     "rich_addressing_op": 6568401,
@@ -609,12 +893,22 @@
     "state_diff_count": 1408,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 8214264470,
+  "phase_cycles": {
+   "commitment": 146437287,
+   "merkle_verification": 440467732,
+   "setup": 694141012,
+   "vm_execution": 5943718482
+  },
+  "delegations": {
+   "1991": 25967000,
+   "1994": 23436516,
+   "1995": 39341082
   }
  },
  {
   "batch_number": 513618,
-  "raw_cycles": 7786156182,
-  "effective_cycles": 8455126530,
   "features": {
    "counts": {
     "rich_addressing_op": 6568119,
@@ -645,12 +939,22 @@
     "state_diff_count": 1605,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7786150773,
+  "phase_cycles": {
+   "commitment": 147802453,
+   "merkle_verification": 427584650,
+   "setup": 648233114,
+   "vm_execution": 5618043750
+  },
+  "delegations": {
+   "1991": 25625190,
+   "1994": 25661643,
+   "1995": 39080184
   }
  },
  {
   "batch_number": 513619,
-  "raw_cycles": 4672605441,
-  "effective_cycles": 5164046129,
   "features": {
    "counts": {
     "rich_addressing_op": 3074296,
@@ -681,12 +985,22 @@
     "state_diff_count": 982,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4672606680,
+  "phase_cycles": {
+   "commitment": 144392105,
+   "merkle_verification": 263459850,
+   "setup": 467811251,
+   "vm_execution": 3173373776
+  },
+  "delegations": {
+   "1991": 19310700,
+   "1994": 19541201,
+   "1995": 26076171
   }
  },
  {
   "batch_number": 513620,
-  "raw_cycles": 4590753377,
-  "effective_cycles": 5082503069,
   "features": {
    "counts": {
     "rich_addressing_op": 2992393,
@@ -717,12 +1031,22 @@
     "state_diff_count": 974,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4590745907,
+  "phase_cycles": {
+   "commitment": 144593453,
+   "merkle_verification": 261208570,
+   "setup": 435547932,
+   "vm_execution": 3148811377
+  },
+  "delegations": {
+   "1991": 19223320,
+   "1994": 20354776,
+   "1995": 25689367
   }
  },
  {
   "batch_number": 513621,
-  "raw_cycles": 4755053356,
-  "effective_cycles": 5253007380,
   "features": {
    "counts": {
     "rich_addressing_op": 3781460,
@@ -753,12 +1077,22 @@
     "state_diff_count": 1032,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4755042615,
+  "phase_cycles": {
+   "commitment": 144936846,
+   "merkle_verification": 259812633,
+   "setup": 383995624,
+   "vm_execution": 3399539975
+  },
+  "delegations": {
+   "1991": 19205330,
+   "1994": 19944502,
+   "1995": 27722684
   }
  },
  {
   "batch_number": 513622,
-  "raw_cycles": 5707825314,
-  "effective_cycles": 6251620730,
   "features": {
    "counts": {
     "rich_addressing_op": 4012702,
@@ -789,12 +1123,22 @@
     "state_diff_count": 1202,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5707804966,
+  "phase_cycles": {
+   "commitment": 145612145,
+   "merkle_verification": 316380441,
+   "setup": 565771343,
+   "vm_execution": 3927959473
+  },
+  "delegations": {
+   "1991": 21358990,
+   "1994": 20907461,
+   "1995": 29605433
   }
  },
  {
   "batch_number": 513623,
-  "raw_cycles": 6168363807,
-  "effective_cycles": 6760577775,
   "features": {
    "counts": {
     "rich_addressing_op": 4164738,
@@ -825,12 +1169,22 @@
     "state_diff_count": 1473,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6168352044,
+  "phase_cycles": {
+   "commitment": 147058732,
+   "merkle_verification": 370291416,
+   "setup": 578005947,
+   "vm_execution": 4256314725
+  },
+  "delegations": {
+   "1991": 23486950,
+   "1994": 21883491,
+   "1995": 32222201
   }
  },
  {
   "batch_number": 513624,
-  "raw_cycles": 4765931226,
-  "effective_cycles": 5258871990,
   "features": {
    "counts": {
     "rich_addressing_op": 3096269,
@@ -861,12 +1215,22 @@
     "state_diff_count": 1008,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4765936508,
+  "phase_cycles": {
+   "commitment": 144659884,
+   "merkle_verification": 273379471,
+   "setup": 471333559,
+   "vm_execution": 3247045320
+  },
+  "delegations": {
+   "1991": 19685920,
+   "1994": 18146005,
+   "1995": 26345506
   }
  },
  {
   "batch_number": 513625,
-  "raw_cycles": 7716634357,
-  "effective_cycles": 8402591753,
   "features": {
    "counts": {
     "rich_addressing_op": 5981418,
@@ -897,12 +1261,22 @@
     "state_diff_count": 1795,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7716654049,
+  "phase_cycles": {
+   "commitment": 148735522,
+   "merkle_verification": 455678500,
+   "setup": 641125701,
+   "vm_execution": 5517406509
+  },
+  "delegations": {
+   "1991": 26763700,
+   "1994": 25364749,
+   "1995": 39069800
   }
  },
  {
   "batch_number": 513626,
-  "raw_cycles": 3891163254,
-  "effective_cycles": 4332000846,
   "features": {
    "counts": {
     "rich_addressing_op": 2934314,
@@ -933,12 +1307,22 @@
     "state_diff_count": 723,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 3891153312,
+  "phase_cycles": {
+   "commitment": 143136136,
+   "merkle_verification": 207553874,
+   "setup": 340978025,
+   "vm_execution": 2728446531
+  },
+  "delegations": {
+   "1991": 17126200,
+   "1994": 18423670,
+   "1995": 23280928
   }
  },
  {
   "batch_number": 513627,
-  "raw_cycles": 5761421197,
-  "effective_cycles": 6311356157,
   "features": {
    "counts": {
     "rich_addressing_op": 3938810,
@@ -969,12 +1353,22 @@
     "state_diff_count": 1181,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5761440615,
+  "phase_cycles": {
+   "commitment": 145626928,
+   "merkle_verification": 319942819,
+   "setup": 539404505,
+   "vm_execution": 4015223398
+  },
+  "delegations": {
+   "1991": 21474640,
+   "1994": 21511818,
+   "1995": 30073362
   }
  },
  {
   "batch_number": 513628,
-  "raw_cycles": 7653848260,
-  "effective_cycles": 8336155888,
   "features": {
    "counts": {
     "rich_addressing_op": 5439756,
@@ -1005,12 +1399,22 @@
     "state_diff_count": 1773,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7653854988,
+  "phase_cycles": {
+   "commitment": 148266396,
+   "merkle_verification": 468429396,
+   "setup": 715369126,
+   "vm_execution": 5298301459
+  },
+  "delegations": {
+   "1991": 27218590,
+   "1994": 24753679,
+   "1995": 36948868
   }
  },
  {
   "batch_number": 513629,
-  "raw_cycles": 5815051695,
-  "effective_cycles": 6371990399,
   "features": {
    "counts": {
     "rich_addressing_op": 3873081,
@@ -1041,12 +1445,22 @@
     "state_diff_count": 1301,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5815061689,
+  "phase_cycles": {
+   "commitment": 146188539,
+   "merkle_verification": 340819258,
+   "setup": 606792305,
+   "vm_execution": 3918551692
+  },
+  "delegations": {
+   "1991": 22309890,
+   "1994": 20807639,
+   "1995": 29187477
   }
  },
  {
   "batch_number": 513630,
-  "raw_cycles": 6624896522,
-  "effective_cycles": 7217580034,
   "features": {
    "counts": {
     "rich_addressing_op": 4495545,
@@ -1077,12 +1491,22 @@
     "state_diff_count": 1388,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6624886544,
+  "phase_cycles": {
+   "commitment": 150653654,
+   "merkle_verification": 367874361,
+   "setup": 661359621,
+   "vm_execution": 4536769066
+  },
+  "delegations": {
+   "1991": 23314760,
+   "1994": 21423438,
+   "1995": 33488400
   }
  },
  {
   "batch_number": 513631,
-  "raw_cycles": 4394054855,
-  "effective_cycles": 4860327411,
   "features": {
    "counts": {
     "rich_addressing_op": 2580713,
@@ -1113,12 +1537,22 @@
     "state_diff_count": 920,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4394038673,
+  "phase_cycles": {
+   "commitment": 144332565,
+   "merkle_verification": 244365619,
+   "setup": 475219586,
+   "vm_execution": 2925101162
+  },
+  "delegations": {
+   "1991": 18583390,
+   "1994": 17564142,
+   "1995": 24670437
   }
  },
  {
   "batch_number": 513632,
-  "raw_cycles": 6404010288,
-  "effective_cycles": 6973458088,
   "features": {
    "counts": {
     "rich_addressing_op": 4702153,
@@ -1149,12 +1583,22 @@
     "state_diff_count": 1370,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6403997679,
+  "phase_cycles": {
+   "commitment": 146283701,
+   "merkle_verification": 354873158,
+   "setup": 654344057,
+   "vm_execution": 4394517623
+  },
+  "delegations": {
+   "1991": 22857300,
+   "1994": 19619798,
+   "1995": 31312952
   }
  },
  {
   "batch_number": 513633,
-  "raw_cycles": 5607567068,
-  "effective_cycles": 6139096316,
   "features": {
    "counts": {
     "rich_addressing_op": 4157193,
@@ -1185,12 +1629,22 @@
     "state_diff_count": 1253,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5607585675,
+  "phase_cycles": {
+   "commitment": 145729386,
+   "merkle_verification": 332598650,
+   "setup": 543557622,
+   "vm_execution": 3842855555
+  },
+  "delegations": {
+   "1991": 21986070,
+   "1994": 16238603,
+   "1995": 28699429
   }
  },
  {
   "batch_number": 513634,
-  "raw_cycles": 5393565392,
-  "effective_cycles": 5920928804,
   "features": {
    "counts": {
     "rich_addressing_op": 4207332,
@@ -1221,12 +1675,22 @@
     "state_diff_count": 1130,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5393561456,
+  "phase_cycles": {
+   "commitment": 145434132,
+   "merkle_verification": 299570199,
+   "setup": 476314034,
+   "vm_execution": 3798125378
+  },
+  "delegations": {
+   "1991": 20706210,
+   "1994": 20149142,
+   "1995": 28866871
   }
  },
  {
   "batch_number": 513635,
-  "raw_cycles": 4278484678,
-  "effective_cycles": 4725611238,
   "features": {
    "counts": {
     "rich_addressing_op": 2735397,
@@ -1257,12 +1721,22 @@
     "state_diff_count": 819,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4278485716,
+  "phase_cycles": {
+   "commitment": 143602458,
+   "merkle_verification": 231718597,
+   "setup": 447982051,
+   "vm_execution": 2888972858
+  },
+  "delegations": {
+   "1991": 18059110,
+   "1994": 15593206,
+   "1995": 23951994
   }
  },
  {
   "batch_number": 513636,
-  "raw_cycles": 5787265865,
-  "effective_cycles": 6365771737,
   "features": {
    "counts": {
     "rich_addressing_op": 3972499,
@@ -1293,12 +1767,22 @@
     "state_diff_count": 1376,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5787274876,
+  "phase_cycles": {
+   "commitment": 146733641,
+   "merkle_verification": 344791731,
+   "setup": 524845197,
+   "vm_execution": 4012494443
+  },
+  "delegations": {
+   "1991": 22494930,
+   "1994": 23368193,
+   "1995": 31278555
   }
  },
  {
   "batch_number": 513637,
-  "raw_cycles": 5114676808,
-  "effective_cycles": 5651110892,
   "features": {
    "counts": {
     "rich_addressing_op": 3469642,
@@ -1329,12 +1813,22 @@
     "state_diff_count": 1153,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5114688113,
+  "phase_cycles": {
+   "commitment": 145083714,
+   "merkle_verification": 295421149,
+   "setup": 441561434,
+   "vm_execution": 3583410810
+  },
+  "delegations": {
+   "1991": 20564860,
+   "1994": 23235969,
+   "1995": 28613112
   }
  },
  {
   "batch_number": 513638,
-  "raw_cycles": 5259939694,
-  "effective_cycles": 5815229362,
   "features": {
    "counts": {
     "rich_addressing_op": 3685379,
@@ -1365,12 +1859,22 @@
     "state_diff_count": 1311,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5259940712,
+  "phase_cycles": {
+   "commitment": 146331408,
+   "merkle_verification": 323638396,
+   "setup": 437228874,
+   "vm_execution": 3692614728
+  },
+  "delegations": {
+   "1991": 21690520,
+   "1994": 22336786,
+   "1995": 29723551
   }
  },
  {
   "batch_number": 513639,
-  "raw_cycles": 4798018360,
-  "effective_cycles": 5273500292,
   "features": {
    "counts": {
     "rich_addressing_op": 3240040,
@@ -1401,12 +1905,22 @@
     "state_diff_count": 973,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 4798027844,
+  "phase_cycles": {
+   "commitment": 144361224,
+   "merkle_verification": 258347805,
+   "setup": 499364154,
+   "vm_execution": 3265848768
+  },
+  "delegations": {
+   "1991": 19117950,
+   "1994": 16379624,
+   "1995": 26019059
   }
  },
  {
   "batch_number": 513640,
-  "raw_cycles": 3530414825,
-  "effective_cycles": 3951304009,
   "features": {
    "counts": {
     "rich_addressing_op": 2360852,
@@ -1437,12 +1951,22 @@
     "state_diff_count": 753,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 3530421213,
+  "phase_cycles": {
+   "commitment": 143526735,
+   "merkle_verification": 190718667,
+   "setup": 284446072,
+   "vm_execution": 2500606464
+  },
+  "delegations": {
+   "1991": 16537670,
+   "1994": 16410483,
+   "1995": 22661133
   }
  },
  {
   "batch_number": 513641,
-  "raw_cycles": 5379748524,
-  "effective_cycles": 5876605452,
   "features": {
    "counts": {
     "rich_addressing_op": 3257439,
@@ -1473,12 +1997,22 @@
     "state_diff_count": 914,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 5379749764,
+  "phase_cycles": {
+   "commitment": 144093175,
+   "merkle_verification": 283115831,
+   "setup": 611463827,
+   "vm_execution": 3592296361
+  },
+  "delegations": {
+   "1991": 19973760,
+   "1994": 16854161,
+   "1995": 27465031
   }
  },
  {
   "batch_number": 513642,
-  "raw_cycles": 7605366140,
-  "effective_cycles": 8266353372,
   "features": {
    "counts": {
     "rich_addressing_op": 6669414,
@@ -1509,12 +2043,22 @@
     "state_diff_count": 1640,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7605368622,
+  "phase_cycles": {
+   "commitment": 147900258,
+   "merkle_verification": 420027517,
+   "setup": 638215334,
+   "vm_execution": 5473920837
+  },
+  "delegations": {
+   "1991": 25375900,
+   "1994": 25870164,
+   "1995": 37873044
   }
  },
  {
   "batch_number": 513643,
-  "raw_cycles": 7793862400,
-  "effective_cycles": 8463823756,
   "features": {
    "counts": {
     "rich_addressing_op": 6487928,
@@ -1545,12 +2089,22 @@
     "state_diff_count": 1637,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7793887496,
+  "phase_cycles": {
+   "commitment": 147431380,
+   "merkle_verification": 435063720,
+   "setup": 699254794,
+   "vm_execution": 5532378222
+  },
+  "delegations": {
+   "1991": 25918170,
+   "1994": 26393723,
+   "1995": 37423936
   }
  },
  {
   "batch_number": 513644,
-  "raw_cycles": 7219887588,
-  "effective_cycles": 7847367416,
   "features": {
    "counts": {
     "rich_addressing_op": 6804033,
@@ -1581,12 +2135,22 @@
     "state_diff_count": 1522,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7219905366,
+  "phase_cycles": {
+   "commitment": 147284107,
+   "merkle_verification": 374725759,
+   "setup": 578604845,
+   "vm_execution": 5293619896
+  },
+  "delegations": {
+   "1991": 23659140,
+   "1994": 26396266,
+   "1995": 35837131
   }
  },
  {
   "batch_number": 513645,
-  "raw_cycles": 7803556808,
-  "effective_cycles": 8468383328,
   "features": {
    "counts": {
     "rich_addressing_op": 6611848,
@@ -1617,12 +2181,22 @@
     "state_diff_count": 1527,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 7803564594,
+  "phase_cycles": {
+   "commitment": 147246846,
+   "merkle_verification": 405950343,
+   "setup": 599251888,
+   "vm_execution": 5760179012
+  },
+  "delegations": {
+   "1991": 24792510,
+   "1994": 27567655,
+   "1995": 39468935
   }
  },
  {
   "batch_number": 513646,
-  "raw_cycles": 6524186483,
-  "effective_cycles": 7150305911,
   "features": {
    "counts": {
     "rich_addressing_op": 4529006,
@@ -1653,12 +2227,22 @@
     "state_diff_count": 1526,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6524188890,
+  "phase_cycles": {
+   "commitment": 147198702,
+   "merkle_verification": 377397193,
+   "setup": 562384899,
+   "vm_execution": 4608729518
+  },
+  "delegations": {
+   "1991": 23761940,
+   "1994": 26929986,
+   "1995": 34552111
   }
  },
  {
   "batch_number": 513647,
-  "raw_cycles": 8205189547,
-  "effective_cycles": 8933560307,
   "features": {
    "counts": {
     "rich_addressing_op": 6410789,
@@ -1689,12 +2273,22 @@
     "state_diff_count": 1776,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 8205195652,
+  "phase_cycles": {
+   "commitment": 148347732,
+   "merkle_verification": 478415174,
+   "setup": 691629284,
+   "vm_execution": 5850509099
+  },
+  "delegations": {
+   "1991": 27565540,
+   "1994": 31244017,
+   "1995": 40586513
   }
  },
  {
   "batch_number": 513648,
-  "raw_cycles": 6773408302,
-  "effective_cycles": 7414958154,
   "features": {
    "counts": {
     "rich_addressing_op": 5175301,
@@ -1725,12 +2319,22 @@
     "state_diff_count": 1625,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6773408531,
+  "phase_cycles": {
+   "commitment": 147783421,
+   "merkle_verification": 422307679,
+   "setup": 617916441,
+   "vm_execution": 4683102557
+  },
+  "delegations": {
+   "1991": 25460710,
+   "1994": 24771312,
+   "1995": 33773311
   }
  },
  {
   "batch_number": 513649,
-  "raw_cycles": 6129460139,
-  "effective_cycles": 6733436363,
   "features": {
    "counts": {
     "rich_addressing_op": 4656645,
@@ -1761,6 +2365,60 @@
     "state_diff_count": 1365,
     "system_log_count": 9
    }
+  },
+  "raw_cycles": 6129471465,
+  "phase_cycles": {
+   "commitment": 146424739,
+   "merkle_verification": 348589578,
+   "setup": 517737757,
+   "vm_execution": 4349272192
+  },
+  "delegations": {
+   "1991": 22615720,
+   "1994": 26973982,
+   "1995": 33557194
+  }
+ },
+ {
+  "batch_number": 900065,
+  "features": {
+   "counts": {
+    "rich_addressing_op": 583686,
+    "average_op": 4007,
+    "storage_read": 140128,
+    "storage_write": 83,
+    "event": 40,
+    "precompile_call": 105,
+    "far_call": 248,
+    "uma_write": 2452,
+    "uma_read": 1920,
+    "keccak256_cycles": 105,
+    "ec_recover_cycles": 4,
+    "decommit_cycles": 4679,
+    "storage_application": 140074,
+    "transaction_count": 4,
+    "near_call_count": 1158,
+    "pubdata_bytes": 505,
+    "merkle_leaf_count": 140059,
+    "used_bytecode_bytes": 388576,
+    "used_bytecode_count": 19,
+    "storage_key_count": 140085,
+    "initial_heap_words": 307,
+    "state_diff_count": 12,
+    "system_log_count": 10
+   }
+  },
+  "raw_cycles": 20632543771,
+  "phase_cycles": {
+   "commitment": 139307026,
+   "merkle_verification": 9935137453,
+   "setup": 895366598,
+   "vm_execution": 3961592180
+  },
+  "delegations": {
+   "1991": 369951220,
+   "1994": 164054,
+   "1995": 12044791
   }
  }
 ]

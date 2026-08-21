@@ -10,48 +10,55 @@
 //! it either. That job is `.github/workflows/cycle-model-drift.yaml`, which
 //! re-measures with the *current* guest.
 //!
-//! ⚠️ The fixture is **in-sample**: all 49 rows (513601-513649) are in the
-//! 176-batch corpus the table was fit on, so this is a tripwire, not a
-//! validation. The historical "122 train / 49 hold-out" split does not describe
-//! this table. Refresh only when the guest moves real cycle counts.
+//! ⚠️ The fixture is **in-sample by construction**: it is the WHOLE corpus the
+//! table is fit on — every batch current code can decode. 49 × `513xxx`
+//! (protocol v29), the three v31 CI batches `84730`/`84731`/`84732`, and the
+//! synthetic v31 slot-flood `900065`. So this is a tripwire, not a validation,
+//! and no train/hold-out split describes this table. The honest generalization
+//! number is leave-one-out CV over these same 53 rows: MAPE 8.19%, worst-over
+//! +31.20% (900065, the leaf-axis extrapolation), and **zero** under-predictions.
 //!
-//! Re-measured 2026-08-19 on the delegation-enabled guest (zksync_vm2 v0.6.3).
-//! The measured binary was build/guest-markers/app.bin, sha256 9228b6e2… — a
-//! PHASE-MARKER-INSTRUMENTED guest, so a shipping guest will NOT match that
-//! checksum; it identifies the measurement build, not the release artifact.
+//! Measured 2026-08-21 on a guest built from `main` (`82d7ca7`, zksync_vm2 v0.6.3,
+//! zksync-protocol v0.153.14) with `--features cycle-markers`; the table's
+//! `provenance` block carries its sha256. Because that build is
+//! phase-marker-instrumented, its checksum will NOT match a shipping guest — it
+//! identifies the measurement build, not the release artifact.
 //!
-//! The feature counts are byte-identical to the previous fixture — only the cycle
-//! counts moved, by 1.54–2.44× (median 2.06×), as blake2/keccak work moved into
-//! delegated circuits.
+//! That re-measurement reproduced the previous fixture's cycle counts to within
+//! 6e-7 relative on all 49 shared rows, which is what establishes that the table
+//! is current with `main` rather than merely unchanged. The dataset behind it is
+//! committed at `testdata/cycle_model/dataset.json`, so the table refits from it
+//! exactly. Refresh only when the guest moves real cycle counts.
 
 use serde::Deserialize;
 use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
-const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
+const FIXTURE: &str = include_str!("fixtures/measured_corpus.json");
 
-// MAPE here is 12.79% / max 16.41%, entirely OVER-prediction, and dominated by
-// the opcode floors rather than fit error — the unfloored fit scores 0.58%.
-// Measured on this table: far_call is a median 8.90% of a batch's prediction (max
-// 13.09%), all four opcode floors 10.06% (max 14.34%), and the two precompile
-// floors cost 1.13pp of organic MAPE (14.00% -> 15.13%) in exchange for not
-// pricing a flood far below its true cost.
+// MAPE here is 10.37% / max 12.55%, entirely OVER-prediction (min +0.02%), and
+// dominated by the cost floors rather than fit error — the unfloored fit scores
+// 7.55%, and the two batch-level floors added on 2026-08-21 (transaction_count,
+// state_diff_count) account for the difference.
 //
 // So the absolute bound has to be loose, which makes it useless as a safety
-// check: a 12%-UNDER table would pass it. MAX_UNDER_PCT is the one that matters,
+// check: a 10%-UNDER table would pass it. MAX_UNDER_PCT is the one that matters,
 // under-prediction being the only unsafe direction, and it is 0.0 — strict
-// over-prediction — because this table over-predicts all 49 rows by >= 9.69% and
-// all 176 corpus batches without exception. The τ=0.9 fit plus monotone floors
-// make that the design intent, not luck.
+// over-prediction — because this table over-predicts all 53 rows without
+// exception. The τ=0.9 fit plus monotone floors make that the design intent, not
+// luck.
 //
-// KNOWN LIMITATION: the fixture is 513xxx (Version29) only, and the LOW-error
-// half — 506xxx runs to +20.45%, median +15.84%. Of the 4 v31 batches,
-// 84730/84731/84732 UNDER-predict by 2.56% and would fail MAX_UNDER_PCT, but they
-// are one ~1.28e9-cycle workload measured three times; the only large v31 batch
-// (900065, 26.6e9) over-predicts 2.61%. All four stay inside the 1.05 seal margin
-// (1.246e9 * 1.05 > 1.279e9), so this is an out-of-distribution accuracy gap, not
-// a seal-then-cannot-prove vector. Widen the fixture when a v31 corpus exists.
-const MAX_MAPE_PCT: f64 = 13.5;
-const MAX_SINGLE_ERR_PCT: f64 = 17.5;
+// The predecessor table (176 batches, ~122 of them `506xxx` payloads that fail
+// inside `bincode` decode on any current build) UNDER-predicted 84730/84731/84732
+// by 2.56%, so it could not carry this assertion across the v31 family at all.
+// Including those batches in both the fit and this fixture is what closed that
+// gap: they now over-predict by 0.77%.
+//
+// KNOWN LIMITATION: real v31 traffic at scale is still absent. 84730/1/2 are one
+// ~1.28e9-cycle workload measured three times, not three data points, and 900065
+// is synthetic. Widen the fixture when a real v31 corpus exists
+// (docs/generating-batches.md).
+const MAX_MAPE_PCT: f64 = 11.5;
+const MAX_SINGLE_ERR_PCT: f64 = 14.0;
 const MAX_UNDER_PCT: f64 = 0.0;
 
 #[derive(Deserialize)]
@@ -64,9 +71,9 @@ struct Row {
 }
 
 #[test]
-fn embedded_model_does_not_regress_on_frozen_holdout() {
+fn embedded_model_does_not_regress_on_measured_corpus() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
-    assert_eq!(rows.len(), 49, "fixture size changed unexpectedly");
+    assert_eq!(rows.len(), 53, "fixture size changed unexpectedly");
 
     let model = CostModel::embedded();
     let mut sum_ape = 0.0;
@@ -89,7 +96,7 @@ fn embedded_model_does_not_regress_on_frozen_holdout() {
     }
     let mape = sum_ape / rows.len() as f64;
     println!(
-        "frozen hold-out: MAPE={mape:.3}%  worst=batch {} at {:.3}%  worst-under=batch {} at {:.3}%",
+        "measured corpus: MAPE={mape:.3}%  worst=batch {} at {:.3}%  worst-under=batch {} at {:.3}%",
         worst.0, worst.1, worst_under.0, worst_under.1
     );
 
@@ -113,30 +120,37 @@ fn embedded_model_does_not_regress_on_frozen_holdout() {
     );
 }
 
-/// The calibration envelope must not fence organic traffic out.
+/// The calibration envelope must not fence real traffic out.
 ///
 /// The envelope fails closed (an out-of-envelope batch is sealed, never
 /// silently trusted), so a fence that is too TIGHT costs throughput on ordinary
 /// batches instead of admitting an attack. That failure mode is invisible in
-/// the accuracy numbers, so pin it: every batch of the organic hold-out must be
+/// the accuracy numbers, so pin it: every batch of the measured corpus must be
 /// inside the envelope. If a refit narrows `feature_value_max` (a smaller or
-/// less varied training corpus) this is what notices.
+/// less varied training corpus) this is what notices — and it very nearly did:
+/// re-deriving the fence from this 53-batch corpus rather than carrying the
+/// wider one forward would have tightened `far_call` 7.6× (477,516 → 62,464).
+/// That is why the fit takes `--envelope-from`.
+///
+/// `900065` is synthetic rather than organic, and it stays inside because the
+/// fence covers volume counters (bytecode, far-call, writes), not the slot axis
+/// it floods. The arithmetic-share half is what would catch a compute flood.
 #[test]
-fn organic_holdout_is_inside_the_calibration_envelope() {
+fn measured_corpus_is_inside_the_calibration_envelope() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
     let model = CostModel::embedded();
     for r in &rows {
         let est = model.estimate(&r.features);
         assert!(
             est.is_within_calibration(),
-            "organic batch {} was flagged out-of-envelope on {:?} — the fence is \
+            "corpus batch {} was flagged out-of-envelope on {:?} — the fence is \
              tighter than real traffic",
             r.batch_number,
             est.extrapolated
         );
         assert!(
             !est.trace_missing,
-            "organic batch {} has a full trace; the missing-trace guard must stay quiet",
+            "corpus batch {} has a full trace; the missing-trace guard must stay quiet",
             r.batch_number
         );
     }

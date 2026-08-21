@@ -2,9 +2,16 @@
 
 This performs NO fitting. It loads a `cost_table.json` produced by
 `fit_cost_model.py` on the training corpus and applies it verbatim to a
-held-out `dataset.json` (or a committed fixture like
-`crates/cycle_estimator/tests/fixtures/holdout_513xxx.json`), reporting
-out-of-sample accuracy (R^2, MAPE, worst case).
+held-out `dataset.json`, reporting out-of-sample accuracy (R^2, MAPE, worst
+case).
+
+NB there is currently NO held-out set: the committed table is fit on every batch
+current code can decode (`testdata/cycle_model/dataset.json`, 53 rows), and
+`crates/cycle_estimator/tests/fixtures/measured_corpus.json` is that same corpus,
+so pointing this script at it measures training error. Use it when a genuinely
+disjoint corpus exists — see `docs/generating-batches.md`. Until then the honest
+out-of-sample number is the leave-one-out CV in
+`crates/cycle_estimator/tests/model_regression.rs`.
 
 Targets match the fit: the aggregate `total` predictor is scored against
 EFFECTIVE cycles (raw + weighted delegations — what it was fit on and what the

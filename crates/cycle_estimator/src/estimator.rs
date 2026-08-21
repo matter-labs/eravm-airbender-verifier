@@ -185,6 +185,7 @@ pub fn estimate_from_features(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::SAFETY_CRITICAL_FEATURES;
 
     /// A minimal but *real-shaped* VM trace: enough opcode traffic that the
     /// missing-trace guard treats it as an actual execution.
@@ -346,5 +347,43 @@ mod tests {
             est.is_reliable(),
             "sha256 is calibrated (present-with-0); must not be flagged unpriced"
         );
+    }
+
+    /// The coverage guard is INERT against the currently committed table, and this
+    /// test exists to make that visible rather than let it read as protection.
+    ///
+    /// `unpriced_used` keys on a safety-critical feature being ABSENT from the
+    /// table. The committed table prices all eight — and six of those (mod_exp,
+    /// ec_add, ec_mul, ec_pairing, secp256r1, ec_recover) are pinned literals
+    /// carried forward or derived, not measured on the delegation guest, because
+    /// five have zero volume in the whole reproducible corpus. So `is_reliable()`
+    /// is unconditionally true on precompile grounds and precompile mispricing has
+    /// no backstop.
+    ///
+    /// That is a deliberate liveness trade (absence would reject every batch
+    /// touching a pairing — see the precompile note in
+    /// `scripts/cycle_model/README.md`), not an oversight. If a future table drops
+    /// one of these coefficients, this test fails and the guard becomes live again
+    /// — which is the signal to re-check what `fits()`'s consumer does with a
+    /// distrusted estimate, since era's `CyclesCriterion` answers distrust with
+    /// `IncludeAndSeal`.
+    ///
+    /// NB the vector is `traced_vector()`-based: since #107, an all-zero trace
+    /// trips `trace_missing` and would make `is_reliable()` false for an unrelated
+    /// reason, masking what this asserts.
+    #[test]
+    fn coverage_guard_is_currently_inert_by_construction() {
+        let model = CostModel::embedded();
+        for id in SAFETY_CRITICAL_FEATURES {
+            let mut fv = traced_vector();
+            fv.add(*id, 1_000_000);
+            assert!(
+                model.estimate(&fv).is_reliable(),
+                "{id:?} is absent from the committed table, so the coverage guard \
+                 now fires on it. That is a behaviour change, not a bug — update \
+                 this test, and re-check that the gate's consumer actually refuses \
+                 a distrusted estimate."
+            );
+        }
     }
 }

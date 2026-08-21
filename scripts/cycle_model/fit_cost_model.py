@@ -367,6 +367,38 @@ OPCODE_FLOORS = {
     "mod_exp_cycles": 952644,
     "secp256r1_verify_cycles": 12665313,
     "ec_recover_cycles": 368000,
+    # --- batch-level buckets the 53-batch corpus zeroes (added 2026-08-21) ---
+    # The reproducible corpus (49x 513xxx + 84730/1/2 + 900065 — everything current
+    # code can decode; see testdata/cycle_model/README.md) is 3.3x smaller than the
+    # 176-batch one, and NNLS answers the extra collinearity by zeroing these two
+    # where the larger fit priced them. Same failure mode the far_call/decommit
+    # floors above address: a zero coefficient is invisible to `unpriced_used`
+    # (which keys on ABSENCE) and to the arithmetic-share half of
+    # `extrapolated_features`, so a batch dominated by either axis is priced at ~0
+    # on it. Neither is in ENVELOPE_FEATURES either, so the volume half does not
+    # cover them.
+    #
+    # ANCHORS, not measurements: both values are the 176-batch fit's own
+    # coefficients, carried forward because that fit had the corpus breadth to
+    # identify them and floors only ever RAISE a prediction. Cost on the
+    # reproducible corpus: MAPE 7.55% -> 10.37%, still strictly over-predicting all
+    # 53 (and better than the 176-batch table's 12.02%, which UNDER-predicted the
+    # three v31 batches by 2.56%).
+    #   - transaction_count: per-tx validation/nonce/refund work. An attacker's
+    #     lever is many minimal txs, and at 0 they are free on this axis.
+    #   - state_diff_count: tree-update work per changed slot. Bounded above by
+    #     merkle_leaf_count (a written slot is a witnessed slot), so it is not
+    #     independently floodable — floored for the zero-coefficient reason, not a
+    #     known vector.
+    # Deliberately NOT floored to the 176-fit values: storage_read/-write,
+    # precompile_call, pubdata_bytes, near_call_count, rich_addressing_op. Those
+    # re-attributed WITHIN a collinear axis rather than to zero, and the axis SUM is
+    # what an attacker pays. Per cold read the two tables agree to 2.7% (fit53
+    # storage_read + storage_application + merkle_leaf = 181,113 vs the 176-fit's
+    # 186,115); per warm read the refit is 2.0x DEARER. Flooring them anyway costs
+    # 28.5-33.7% MAPE for no safety gain; both variants were fit and measured.
+    "transaction_count": 278015,
+    "state_diff_count": 99969,
 }
 
 
@@ -670,6 +702,14 @@ def main():
     ap.add_argument("--fit-date", default=None, help="provenance: ISO date of this fit")
     ap.add_argument("--dataset-desc", default=None,
                     help="provenance: human description of the corpus (batch ranges, counts)")
+    ap.add_argument("--envelope-from", default=None,
+                    help="cost_table.json whose calibration.feature_value_max to carry "
+                         "forward (element-wise max with this fit's). Use when a refit "
+                         "narrows the corpus: the volume fence is an envelope, not a "
+                         "cost, so a wider sample is strictly better and re-deriving a "
+                         "tighter one rejects legitimate batches. The arithmetic-SHARE "
+                         "cap is never carried — it is relative to this table's own "
+                         "rich_addressing_op coefficient.")
     ap.add_argument("--stale-reason", default=None,
                     help="declare the emitted table knowingly stale (why, and what "
                          "must happen before it can be trusted). Required when the "
@@ -764,12 +804,45 @@ def main():
     # a bytecode/decommit or far-call flood carries almost no arithmetic — so
     # without these the estimator reports "within calibration" for a batch sitting
     # 6-15x outside every counter the corpus ever showed.
+    # The volume fence may come from a WIDER corpus than the coefficients, via
+    # --envelope-from. It is an "what have we ever seen" envelope, not a cost
+    # claim: it carries no reproducibility requirement, and a narrow sample fails
+    # closed but expensively (fences derived from the 49-row fixture flagged
+    # 52/176 = 29.5% of ordinary training batches). So when a refit shrinks the
+    # corpus for reproducibility, carrying the old fence forward is strictly
+    # better than re-deriving a tighter one. The share half is NOT carried: it is
+    # a ratio against THIS table's own rich_addressing_op coefficient, so a
+    # borrowed value would fence against a coefficient that no longer exists.
+    fence = {f: int(df[f].max()) for f in ENVELOPE_FEATURES if f in df.columns}
+    fence_source = args.dataset_desc or str(args.dataset)
+    if args.envelope_from:
+        prior = json.loads(Path(args.envelope_from).read_text())
+        prior_cal = prior.get("calibration", {})
+        prior_fence = prior_cal.get("feature_value_max", {})
+        if not prior_fence:
+            raise SystemExit(
+                f"ERROR: --envelope-from {args.envelope_from} carries no "
+                f"calibration.feature_value_max to borrow."
+            )
+        widened = {f: max(prior_fence.get(f, 0), fence.get(f, 0))
+                   for f in set(prior_fence) | set(fence)}
+        narrowed = {f: (fence.get(f, 0), prior_fence[f])
+                    for f in prior_fence if prior_fence[f] > fence.get(f, 0)}
+        fence = widened
+        fence_source = (
+            f"volume fence carried from a wider corpus via --envelope-from "
+            f"({prior_cal.get('feature_value_max_source', args.envelope_from)}); "
+            f"coefficients fit on: {args.dataset_desc or args.dataset}"
+        )
+        if narrowed:
+            print("Carried a wider volume fence rather than re-deriving "
+                  "(this dataset's max -> carried max):", file=sys.stderr)
+            for f, (mine, theirs) in sorted(narrowed.items()):
+                print(f"  {f}: {mine:,} -> {theirs:,}", file=sys.stderr)
     result["calibration"] = {
         "rich_addressing_share_max": max(rich_shares) if rich_shares else 0.0,
-        "feature_value_max": {
-            f: int(df[f].max()) for f in ENVELOPE_FEATURES if f in df.columns
-        },
-        "feature_value_max_source": args.dataset_desc or str(args.dataset),
+        "feature_value_max": fence,
+        "feature_value_max_source": fence_source,
     }
     result["provenance"] = provenance
     missing_envelope = [f for f in ENVELOPE_FEATURES if f not in df.columns]

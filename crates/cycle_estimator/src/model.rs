@@ -167,25 +167,42 @@ impl Provenance {
 /// batches. Sharing one constant meant the share guard carried volume-sized
 /// headroom for no reason.
 ///
-/// 1.2 was chosen against the 176-batch corpus. It bounds the worst
-/// under-prediction of a *trusted* compute-heavy batch at ~23% (vs ~35% at 1.8),
-/// and it restores the rejection margin on the frame-churn / pooled-stack-clear
-/// vector from 1.18× to 1.76×. Cost: the `mem_high` adversarial row moves from
-/// trusted to untrusted, so the fixture asserts coverage on 4 rows instead of 5.
+/// 1.2 was chosen against the 176-batch corpus, on the reasoning above; it is
+/// kept here, and the bound it was said to buy is now known to be far more
+/// optimistic than stated.
 ///
-/// The bound is `1 + s(k−1)` for share `s` and arithmetic under-priced `k×`.
-/// `k ≈ 2.7` here, DERIVED not measured: attributing the compute-dominated
-/// fixture's whole residual to arithmetic implies ~315 cyc/op against the fitted
-/// 117.26. It is table-dependent — re-derive after any refit, and note that
-/// ~23% still exceeds the 1.05 seal margin's 4.76%, so this narrows the exposure
-/// rather than closing it. Closing it needs finer featurization of the compute
-/// vector: flooring `rich_addressing_op` instead costs +10pp organic MAPE and
-/// makes this margin *worse*, because the cap is derived from the same
-/// coefficient the guard watches.
+/// The bound is `1 + s(k−1)` for share `s` and arithmetic under-priced `k×`. The
+/// original estimate used `k ≈ 2.7`, DERIVED by attributing a compute-dominated
+/// fixture's whole residual to arithmetic (~315 cyc/op), and concluded ~23% worst
+/// under-prediction for a trusted batch. **Direct measurement refutes the input.**
+/// On a local era node, three volume tiers per opcode with R² = 1.000000 and
+/// intercepts reproducing the empty-batch baseline:
 ///
-/// Do not raise it back without re-deriving both of those numbers. Lowering it
-/// further to 1.0 gains margin (2.12×) but leaves no slack for a legitimately
-/// more arithmetic-heavy batch than any of the 176 observed.
+/// | opcode | effective cyc/op | vs the 65.01 priced here |
+/// |---|---:|---:|
+/// | `add` | 137 | 2.1× |
+/// | `mul` | 734 | 11.3× |
+/// | `div` | 7,515 | **115.6×** |
+///
+/// At `k = 115.6` and this table's trip point (cap 0.0587 × 1.2 = 0.0704) the
+/// worst under-prediction of a *trusted* compute-heavy batch is **~89%**, not
+/// ~23%. The factor is still worth keeping — 1.8 would make it ~92% — but it must
+/// not be read as bounding the exposure. It does not.
+///
+/// Nor can any share threshold: covering `k = 115.6` inside the 1.05 seal margin
+/// needs `s ≤ 0.04%`, three orders below the 5.87% organic batches reach. Neither
+/// can the volume half — the largest organic arithmetic count is 7,448,659 ops
+/// while reaching 2^36 with `div` takes 9,144,308, a separation of only 1.23×, so
+/// any fence with practical slack admits an unprovable batch. `add` and `div`
+/// differ 54.8× at identical count AND identical share, so no function of the
+/// aggregate bucket separates them: **the information is not in the feature.**
+/// Closing this needs finer featurization — splitting the bucket by opcode
+/// subtype. Flooring instead is not an option: a single coefficient safe against
+/// 7,515 costs 496% organic MAPE.
+///
+/// Do not raise the factor without re-deriving these numbers. Lowering it to 1.0
+/// gains a little margin but leaves no slack for a legitimately more
+/// arithmetic-heavy batch than any observed.
 pub const SHARE_EXTRAPOLATION_FACTOR: f64 = 1.2;
 
 /// Multiplier on the per-feature volume envelope
@@ -329,11 +346,13 @@ impl CostModel {
     ///
     /// 1. **Arithmetic share** (`rich_addressing_op`), against
     ///    [`SHARE_EXTRAPOLATION_FACTOR`] — left under-priced because flooring it
-    ///    wrecks organic accuracy: `total.rich_addressing_op` is ~117 after the
-    ///    2026-08-19 refit (was ~71) against a true ~236/op, so ~2×. Harmless
-    ///    organically, where arithmetic rides alongside priced storage; a batch
-    ///    *dominated* by it is under-estimated ~2×. NB use the `total` figure —
-    ///    `phases.vm_execution.rich_addressing_op` is a different number (~163)
+    ///    wrecks organic accuracy: `total.rich_addressing_op` is 65.01 on the
+    ///    reproducible refit (was ~117, ~71 before that) against a MEASURED
+    ///    7,515/op for `div`, so 115.6× on the worst member of the bucket — not
+    ///    the ~2× previously assumed. Harmless organically, where arithmetic rides
+    ///    alongside priced storage; a batch *dominated* by it is under-estimated
+    ///    up to two orders of magnitude. NB use the `total` figure —
+    ///    `phases.vm_execution.rich_addressing_op` is a different number (86.41)
     ///    that appears earlier in cost_table.json and is easy to misread.
     /// 2. **Volume envelope** ([`Calibration::feature_value_max`]), against
     ///    [`VOLUME_EXTRAPOLATION_FACTOR`] — a raw count

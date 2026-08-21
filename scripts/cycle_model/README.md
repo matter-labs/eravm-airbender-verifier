@@ -18,21 +18,25 @@ Two halves, sharing one feature schema:
 
 The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
 
-> ### Status: refit for the delegation guest; three scope limits
+> ### Status: refit on a reproducible corpus; three scope limits
 >
-> Reweighted 2026-08-19 against the current delegation-enabled guest
-> (`provenance.guest_sha256` identifies it). The staleness this note used to
-> describe is fixed — the pre-delegation table over-predicted that guest **2.05×**
-> (MAPE 105%), which is why every table now carries a stamp and why the nightly
-> drift job exists.
+> Refit 2026-08-21 on every batch current code can decode — 49× `513xxx` (v29) +
+> `84730`/`84731`/`84732` (v31) + `900065` (v31 synthetic), measured in one run on
+> one marker guest that `provenance.guest_sha256` identifies. The dataset is
+> committed at `testdata/cycle_model/dataset.json` and the table **refits from it
+> byte-identically**; its predecessor was fit on 176 batches of which ~122 were
+> `506xxx`, a wire format that fails inside `bincode` decode on any current build,
+> so that fit could not be reproduced or re-measured from the tree.
 >
-> - **Deliberately conservative by ~15%.** It over-predicts every batch of its own
->   176-batch corpus, +9.7% to +20.5% (MAPE 15.13%) — that is `OPCODE_FLOORS`, not
->   error. Not headroom: it is organic-only, and far tighter on a decommit flood.
-> - **The corpus is Version29; production runs Version31.** All 176 batches are
->   v29 re-encoded to the current wire format. The *guest* is current, so the costs
->   are current-guest costs; what is v29 is the batch content. Against the four
->   available v31 batches the table runs −2.56% to +2.61%.
+> - **Deliberately conservative by ~10%.** Over-predicts all 53 of its corpus,
+>   +0.02% to +12.55% (MAPE 10.37%) — that is the cost floors, not error. The
+>   unfloored fit scores 7.55%, and leave-one-out CV gives MAPE 8.19%, worst-over
+>   +31.20%, **zero** under-predictions.
+> - **The corpus is mostly Version29; production runs Version31.** The *guest* is
+>   current either way, so the costs are current-guest costs; what is v29 is the
+>   batch content of 49 of the 53 rows. The four v31 rows now over-predict +0.02%
+>   to +0.77% — the predecessor UNDER-predicted three of them by 2.56%, which is
+>   the safety gap this refit closes.
 > - **Two gaps need a local era node:** the synthetic precompile set (six crypto
 >   coefficients are pinned literals, not measurements) and re-measuring 8 of the 9
 >   adversarial fixtures. See **[REFIT-RUNBOOK.md](REFIT-RUNBOOK.md)**.
@@ -158,9 +162,11 @@ comparison are frozen committed data, so when the guest gets faster the fixture
 ages *with* the table and the test stays green while the model's real error grows
 — the pre-delegation table reached 2.05× that way, with this test passing
 throughout. Read it as "the table did not change unexpectedly", not as "the model
-is accurate". Note also that its fixture is **in-sample** for the current table:
-all 49 of its rows are in the 176-batch training corpus, so it is a tripwire, not
-a validation.
+is accurate". Note also that its fixture is **in-sample by construction** for the
+current table: it *is* the corpus, all 53 rows, so it is a tripwire, not a
+validation. At this corpus size no hold-out is possible — every row is needed to
+identify the coefficients — so leave-one-out CV is the honest generalization
+number.
 
 The check that separates *the model changed* from *the thing being modelled
 changed* is the nightly drift job,
@@ -328,14 +334,21 @@ coverage guard is what keeps it from silently producing an under-estimate.
   `OFFLINE_ONLY_FEATURES`, so on the deployed path `setup` collapses to
   `base + 2110·merkle_leaf_count`. The offline precision is what makes the online
   number look credible; it is not an estimate of setup cost at all.
-- **Accuracy, and which guest each number describes.** On the 176-batch training
-  corpus (Version29 batches, current guest): total R² = 0.9998, MAPE 15.13%,
-  every batch over-predicted +9.7%..+20.5% — the `OPCODE_FLOORS` bias, not error.
-  `merkle_verification` MAPE 0.10%, `setup` 0.02%, `commitment` 0.68%. Against the
-  four available Version31 batches: −2.56% to +2.61%. The pre-floors, pre-reweight
-  figures often quoted for this model (MAPE 0.45% on a 49-batch split) describe a
-  different table *and* a different guest. The deployed path adds a further ~+3%
-  from the `merkle_leaf_count` proxy, so none of these describe it exactly.
+- **Accuracy, and which guest each number describes.** In-sample on the 53-batch
+  corpus (current guest): total R² = 0.9999, MAPE 10.37%, every batch
+  over-predicted +0.02%..+12.55% — the cost-floor bias, not error. Per phase,
+  `merkle_verification` and `setup` R² = 1.00000, `vm_execution` 0.99962,
+  `commitment` 0.83106 (near-constant, so its R² is a low-variance artifact).
+  Out-of-sample, leave-one-out: MAPE 8.19%, worst-over +31.20% (that is `900065`,
+  the only batch constraining the merkle-leaf axis), zero under-predictions.
+  Separating the two effects: `cross_validate.py` does **not** apply the floors,
+  and its 5-fold CV puts the *organic* fit at MAPE 0.85%, 38% of batches
+  under-predicted, worst −2.51%. So the underlying fit is near-unbiased with a
+  ±2.5% spread and everything that makes the shipped table strictly conservative
+  is the floors — read both numbers together, since either alone misleads. Older
+  figures quoted for this model (MAPE 0.45% on a 49-batch split, or 15.13% on 176)
+  describe different tables *and* in one case a different guest. The deployed path
+  adds a further ~+0.4% from the `merkle_leaf_count` proxy.
 
 ## Tests
 

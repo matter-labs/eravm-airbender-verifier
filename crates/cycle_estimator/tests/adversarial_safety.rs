@@ -30,21 +30,41 @@
 //! slot-axis coefficients fell 1.776×, and coverage needs 1.632×. Replaced by
 //! batch 900065 — same cold-slot-flood shape at 1.75× the volume, measured on the
 //! fit guest. Its job is a tripwire against a refit draining the storage/merkle
-//! coefficients: 95.5% of its prediction is the slot axis, and it trips on a
-//! ≥7.53% drain of those three. That figure is arithmetic on today's
+//! coefficients: 93.8% of its prediction is the slot axis, and it trips on a
+//! ≥5.10% drain of those three. That figure is arithmetic on today's
 //! coefficients — recompute after any refit — and it catches gross
 //! re-attribution, not drift (the 2026-08-19 reweight moved coefficients >40%).
 //!
+//! ⚠️ NO LONGER HELD OUT (2026-08-21). It was held out of the 176-batch fit; the
+//! reproducible refit that replaced that table FITS ON IT, because it is the only
+//! batch current code can decode that constrains the merkle-leaf axis at all
+//! (140,059 leaves against a 3.8k–18k organic range). Held out, that axis is
+//! unidentified and this row is over-predicted +31.2%; fit on, +0.02%. The
+//! tripwire function survives being in-sample — it is a sensitivity check on the
+//! slot coefficients, not an accuracy claim — but it can no longer be cited as
+//! out-of-sample evidence, and a refit cannot be validated against it. The honest
+//! generalization number is the leave-one-out CV quoted in model_regression.rs,
+//! where this row is exactly the +31.2% worst case. A real held-out high-leaf
+//! batch (docs/generating-batches.md) is what restores the separation.
+//!
 //! DELEGATION WEIGHTS, checked not assumed. `effective_cycles = raw + 16·blake2 +
 //! 4·bigint + 4·keccak`, and those weights have no authoritative in-tree source.
-//! This row is the most exposed available (blake2 = 22.25% of its effective
-//! cycles vs 1.90–6.70% across the corpus), yet refitting at w(blake2) ∈
-//! {8,16,24,40} leaves it COVERED at every value, margin 1.2048 → 1.1531. That is
-//! structural: blake2 tracks slot count (r = 0.9977), so heavier weight lands on
-//! the coefficient this row saturates, and at ~2,566 blake2/leaf it sits below the
-//! corpus's 3,287 — the refit over-charges it. What a revision does move is
-//! absolute headroom against 2^36 (23.6e9 at w=8 to 35.5e9 at w=40), which is a
-//! question about the seal threshold, not this assertion.
+//! This row is the most exposed available (blake2 = 22.25% of its effective cycles
+//! vs 3.60–12.82% across the reproducible corpus). Re-checked 2026-08-21 with the
+//! ACTUAL re-scaled at the same w as the target — the earlier sweep varied w in
+//! the model while leaving the fixture's w=16 `effective_cycles` fixed, which
+//! compares mismatched units, so its 1.2048 → 1.1531 margins do not mean what
+//! they appear to. Re-scaling both, w(blake2) ∈ {8,16,24,40} leaves this row
+//! covered at margin 1.0501–1.0503 and the whole corpus strictly over-predicted
+//! (worst signed +0.01% to +0.02%) at every value. NOTE the other eight rows
+//! cannot be swept at all: the fixture stores only `effective_cycles`, not the
+//! delegation counts needed to re-scale an actual — add `delegations` when any of
+//! them is re-measured. The robustness is structural: blake2 tracks slot count
+//! (r = 0.9977), so heavier weight lands on the coefficient this row saturates,
+//! and at ~2,566 blake2/leaf it sits below the corpus's 3,287 — the refit
+//! over-charges it. What a revision does move is absolute headroom against 2^36
+//! (23.6e9 at w=8 to 35.5e9 at w=40), which is a question about the seal
+//! threshold, not this assertion.
 //!
 //! Re-measure the other eight when an era node is available. Until then do NOT
 //! "fix" a failure here by moving a coefficient or fencing a feature without first

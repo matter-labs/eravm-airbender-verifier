@@ -78,6 +78,14 @@ impl Tracer for CycleFeatureTracer {
             | Opcode::AuxMutating0
             | Opcode::IncrementTxNumber
             | Opcode::Ret(_) => FeatureId::AverageOp,
+            // Deliberately counted TWICE: once into `average_op` (it pays the same
+            // dispatch as any context op) and once into `near_call_count` (the
+            // frame push/pop on top of that). The two coefficients are therefore
+            // additive — a near call costs `average_op + near_call_count`, 807 on
+            // the committed table — and the fit sees exactly the same
+            // double-count, so there is no train/serve skew. Do not "fix" this by
+            // making the mapping exclusive without refitting: that silently
+            // reprices every near call by the `average_op` coefficient.
             Opcode::NearCall => {
                 self.bump(FeatureId::NearCallCount, 1);
                 FeatureId::AverageOp

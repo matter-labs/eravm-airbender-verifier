@@ -21,8 +21,7 @@ the post-fit OPCODE_FLOORS are not applied — so this slightly understates the
 shipped model's conservative bias. It answers "does the organic fit generalize",
 not "what exact error does the shipped table have".
 
-    python cross_validate.py --dataset <506xxx>/dataset.json \
-        --extra crates/cycle_estimator/tests/fixtures/holdout_513xxx.json
+    python cross_validate.py --dataset testdata/cycle_model/dataset.json
 """
 import argparse, json, sys
 from pathlib import Path
