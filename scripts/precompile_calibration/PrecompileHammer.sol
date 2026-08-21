@@ -39,6 +39,20 @@ contract PrecompileHammer {
     }
 
     // Convenience entries for the standard EVM precompile addresses.
+
+    /// ecrecover (fixed cost/call). Needed even though organic batches are full
+    /// of ecrecovers: organic volume is near-CONSTANT (~one signature per tx,
+    /// 293-760 per batch), and a near-constant column is collinear with the
+    /// intercept, so the organic fit cannot identify a per-recover cost — the
+    /// committed table has 11.47M and a refit on the same corpus 119k, a 100x
+    /// swing that predicts organic batches equally well and mis-prices an
+    /// ecrecover flood by that factor. Only a swept synthetic column determines
+    /// it, which is why `ec_recover_cycles` is in PRECOMPILE_FEATURES and the fit
+    /// aborts while this family is missing from the synthetic set.
+    function ecRecover(uint256 count, bytes calldata input) external {
+        _hammer(address(0x01), count, input); // ecrecover (fixed cost/call)
+    }
+
     function sha256_(uint256 count, bytes calldata input) external {
         _hammer(address(0x02), count, input); // SHA-256 (input-dependent)
     }

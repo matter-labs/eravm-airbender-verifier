@@ -1,63 +1,55 @@
-//! CI guard: the embedded cost model must keep predicting a frozen set of real,
-//! measured batches within tolerance. Runs in normal CI — the ground-truth
-//! effective cycles are baked into the committed fixture, so no batch corpus or
-//! guest execution is needed.
+//! CI guard: **the table did not change unexpectedly** — NOT "the model is
+//! accurate".
 //!
-//! This is a regression tripwire, not a re-validation: it catches an accidental
-//! (or accuracy-worsening) change to `model/cost_table.json` or to the prediction
-//! code. Genuine model improvements still pass (thresholds, not exact pins).
+//! Both sides of the comparison are frozen committed data — the embedded
+//! `cost_table.json` and a fixture with its `effective_cycles` baked in — so this
+//! catches an accidental or accuracy-worsening edit to the table or the
+//! prediction code, and nothing else. It **cannot see guest drift**: the fixture
+//! ages with the table. The pre-delegation table reached 2.05× over-prediction
+//! with this test green throughout, and it did not notice the reweight that fixed
+//! it either. That job is `.github/workflows/cycle-model-drift.yaml`, which
+//! re-measures with the *current* guest.
 //!
-//! The fixture is a frozen snapshot of the 513xxx set (features + measured
-//! effective/native cycles = raw + weighted delegations). Refresh it only when
-//! the guest/verifier changes enough to move real cycle counts (see
-//! `scripts/cycle_model/README.md`).
+//! ⚠️ The fixture is **in-sample**: all 49 rows (513601-513649) are in the
+//! 176-batch corpus the table was fit on, so this is a tripwire, not a
+//! validation. The historical "122 train / 49 hold-out" split does not describe
+//! this table. Refresh only when the guest moves real cycle counts.
 //!
 //! Re-measured 2026-08-19 on the delegation-enabled guest (zksync_vm2 v0.6.3).
 //! The measured binary was build/guest-markers/app.bin, sha256 9228b6e2… — a
 //! PHASE-MARKER-INSTRUMENTED guest, so a shipping guest will NOT match that
 //! checksum; it identifies the measurement build, not the release artifact.
 //!
-//! The feature counts are byte-identical to the previous fixture — only the
-//! cycle counts moved, by 1.54–2.44× (median 2.06×),
-//! as blake2/keccak work moved into delegated circuits. NOTE: these 49 batches
-//! are a subset of the 176 the table is fit on, so this is a
-//! table-did-not-change tripwire, NOT an out-of-sample accuracy check.
+//! The feature counts are byte-identical to the previous fixture — only the cycle
+//! counts moved, by 1.54–2.44× (median 2.06×), as blake2/keccak work moved into
+//! delegated circuits.
 
 use serde::Deserialize;
 use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
 
-// Current accuracy on this fixture is MAPE 12.79% / max 16.41%, and it is
-// ENTIRELY over-prediction. That figure is dominated by the adversarial
-// opcode-cost floors, not by fit error: the unfloored fit scores 0.58% here.
-// The floors (see fit_cost_model OPCODE_FLOORS) deliberately over-price buckets
-// that NNLS zeroes out through collinearity. Measured on THIS table: far_call
-// contributes a median 8.90% of an organic batch's prediction (max 13.09%), all
-// four opcode floors together a median 10.06% (max 14.34%), and adding the two
-// precompile floors raised organic MAPE by 1.13pp (14.00% -> 15.13%) — in
-// exchange for not pricing an attacker's flood far below its true cost.
+// MAPE here is 12.79% / max 16.41%, entirely OVER-prediction, and dominated by
+// the opcode floors rather than fit error — the unfloored fit scores 0.58%.
+// Measured on this table: far_call is a median 8.90% of a batch's prediction (max
+// 13.09%), all four opcode floors 10.06% (max 14.34%), and the two precompile
+// floors cost 1.13pp of organic MAPE (14.00% -> 15.13%) in exchange for not
+// pricing a flood far below its true cost.
 //
-// Because the absolute-error bound therefore has to be loose, it is no longer a
-// meaningful safety check on its own: a 12%-UNDER-predicting table would pass
-// it. MAX_UNDER_PCT is the assertion that actually matters — under-prediction is
-// the only unsafe direction for a seal gate. It is set to 0.0 (assert STRICT
-// over-prediction) rather than a tolerance: this table over-predicts all 49 by
-// >= 9.69% and all 176 corpus batches without exception, so any tolerance large
-// enough to matter could never bind, and the τ=0.9 asymmetric fit plus
-// monotone-raising floors make strict conservatism the design intent, not luck.
+// So the absolute bound has to be loose, which makes it useless as a safety
+// check: a 12%-UNDER table would pass it. MAX_UNDER_PCT is the one that matters,
+// under-prediction being the only unsafe direction, and it is 0.0 — strict
+// over-prediction — because this table over-predicts all 49 rows by >= 9.69% and
+// all 176 corpus batches without exception. The τ=0.9 fit plus monotone floors
+// make that the design intent, not luck.
 //
-// KNOWN LIMITATION: this fixture is 513xxx (Version29) only, and it is the
-// LOW-error family — the 506xxx half of the same corpus runs to +20.45%, median
-// +15.84%. Of the 4 available v31 batches, 84730/84731/84732 are UNDER-predicted
-// by 2.56% and so would fail MAX_UNDER_PCT — but those three are one ~1.28e9-cycle
-// workload measured three times, not three data points, and the only LARGE real
-// v31 batch (900065, 26.6e9 cyc) OVER-predicts by 2.61%. All four stay covered by
-// the seal gate's 1.05 margin (1.246e9 * 1.05 = 1.309e9 > 1.279e9 actual), so this
-// is a fit-accuracy gap on out-of-distribution batches, not a live
-// seal-then-cannot-prove vector. It does mean the assertion below is only verified
-// on the family in the fixture: widen the fixture (and re-check both bounds) when
-// a real v31 corpus exists.
+// KNOWN LIMITATION: the fixture is 513xxx (Version29) only, and the LOW-error
+// half — 506xxx runs to +20.45%, median +15.84%. Of the 4 v31 batches,
+// 84730/84731/84732 UNDER-predict by 2.56% and would fail MAX_UNDER_PCT, but they
+// are one ~1.28e9-cycle workload measured three times; the only large v31 batch
+// (900065, 26.6e9) over-predicts 2.61%. All four stay inside the 1.05 seal margin
+// (1.246e9 * 1.05 > 1.279e9), so this is an out-of-distribution accuracy gap, not
+// a seal-then-cannot-prove vector. Widen the fixture when a v31 corpus exists.
 const MAX_MAPE_PCT: f64 = 13.5;
 const MAX_SINGLE_ERR_PCT: f64 = 17.5;
 const MAX_UNDER_PCT: f64 = 0.0;
@@ -119,4 +111,33 @@ fn embedded_model_does_not_regress_on_frozen_holdout() {
         worst.0,
         worst.1
     );
+}
+
+/// The calibration envelope must not fence organic traffic out.
+///
+/// The envelope fails closed (an out-of-envelope batch is sealed, never
+/// silently trusted), so a fence that is too TIGHT costs throughput on ordinary
+/// batches instead of admitting an attack. That failure mode is invisible in
+/// the accuracy numbers, so pin it: every batch of the organic hold-out must be
+/// inside the envelope. If a refit narrows `feature_value_max` (a smaller or
+/// less varied training corpus) this is what notices.
+#[test]
+fn organic_holdout_is_inside_the_calibration_envelope() {
+    let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
+    let model = CostModel::embedded();
+    for r in &rows {
+        let est = model.estimate(&r.features);
+        assert!(
+            est.is_within_calibration(),
+            "organic batch {} was flagged out-of-envelope on {:?} — the fence is \
+             tighter than real traffic",
+            r.batch_number,
+            est.extrapolated
+        );
+        assert!(
+            !est.trace_missing,
+            "organic batch {} has a full trace; the missing-trace guard must stay quiet",
+            r.batch_number
+        );
+    }
 }

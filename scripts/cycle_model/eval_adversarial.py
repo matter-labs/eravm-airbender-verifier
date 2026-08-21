@@ -25,9 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fit_cost_model import feature_counts, predict_row
 
 # Keep in lockstep with the Rust gate constants:
-# EXTRAPOLATION_FACTOR in crates/cycle_estimator/src/model.rs, and the
-# GATE_MARGIN the adversarial_safety test holds the model to.
-EXTRAPOLATION_FACTOR = 1.8
+# SHARE_EXTRAPOLATION_FACTOR / VOLUME_EXTRAPOLATION_FACTOR in
+# crates/cycle_estimator/src/model.rs, and the GATE_MARGIN the
+# adversarial_safety test holds the model to. The two factors differ on purpose:
+# the share cap is the organic maximum (any factor >= 1.0 admits all organic
+# traffic), a volume max is a sample and needs slack.
+SHARE_EXTRAPOLATION_FACTOR = 1.2
+VOLUME_EXTRAPOLATION_FACTOR = 1.8
 GATE_MARGIN = 1.05
 
 FIXTURE = Path(__file__).resolve().parents[2] / \
@@ -44,7 +48,9 @@ def main() -> int:
     model = json.loads(Path(args.cost_table).read_text())
     rows = json.loads(Path(args.fixture).read_text())
     tot = model["total"]
-    cap = model.get("calibration", {}).get("rich_addressing_share_max", 0.0)
+    calibration = model.get("calibration", {})
+    cap = calibration.get("rich_addressing_share_max", 0.0)
+    value_max = calibration.get("feature_value_max", {})
     rich_coef = tot["features"].get("rich_addressing_op", 0.0)
 
     violations = []
@@ -53,15 +59,26 @@ def main() -> int:
         feats = feature_counts(r)
         pred = predict_row(tot["base"], tot["features"], feats)
         share = rich_coef * feats.get("rich_addressing_op", 0) / pred if pred > 0 else 0.0
-        # mirrors CycleEstimate: trusted = within the calibration envelope (the
-        # fixture uses no unpriced precompile, so is_reliable is not exercised)
-        trusted = cap <= 0.0 or share <= cap * EXTRAPOLATION_FACTOR
+        # mirrors CostModel::extrapolated_features — BOTH halves of the envelope:
+        # the arithmetic share and the per-feature volume fence. (The fixture uses
+        # no unpriced precompile and always has a real trace, so is_reliable is not
+        # exercised here.) Keep this in lockstep with the Rust guard: this script
+        # is the pre-commit gate, the Rust test the post-commit one, and they must
+        # not be able to disagree about which tables are safe.
+        over_volume = [
+            f for f, mx in value_max.items()
+            if mx > 0 and feats.get(f, 0) > mx * VOLUME_EXTRAPOLATION_FACTOR
+        ]
+        extrapolated = (cap > 0.0 and share > cap * SHARE_EXTRAPOLATION_FACTOR) \
+            or over_volume
+        trusted = not extrapolated
         covered = pred * args.margin >= r["effective_cycles"]
         if trusted and not covered:
             verdict = "VIOLATION (trusted + under-predicted)"
             violations.append(r["label"])
         elif not trusted:
-            verdict = "rejected by envelope guard (safe)"
+            why = f"volume {over_volume}" if over_volume else "arithmetic share"
+            verdict = f"rejected by envelope guard, {why} (safe)"
         else:
             verdict = "covered"
         print(f"{r['label']:>24}  {r['effective_cycles']:>14,}  {pred:>14,.0f}"

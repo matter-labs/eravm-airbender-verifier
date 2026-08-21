@@ -18,6 +18,18 @@ Usage:
     python eval_holdout.py --cost-table crates/cycle_estimator/model/cost_table.json \
                            --dataset    artifacts/cycle_model_test/dataset.json \
                            --out        artifacts/cycle_model_test
+
+With `--max-under-pct` / `--max-over-pct` it becomes a **drift check** that exits
+non-zero: point it at a dataset measured with the CURRENT guest and it fails when
+the committed table no longer describes that guest. That is the one check the
+in-repo Rust regression test cannot make — there both the prediction and the
+ground truth are frozen committed data, so they age together. See
+`.github/workflows/cycle-model-drift.yaml`.
+
+Use the signed bounds, not `--max-mape-pct`. The table is deliberately biased
++9.7%..+20.5% over its own training corpus (the OPCODE_FLOORS), so a symmetric
+bound tight enough to catch a real under-prediction fails the correct table, and
+one loose enough to pass it cannot catch a 15% under-prediction.
 """
 import argparse
 import json
@@ -56,6 +68,22 @@ def main():
     ap.add_argument("--cost-table", required=True)
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", default=None)
+    # Signed on purpose: the directions are not comparable. Under-prediction
+    # certifies an over-budget batch; over-prediction is the table's deliberate
+    # bias (+9.7%..+20.5% over the training corpus, from OPCODE_FLOORS). One
+    # |error| bound either passes a real under-prediction or fails a correct table.
+    ap.add_argument("--max-under-pct", type=float, default=None,
+                    help="drift mode, SAFETY: exit 1 if any batch is under-predicted "
+                         "by more than this (use with a CURRENT-guest dataset)")
+    ap.add_argument("--max-over-pct", type=float, default=None,
+                    help="drift mode, STALENESS: exit 1 if any batch is over-predicted "
+                         "by more than this — catches a table that no longer describes "
+                         "the guest (the known stale event was +105%%)")
+    ap.add_argument("--max-mape-pct", type=float, default=None,
+                    help="DEPRECATED, direction-blind: exit 1 if the TOTAL model's MAPE "
+                         "exceeds this. Prefer --max-under-pct/--max-over-pct")
+    ap.add_argument("--max-single-err-pct", type=float, default=None,
+                    help="drift mode: exit 1 if any single batch's |error| exceeds this")
     args = ap.parse_args()
 
     model = json.loads(Path(args.cost_table).read_text())
@@ -141,6 +169,53 @@ def main():
         out.write_text(text)
         print(f"\nWrote {out}")
 
+    # Drift mode. Also print the mean prediction/actual RATIO: that is the shape
+    # calibration staleness takes (a systematic multiplier, e.g. 2.05x after the
+    # guest's crypto moved to delegated circuits), and it is more legible than
+    # MAPE when the whole corpus shifts one way.
+    ratios = [p / a for a, p in zip(effective, pred_tot) if a]
+    mean_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+    print(f"mean pred/actual ratio: {mean_ratio:.3f}x  "
+          f"(range {min(ratios, default=0):.3f}-{max(ratios, default=0):.3f})")
+
+    # Signed per-batch errors, in percent: positive = over-predicted (safe),
+    # negative = under-predicted (unsafe).
+    signed = [100.0 * (p - a) / a for a, p in zip(effective, pred_tot) if a]
+    worst_under = min(signed, default=0.0)   # most negative
+    worst_over = max(signed, default=0.0)
+    print(f"signed error: worst under {worst_under:+.3f}%  worst over {worst_over:+.3f}%")
+    failures = []
+    if args.max_under_pct is not None and -worst_under > args.max_under_pct:
+        failures.append(
+            f"UNDER-predicted by {-worst_under:.2f}% > {args.max_under_pct}% "
+            f"(unsafe direction: an over-budget batch would be certified)"
+        )
+    if args.max_over_pct is not None and worst_over > args.max_over_pct:
+        failures.append(
+            f"OVER-predicted by {worst_over:.2f}% > {args.max_over_pct}% "
+            f"(safe direction, but the table no longer describes this guest)"
+        )
+    if args.max_mape_pct is not None and m_tot["mape"] > args.max_mape_pct:
+        failures.append(f"MAPE {m_tot['mape']:.2f}% > {args.max_mape_pct}%")
+    if args.max_single_err_pct is not None and m_tot["maxape"] > args.max_single_err_pct:
+        failures.append(f"worst batch {m_tot['maxape']:.2f}% > {args.max_single_err_pct}%")
+    if failures:
+        provenance = model.get("provenance", {})
+        print(
+            "\nDRIFT: the committed cost table no longer describes the measured guest — "
+            + "; ".join(failures)
+            + f"\n  table provenance: guest_sha256={provenance.get('guest_sha256')} "
+            f"verifier_commit={provenance.get('verifier_commit')} "
+            f"fit_date={provenance.get('fit_date')}"
+            + (f"\n  table already declares itself stale: {provenance['stale_reason']}"
+               if provenance.get("stale_reason") else "")
+            + "\n  This is a calibration failure, not a test bug: refit against the "
+            "current guest (scripts/cycle_model/REFIT-RUNBOOK.md). Do not raise the "
+            "threshold to make it pass."
+        )
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -75,6 +75,45 @@ pub const SAFETY_CRITICAL_FEATURES: &[FeatureId] = &[
     FeatureId::EcPairingCycles,
 ];
 
+/// Features any real VM execution produces, emitted by a tracer from
+/// `after_instruction` / `on_extra_prover_cycles` (the vm2 tracer in
+/// `zksync-era-airbender-cycles-tracer`, or era's in-tree legacy-VM one).
+///
+/// One transaction retires thousands of these — bootloader far-calls, heap (UMA)
+/// traffic, arithmetic. All-zero across the whole set therefore does not mean "a
+/// tiny batch", it means **no tracer ran**, and must read as UNRELIABLE — see
+/// [`crate::model::CostModel::trace_missing`].
+pub const VM_TRACE_FEATURES: &[FeatureId] = &[
+    FeatureId::RichAddressingOp,
+    FeatureId::AverageOp,
+    FeatureId::StorageRead,
+    FeatureId::StorageWrite,
+    FeatureId::Event,
+    FeatureId::PrecompileCall,
+    FeatureId::Decommit,
+    FeatureId::FarCall,
+    FeatureId::UmaWrite,
+    FeatureId::UmaRead,
+];
+
+/// Features NO online producer supplies: not VM observables, and
+/// [`crate::BatchContext`] deliberately omits them. They exist only in the
+/// offline dataset, where `cycle_bench` derives them from the verifier input.
+///
+/// A non-zero coefficient on one of these in `total` is **train/serve skew** —
+/// the fit prices work the deployed estimator feeds as 0, so it under-estimates.
+/// Enforced twice: `TOTAL_EXCLUDE` in `fit_cost_model.py` keeps them out of the
+/// fit, and `model::tests::total_prices_no_offline_only_feature` fails the build
+/// if a committed table prices one anyway. A refit that needs one must extend
+/// `BatchContext` **and** an online producer first.
+pub const OFFLINE_ONLY_FEATURES: &[FeatureId] = &[
+    FeatureId::UsedBytecodeBytes,
+    FeatureId::UsedBytecodeCount,
+    FeatureId::StorageKeyCount,
+    FeatureId::InitialHeapWords,
+    FeatureId::SystemLogCount,
+];
+
 /// A calibration feature vector: model INPUTS only (no measured cycles).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureVector {
