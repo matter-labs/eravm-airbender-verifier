@@ -40,6 +40,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --exclude eravm-prover-guest --locked -- -D warnings
 
+      # `cycle-markers` is the offline cycle-cost calibration build. It is
+      # non-default and never shipped, so every command above — which runs with
+      # default features — compiles a DIFFERENT `execute()`: the feature erases
+      # both the protocol-version gate and the label normalization (so a v29
+      # batch can be measured under v29 semantics), and it emits CSR 0x7ff
+      # markers. That code path is therefore invisible to CI unless it is asked
+      # for explicitly, and it drifted unnoticed: a test asserting the version
+      # gate's error message was already failing under this feature before
+      # anyone looked.
+      #
+      # `--all-targets` is the point — it compiles the tests, which is where the
+      # `#[cfg(not(feature = "cycle-markers"))]` blocks and the
+      # `cfg_attr(..., allow(unused_mut))` on `execute()` are actually exercised.
+      # Only the verifier crate needs it; nothing else reads the feature.
+      - name: Clippy (cycle-markers calibration build)
+        run: cargo clippy -p zksync_airbender_verifier --features cycle-markers --all-targets --locked -- -D warnings
+
   tests:
     name: tests
     runs-on: matterlabs-ci-runner-high-performance
@@ -77,6 +94,14 @@ jobs:
       # The Airbender guest is built via `cargo-airbender`, not plain Cargo targets.
       - name: Run tests
         run: cargo test --workspace --exclude eravm-prover-guest --locked
+
+      # Compiling the calibration build is not enough — the tests that assert the
+      # protocol-version gate are `#[cfg(not(feature = "cycle-markers"))]`, and a
+      # mis-gated one fails only when RUN (with the gate erased, the
+      # unconditional `vm_run_data` cross-bind reports first, so the asserted
+      # error message never appears). `--lib` keeps this off the LFS fixtures.
+      - name: Run tests (cycle-markers calibration build)
+        run: cargo test -p zksync_airbender_verifier --features cycle-markers --lib --locked
 
   vm-compare-batches:
     name: vm-compare-batches
