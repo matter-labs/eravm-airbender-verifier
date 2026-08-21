@@ -156,6 +156,18 @@ jobs:
             --baseline ../scripts/guest_softfloat_baseline.txt \
             --min-insns 500000
 
+      # The heap arena is a link-time constant (`--defsym=_heap_size` in
+      # guest/.cargo/config.toml) and is baked into both VKs, so a guest built
+      # with an unintended arena matches no registered VK. See the script header
+      # for the drift paths this catches.
+      - name: Check guest memory layout
+        # keep in sync with the identical 'Check guest memory layout' step in release-artifacts.yaml
+        working-directory: ./guest
+        run: |
+          bash ../scripts/check_guest_memory_layout.sh \
+            ../target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+            --expect-heap-mib 952
+
       - name: Upload guest dist
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f3 # v6.0.0
         with:

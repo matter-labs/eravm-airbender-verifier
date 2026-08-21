@@ -14,6 +14,7 @@ categories.workspace = true
 # vise.workspace = true
 zksync_types.workspace = true
 zksync_crypto_primitives.workspace = true
+airbender-crypto = { workspace = true, features = ["single_round_with_control"] }
 # TODO(eravm-airbender-verifier): Restore `zksync_storage` once that crate is vendored.
 
 anyhow.workspace = true
