@@ -14,6 +14,18 @@ libraries; the service consumes `eravm-prover-host` as a dependency.
 - `guest/`: Airbender guest program that reads `AirbenderVerifierInput` and runs `verify()`.
 - `host/`: host runner/prover app for batch execution and proof generation.
 - `testdata/era_mainnet_batches/`: compressed mainnet batch corpus tracked via Git LFS.
+- `scripts/cycle_model/`, `scripts/precompile_calibration/`: offline cycle-cost calibration.
+
+## Benchmarking
+
+The guest fails hard if a batch exceeds its heap or the per-proof cycle limit, so
+both are measurable in-tree: peak heap (native proxy, true in-guest peak by heap
+bisection, and per-phase attribution) and guest cycles (measured per phase, or
+predicted from a vm2 trace with no RISC-V execution).
+
+See **[docs/benchmarking.md](docs/benchmarking.md)** for the workflow, including the
+prerequisites that are easy to miss (a riscv-capable clang on macOS) and the
+benchmarking-only feature flags that must never ship in a proved guest.
 
 ## Quick Start
 

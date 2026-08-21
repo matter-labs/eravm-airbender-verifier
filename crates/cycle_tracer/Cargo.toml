@@ -1,0 +1,20 @@
+[package]
+name = "zksync-era-airbender-cycles-tracer"
+description = "Passive vm2 tracer + online estimator for the Airbender cycle-cost model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+# The fast-VM (`zksync_vm2`) half of the cycle estimator: a passive tracer that
+# fills the `FeatureVector` schema defined in the VM-agnostic
+# `zksync-era-airbender-cycles-estimator` crate, plus the convenience `estimate`
+# wrappers over that crate's `CostModel`. Split out so consumers that only need
+# the model / feature schema / cost table (e.g. zksync-era) do not pull `zksync_vm2`.
+[dependencies]
+zksync-era-airbender-cycles-estimator.workspace = true
+zksync_vm2.workspace = true

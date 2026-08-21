@@ -60,6 +60,45 @@ If you already have raw `*.bin` files outside the repository, compress and stage
 
 The import script intentionally stages only the batch payloads. It does not auto-commit, because you may want to review the resulting pointer changes before creating a commit.
 
+## Which Batches Decode On Which Build
+
+The corpus spans several protocol/wire-format eras, and they are **not
+interchangeable**. Check this table before wondering why a batch fails to load —
+`cargo run -p zksync_cycle_model --bin cycle_bench -- --check-only` reports each
+batch's protocol version without running a guest.
+
+| Set | Count | Loads on a default build? | Notes |
+| --- | --- | --- | --- |
+| `84730`–`84732` etc. | 8 | **yes** | What CI uses (`CI_BATCHES`). The reference set for anything that must work out of the box. |
+| `513601`–`513649` | 49 | no — needs `relax-version-pin` | Protocol **v29** payloads in the current wire format: they bincode-decode fine, then the version pin rejects them. The cycle-model hold-out set. |
+| `506077`–`506204` | 127 | **no — cannot be loaded at all** | **Pre-v31 wire format.** These fail in `bincode` decode itself (`invalid utf-8 sequence`), which no feature flag can work around. Kept for history; treat them as unreadable by current code. |
+| `900065` | 1 | yes | Synthetic read-heavy fixture, see below. |
+
+The practical consequence: the 122-row training dataset behind the committed cost
+table was measured from the `506xxx` set, so that **fit is not reproducible from
+these batches on current code** — which is exactly why the measured dataset is
+committed at `testdata/cycle_model/dataset.json`. Re-measuring a training corpus
+today means using `513xxx` (with `relax-version-pin`) or exporting fresh v31 batches
+— see [`docs/generating-batches.md`](../../docs/generating-batches.md).
+
+## Cycle-Model Hold-Out Set (`513601`–`513649`)
+
+49 consecutive mainnet batches, ~296 MB total (3.4–8.8 MB each, median 5.8),
+reserved as the **hold-out** for the Airbender cycle-cost model: the committed
+`cost_table.json` is fit on `506xxx` and validated here, so fitting on these
+batches would destroy the only out-of-sample signal the model has.
+
+They are in-repo so the fixture at
+`crates/cycle_estimator/tests/fixtures/holdout_513xxx.json` — the frozen
+features + measured cycles that `model_regression.rs` guards in CI — stays
+regenerable. That test needs no batches; these are for the rarer case of
+refreshing it after a guest change moves real cycle counts. Without them a refresh
+could only regenerate the batches someone happened to still have, quietly
+shrinking the guard's coverage.
+
+Because they are protocol v29, measuring them requires the calibration build
+(`--features relax-version-pin`; see `docs/benchmarking.md`).
+
 ## Storage-Soundness Regressions (no synthetic fixture needed)
 
 `crates/airbender_verifier/tests/fail_closed.rs` guards the verifier's storage-view
@@ -75,7 +114,9 @@ the test synthesizes the gap adversarially instead.
 
 `900065.bin.gz` is **not** a mainnet batch. It is a synthetic v31 batch generated
 from a local Era node with 140,059 unique cold storage reads (the `9000xx` prefix
-marks it synthetic; `65` is its source batch number). It is the regression fixture
+marks it synthetic; `65` is its source batch number) — see
+[`docs/generating-batches.md`](../../docs/generating-batches.md) for how to produce
+one. It is the regression fixture
 for the streaming Merkle-proof verification (the RAM-exhaustion DoS fix): the
 pre-fix path expanded every storage proof to full depth at once (~1.15 GiB here),
 OOMing the bounded guest heap.

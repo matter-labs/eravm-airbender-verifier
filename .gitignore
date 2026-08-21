@@ -10,4 +10,12 @@ guest/dist/
 vks/*.bin
 vks/*.json
 testdata/era_mainnet_batches/binary/*.bin
+# Benchmarking run outputs (measured datasets, fitted tables, reports). The
+# training dataset behind the committed cost table lives at
+# testdata/cycle_model/dataset.json instead — see docs/benchmarking.md.
+artifacts/
+# Python caches from the scripts/cycle_model tooling.
+__pycache__/
+.pytest_cache/
+*.pyc
 .DS_Store

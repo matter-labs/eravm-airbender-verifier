@@ -1,0 +1,5 @@
+numpy
+scipy
+pandas
+# Needed by the documented `python -m pytest scripts/cycle_model/test_fit_smoke.py`.
+pytest

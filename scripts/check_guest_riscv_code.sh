@@ -65,6 +65,14 @@ ALLOWED_MNEMONICS=(
 # NON_DETERMINISM_CSR (0x7c0) + {7, 10, 11} per common_constants::delegation_types.
 # Any other CSR (or any other csr* mnemonic) is not something the circuit proves
 # and fails the check.
+#
+# 0x7ff (TRANSPILER_MARKER_CSR) is DELIBERATELY absent, and must stay absent. It is
+# what `airbender::guest::cycle_marker()` compiles to, emitted by the verifier's
+# `cycle-markers` feature for offline cycle calibration (docs/benchmarking.md).
+# Because `relax-version-pin` — which disables the protocol-version pin and leaves
+# no other trace in the binary — requires `cycle-markers`, this list is what keeps a
+# calibration guest from being released. If a marker build trips this check, that is
+# the check working: fix the build, do NOT allowlist 0x7ff.
 ALLOWED_CSRS=(0x7c0 0x7c7 0x7ca 0x7cb)
 
 # Defined-symbol names that indicate soft-float arithmetic was linked in.

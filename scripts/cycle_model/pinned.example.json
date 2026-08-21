@@ -1,0 +1,12 @@
+{
+  "_comment": "Template for --pinned: per-unit guest-cycle costs for precompiles, measured via microbenchmarks (see README 'Pinning precompile costs'). Values here are 0 PLACEHOLDERS — replace each with a measured cycles-per-unit before use. keccak256/sha256/ec_recover currently have in-sample fitted coefficients; the rest are UNPRICED and are what the coverage guard rejects until measured. Keys that are not model features are ignored. Features the corpus never exercised have no dataset column, so their pinned cost must be written into cost_table.json directly (they are not fit).",
+  "_units": "keccak256_cycles/sha256_cycles: cyc per hashing round; ec_*/modexp/secp256r1: cyc per circuit-cycle unit reported by CycleStats",
+  "keccak256_cycles": 0,
+  "sha256_cycles": 0,
+  "ec_recover_cycles": 0,
+  "secp256r1_verify_cycles": 0,
+  "modexp_cycles": 0,
+  "ec_add_cycles": 0,
+  "ec_mul_cycles": 0,
+  "ec_pairing_cycles": 0
+}
