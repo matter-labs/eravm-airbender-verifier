@@ -37,9 +37,13 @@ The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
 >   batch content of 49 of the 53 rows. The four v31 rows now over-predict +0.02%
 >   to +0.77% — the predecessor UNDER-predicted three of them by 2.56%, which is
 >   the safety gap this refit closes.
-> - **Two gaps need a local era node:** the synthetic precompile set (six crypto
->   coefficients are pinned literals, not measurements) and re-measuring 8 of the 9
->   adversarial fixtures. See **[REFIT-RUNBOOK.md](REFIT-RUNBOOK.md)**.
+> - **The crypto coefficients are now measured**, not pinned literals: a synthetic
+>   set (three volume tiers per precompile, driven on a local era node) was
+>   residual-fit in the same pass, and it is committed at
+>   `testdata/cycle_model/precompile_dataset.json`. Delegation had made five of the
+>   carried-forward values 2–16× too high; `ec_recover` went the other way.
+>   **One gap still needs a node:** re-measuring 8 of the 9 adversarial fixtures.
+>   See **[REFIT-RUNBOOK.md](REFIT-RUNBOOK.md)**.
 
 ---
 
@@ -297,12 +301,36 @@ batches on a local node (`scripts/precompile_calibration/`), measure their true
 cycles with `cycle_bench`, and pass the resulting dataset to
 `fit_cost_model.py --precompile-dataset`: the precompile coefficients are fit on
 the RESIDUAL with the organic model frozen. The committed `cost_table.json` was
-produced this way — every safety-critical precompile is priced.
+produced this way (2026-08-21) — every safety-critical precompile is priced, and
+priced from a measurement.
 ([`native_cost_conversion.md`](native_cost_conversion.md) documents the
 alternative zksync-os-derived costs used as a cross-check.)
 
+Note what a residual coefficient means: the cost of one call **net of what the
+frozen model already charges for it** — each precompile invocation drags ~1.0
+`far_call` and 56–107 arithmetic ops with it, and those are priced separately. A
+gross per-call slope is therefore *larger* than the coefficient, and the two must
+not be compared directly.
+
+What that pass found, against the literals it replaced: `secp256r1` was 16.0× too
+high, `mod_exp` 15.6×, `sha256` 7.3×, `ec_pairing` 5.3×, `ec_mul` 2.6×, `ec_add`
+2.0× — delegation made all of them cheaper, and with the old floors still in place
+the synthetic batches were over-predicted up to 14×.
+
+**`ec_recover` moved the other way**: 368,000 → 467,178, because 41,022 bigint
+delegations per call at weight 4 add ~164k effective cycles that its derivation
+assumed away. The old table under-predicted the two ecrecover batches by 8.3% and
+17.0%; the new one is +0.7% and +1.6%. So "delegated ⇒ cheaper" holds for the raw
+trace but not necessarily for the *effective* total — do not assume it per-axis.
+
+Cost on organic traffic: MAPE 10.37% → 10.90%, still 0/53 under-predicted. The
+held-out five-precompile mixed batch, in neither fit, goes +290.8% → +3.9%.
+
 For a precompile the corpus (organic + synthetic) has never exercised, the
-coverage guard is what keeps it from silently producing an under-estimate.
+coverage guard is what keeps it from silently producing an under-estimate — but
+note it fires on a coefficient being ABSENT, and all eight are now present, so
+`is_reliable()` cannot fire today. That is a smaller concern than it was (these are
+measurements now, not guesses) but it is unchanged.
 
 ## Model shape & current accuracy
 

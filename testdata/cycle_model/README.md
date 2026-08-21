@@ -8,10 +8,24 @@ table back:
 
 ```sh
 python scripts/cycle_model/fit_cost_model.py \
-    --dataset testdata/cycle_model/dataset.json --out artifacts/refit --tau 0.9
+    --dataset testdata/cycle_model/dataset.json \
+    --precompile-dataset testdata/cycle_model/precompile_dataset.json \
+    --tau 0.9 --envelope-from <the 176-batch table> \
+    --guest-sha256 8b9436a8… --verifier-commit f936458 \
+    --vm2-rev be1e50b5… --protocol-version … --fit-date 2026-08-21 \
+    --out artifacts/refit
 diff <(jq -S . artifacts/refit/cost_table.json) \
      <(jq -S . crates/cycle_estimator/model/cost_table.json)
 ```
+
+Two datasets, two jobs. `dataset.json` is organic traffic and sets every generic
+coefficient. `precompile_dataset.json` is 25 synthetic batches — three volume tiers
+each for `mod_exp`, `ec_add`, `ec_mul`, `ec_pairing`, `secp256r1`, `ec_recover` and
+`sha256`, plus three near-empty baselines — and its only job is the residual fit for
+those seven, which organic traffic cannot identify (five have zero volume, and the
+other two are near-constant columns collinear with the intercept). Batch `1062` is a
+five-precompile mix held out of both fits as an independent check; it predicts to
++3.9%.
 
 ## Provenance
 
@@ -55,6 +69,7 @@ measured by one build on one day.
   [`../../docs/generating-batches.md`](../../docs/generating-batches.md).
 - **The merkle-leaf axis rests on one batch.** Organic leaf counts span 3.8k–18k;
   `900065` is 140k. Held out, it is over-predicted +31.2%.
-- **Five crypto features have zero volume here** (`mod_exp`, `ec_add`, `ec_mul`,
-  `ec_pairing`, `secp256r1`), so their coefficients are pinned literals rather
-  than fits — see `OPCODE_FLOORS` in `scripts/cycle_model/fit_cost_model.py`.
+- **The crypto coefficients come from the synthetic set, not from here** — five of
+  the seven have zero volume in organic traffic. They are measurements as of
+  2026-08-21; the pinned literals they replaced were 2–16× too high, except
+  `ec_recover`, which was 1.3× too low.

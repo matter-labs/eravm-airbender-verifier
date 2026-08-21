@@ -17,16 +17,16 @@
         "uma_read": 77.0,
         "near_call_count": 236.0,
         "keccak256_cycles": 0.0,
-        "sha256_cycles": 68538.3166168879,
-        "ec_recover_cycles": 368000.0,
+        "sha256_cycles": 1735.1288679009076,
+        "ec_recover_cycles": 256236.781226563,
         "decommit_cycles": 4934.507127690563,
         "storage_application": 22784.27862576436,
         "transaction_count": 278015.0,
-        "ec_add_cycles": 185724.0,
-        "ec_mul_cycles": 811000.0,
-        "ec_pairing_cycles": 66604671.0,
-        "mod_exp_cycles": 952644.0,
-        "secp256r1_verify_cycles": 12665313.0,
+        "mod_exp_cycles": 0.0,
+        "ec_add_cycles": 0.0,
+        "ec_mul_cycles": 219471.48307603976,
+        "ec_pairing_cycles": 9893028.455584483,
+        "secp256r1_verify_cycles": 424346.7152171565,
         "state_diff_count": 99969.0
       },
       "base": 680741073.4211674,
@@ -71,7 +71,7 @@
       "uma_write": 3340.156663303265,
       "uma_read": 77.0,
       "keccak256_cycles": 42582.45689324162,
-      "ec_recover_cycles": 368000.0,
+      "ec_recover_cycles": 467177.78223415953,
       "decommit_cycles": 11223.944396621144,
       "storage_application": 167187.2478936455,
       "transaction_count": 278015.0,
@@ -82,33 +82,33 @@
       "transient_storage_read": 500.0,
       "transient_storage_write": 11000.0,
       "decommit": 285000.0,
-      "sha256_cycles": 54837.44902938851,
-      "ec_add_cycles": 185724.0,
-      "ec_mul_cycles": 811000.0,
-      "ec_pairing_cycles": 66604671.0,
-      "mod_exp_cycles": 952644.0,
-      "secp256r1_verify_cycles": 12665313.0
+      "sha256_cycles": 1017.8258776042924,
+      "mod_exp_cycles": 23358.680231363058,
+      "ec_add_cycles": 51863.8975852593,
+      "ec_mul_cycles": 275076.4726832705,
+      "ec_pairing_cycles": 12448624.317002458,
+      "secp256r1_verify_cycles": 748822.6596353656
     },
     "base": 1121909317.711304,
     "r2": 0.9998960909045469
   },
   "calibration": {
-    "rich_addressing_share_max": 0.05869356441971066,
+    "rich_addressing_share_max": 0.05861760671379582,
     "feature_value_max": {
-      "decommit_cycles": 302653,
-      "decommit": 586,
-      "uma_write": 3435559,
       "storage_write": 148339,
-      "far_call": 477516
+      "far_call": 477516,
+      "uma_write": 3435559,
+      "decommit_cycles": 302653,
+      "decommit": 586
     },
-    "feature_value_max_source": "volume fence carried from a wider corpus via --envelope-from (176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE.); coefficients fit on: 53 batches, every fixture current code can decode: 49x 513601-513649 (v29, relaxed pin) + 84730/84731/84732 (v31) + 900065 (v31 synthetic cold-slot flood); measured 2026-08-21 on one marker guest in one run; testdata/cycle_model/dataset.json"
+    "feature_value_max_source": "volume fence carried from a wider corpus via --envelope-from (176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE.); coefficients fit on: 53 organic batches + 25 synthetic precompile batches"
   },
   "provenance": {
     "guest_sha256": "8b9436a80e7a1d8378bfe77601622a5851ef3c89bf860c654cc1886f8ba7c9cc",
     "verifier_commit": "f936458",
     "vm2_rev": "be1e50b59b3ba1a5e4eda2ca7e01f33cf373d779",
-    "protocol_version": "Version29 (49 batches) + Version31 (4 batches)",
+    "protocol_version": "Version29 (49) + Version31 (4); synthetic precompile set Version31",
     "fit_date": "2026-08-21",
-    "dataset": "53 batches, every fixture current code can decode: 49x 513601-513649 (v29, relaxed pin) + 84730/84731/84732 (v31) + 900065 (v31 synthetic cold-slot flood); measured 2026-08-21 on one marker guest in one run; testdata/cycle_model/dataset.json"
+    "dataset": "53 organic batches + 25 synthetic precompile batches"
   }
 }

@@ -353,12 +353,12 @@ mod tests {
     /// test exists to make that visible rather than let it read as protection.
     ///
     /// `unpriced_used` keys on a safety-critical feature being ABSENT from the
-    /// table. The committed table prices all eight — and six of those (mod_exp,
-    /// ec_add, ec_mul, ec_pairing, secp256r1, ec_recover) are pinned literals
-    /// carried forward or derived, not measured on the delegation guest, because
-    /// five have zero volume in the whole reproducible corpus. So `is_reliable()`
-    /// is unconditionally true on precompile grounds and precompile mispricing has
-    /// no backstop.
+    /// table. The committed table prices all eight, so `is_reliable()` is
+    /// unconditionally true on precompile grounds and precompile mispricing has no
+    /// backstop. Since 2026-08-21 all seven residual-fit crypto coefficients are
+    /// MEASUREMENTS from the synthetic set rather than carried-forward literals,
+    /// which makes the missing backstop far less alarming than it was — but it does
+    /// not make the guard live.
     ///
     /// That is a deliberate liveness trade (absence would reject every batch
     /// touching a pairing — see the precompile note in

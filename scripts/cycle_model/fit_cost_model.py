@@ -308,65 +308,26 @@ OPCODE_FLOORS = {
     "decommit": 285000,
     "event": 2287,
     "uma_read": 77,
-    # --- crypto precompiles (added 2026-08-19) -----------------------------
-    # These previously came from `residual_precompile_fit` on SYNTHETIC batches
-    # (--precompile-dataset). No such dataset exists for the delegation guest —
-    # regenerating one needs a local era node (scripts/precompile_calibration) —
-    # so this refit ran WITHOUT it and the values below are pinned literals
-    # carried forward from the pre-delegation table.
+    # --- crypto precompiles: MEASURED 2026-08-21, floors REMOVED ---------
+    # These were pinned literals carried forward from the PRE-delegation guest
+    # because no synthetic set existed for the delegated one. One exists now
+    # (three volume tiers per axis, driven on a local era node, every slope
+    # R^2 >= 0.9965), so they come from `residual_precompile_fit` again and the
+    # floors are gone. Keeping them would defeat the measurement: a floor only
+    # ever RAISES, and the pre-delegation values are 2-16x ABOVE the measured
+    # cost, so they silently overwrote the residual fit — the ec_pairing and
+    # secp256r1 synthetic batches were over-predicted 5.2x and 15.1x with the
+    # floors in place.
     #
-    # ⚠️ UNITS: despite the `_cycles` names these are CALL COUNTS, so a
-    # coefficient is the cost of ONE call and must be compared against a
-    # per-call derivation, never a per-cycle figure. Both live paths emit 1:
-    # OptimizedPrecompiles' fast path returns `CycleStats::EcRecover(1)`
-    # directly (vm_fast/world.rs:292), and everything else falls through to
-    # LegacyPrecompiles, which forwards `ecrecover_function`'s round count —
-    # and that is `const NUM_ROUNDS: usize = 1` in zk_evm's ECRecoverPrecompile
-    # (zk_evm_abstractions/src/precompiles/ecrecover.rs:33). Sanity check: the
-    # corpus averages ~1,026/batch, consistent with one signature check per tx.
+    # Removing them also makes a refit WITHOUT --precompile-dataset fail closed
+    # rather than ship stale numbers: the organic corpus has zero volume on five
+    # of these, so their coefficients go absent, and absence is what
+    # `unpriced_used` keys on. That is the correct outcome — #107 already made an
+    # unidentifiable `ec_recover_cycles` abort the fit outright.
     #
-    # Four have zero volume in all 176 organic batches (columns absent
-    # entirely), so the organic fit cannot price them at any corpus size and
-    # their floors are FREE organically. Their values are carried forward from
-    # the pre-delegation table where that is conservative against
-    # native_cost_conversion.md's per-call derivation (secp256r1 16.2x over,
-    # ec_add 3.2x, ec_pairing ~9.6x).
-    #
-    # TWO are raised to that derivation instead, because carrying the old value
-    # forward is NOT conservative for them:
-    #   ec_recover_cycles — the only one with real organic volume
-    #     (~1,026 calls/batch). Unfloored the fit gives 230,993 = 0.63x the
-    #     derived 368,000 (240,000 raw + 32,000 bigint delegations at the
-    #     target's own w=4). It is in SAFETY_CRITICAL_FEATURES and
-    #     unprivileged-callable (every ecrecover), and because it is PRESENT
-    #     `unpriced_used` can never flag it. NOTE the old table's 11,467,511 is
-    #     NOT a valid floor here: at 1,026 calls/batch it prices ecrecover at
-    #     ~98% of an entire mean batch (11.8e9 of 12.0e9) and drives organic
-    #     MAPE to 106.7%. That value is a residual-fit artifact, not a per-call
-    #     cost, and this refit correcting it 49.6x downward is a FIX, not a
-    #     regression.
-    #   ec_mul_cycles — 201,185 is 0.25x the derived 811,000 (647,000 +
-    #     41,000 x 4). Pre-existing under-pricing, not introduced here, but free
-    #     to close (zero organic volume).
-    # Cost of both floors on organic traffic: 1.17% per batch.
-    #
-    # These previously came from `residual_precompile_fit` on SYNTHETIC batches
-    # (--precompile-dataset). No such dataset exists for the delegation guest —
-    # regenerating one needs a local era node (scripts/precompile_calibration) —
-    # so this refit ran WITHOUT it and these are pinned literals. Kept PRESENT
-    # rather than absent deliberately: absence would trip `unpriced_used` and
-    # reject every batch touching a pairing outright, a liveness regression
-    # against the deployed table. The tradeoff is real — presence disarms the
-    # one fail-closed guard that would otherwise catch under-pricing here.
-    # At the doc's provisional d~40 (rather than w=4) ec_recover would derive to
-    # 1,520,000 and ec_mul to 2,287,000; that costs ~11% organically, so it is
-    # deliberately NOT applied while d is unpinned. Re-measure all six.
-    "ec_add_cycles": 185724,
-    "ec_mul_cycles": 811000,
-    "ec_pairing_cycles": 66604671,
-    "mod_exp_cycles": 952644,
-    "secp256r1_verify_cycles": 12665313,
-    "ec_recover_cycles": 368000,
+    # Do NOT re-add a literal here. If a future guest change moves these costs,
+    # re-measure (scripts/precompile_calibration + REFIT-RUNBOOK.md); a floor
+    # would mask the change rather than surface it.
     # --- batch-level buckets the 53-batch corpus zeroes (added 2026-08-21) ---
     # The reproducible corpus (49x 513xxx + 84730/1/2 + 900065 — everything current
     # code can decode; see testdata/cycle_model/README.md) is 3.3x smaller than the
