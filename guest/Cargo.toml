@@ -7,6 +7,11 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[features]
+# Build the guest with verify() phase cycle markers, for offline cycle-cost
+# calibration ONLY. Never enable for a proved guest build.
+cycle-markers = ["zksync_airbender_verifier/cycle-markers"]
+
 [dependencies]
 airbender = { workspace = true, features = ["std"] }
 # Explicit path dep (not `workspace = true`) so `default-features = false` is

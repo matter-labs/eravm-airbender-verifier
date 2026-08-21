@@ -1,0 +1,113 @@
+{
+  "batches": 176,
+  "phases": {
+    "vm_execution": {
+      "features": {
+        "rich_addressing_op": 163.05761935866568,
+        "average_op": 236.0,
+        "storage_read": 9050.053925081882,
+        "storage_write": 27089.792254395834,
+        "transient_storage_read": 500.0,
+        "transient_storage_write": 11000.0,
+        "event": 2287.0,
+        "precompile_call": 25809.291830264712,
+        "decommit": 285000.0,
+        "far_call": 15000.0,
+        "uma_write": 1750.9582796711632,
+        "uma_read": 77.0,
+        "near_call_count": 236.0,
+        "keccak256_cycles": 19688.84334451625,
+        "sha256_cycles": 91761.7407860955,
+        "ec_recover_cycles": 368000.0,
+        "decommit_cycles": 3433.3980404670588,
+        "storage_application": 27242.803684577324,
+        "transaction_count": 249970.66915660896,
+        "ec_add_cycles": 185724.0,
+        "ec_mul_cycles": 811000.0,
+        "ec_pairing_cycles": 66604671.0,
+        "mod_exp_cycles": 952644.0,
+        "secp256r1_verify_cycles": 12665313.0
+      },
+      "base": 685862109.799927,
+      "r2": 0.9998389033615582
+    },
+    "merkle_verification": {
+      "features": {
+        "merkle_leaf_count": 71438.96388894929,
+        "state_diff_count": 53776.92211093735
+      },
+      "base": 21201382.0946403,
+      "r2": 0.9999868132534401
+    },
+    "setup": {
+      "features": {
+        "merkle_leaf_count": 2110.052466482932,
+        "transaction_count": 0.0,
+        "used_bytecode_bytes": 62.87434320548455,
+        "used_bytecode_count": 5192.170998797961,
+        "storage_key_count": 3829.477491545426
+      },
+      "base": 15501269.897307904,
+      "r2": 0.9999994607924514
+    },
+    "commitment": {
+      "features": {
+        "pubdata_bytes": 244.34778887901902
+      },
+      "base": 138028975.3380927,
+      "r2": 0.8707755753854172
+    }
+  },
+  "total": {
+    "features": {
+      "rich_addressing_op": 117.26115779229531,
+      "average_op": 236.0,
+      "storage_read": 13814.625158711315,
+      "storage_write": 33390.65895473594,
+      "transient_storage_read": 500.0,
+      "transient_storage_write": 11000.0,
+      "event": 2287.0,
+      "precompile_call": 28434.91804784777,
+      "decommit": 285000.0,
+      "far_call": 15000.0,
+      "uma_write": 2813.8785543694826,
+      "uma_read": 77.0,
+      "keccak256_cycles": 16845.1359381302,
+      "sha256_cycles": 10311.295600962618,
+      "ec_recover_cycles": 368000.0,
+      "decommit_cycles": 10655.01397030851,
+      "storage_application": 69346.86389330102,
+      "transaction_count": 278015.46607112995,
+      "near_call_count": 508.4719100389476,
+      "pubdata_bytes": 4166.898771156542,
+      "merkle_leaf_count": 102952.69376165466,
+      "state_diff_count": 99969.4473715513,
+      "ec_add_cycles": 185724.0,
+      "ec_mul_cycles": 811000.0,
+      "ec_pairing_cycles": 66604671.0,
+      "mod_exp_cycles": 952644.0,
+      "secp256r1_verify_cycles": 12665313.0
+    },
+    "base": 1083057783.5487778,
+    "r2": 0.9998214230451604
+  },
+  "calibration": {
+    "rich_addressing_share_max": 0.1154144709730982,
+    "feature_value_max": {
+      "decommit_cycles": 302653,
+      "far_call": 477516,
+      "decommit": 586,
+      "storage_write": 148339,
+      "uma_write": 3435559
+    },
+    "feature_value_max_source": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
+  },
+  "provenance": {
+    "guest_sha256": "9228b6e21c4d29795ac7f7be8225995a1678d5a7bc8df8544f8259f91751bb76",
+    "verifier_commit": "5644a923217e91914491915c4163f0caed90e26b (+ uncommitted PR#103 dep overlay: vm2 v0.6.3, zksync-protocol v0.153.14)",
+    "vm2_rev": "0.6.3 (git+https://github.com/matter-labs/vm2?tag=v0.6.3#be1e50b59b3ba1a5e4eda2ca7e01f33cf373d779)",
+    "protocol_version": "Version29",
+    "fit_date": "2026-08-20",
+    "dataset": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
+  }
+}
