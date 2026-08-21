@@ -739,7 +739,7 @@ mod streaming_tests {
             ),
         ]);
         assert!(witness.is_legacy_delta_form());
-        let (reclaimed, restored) = witness.normalize_stored_paths();
+        let (reclaimed, restored) = witness.normalize_stored_paths().unwrap();
 
         let stored: Vec<&[[u8; HASH_LEN]]> = witness
             .merkle_paths
@@ -758,7 +758,7 @@ mod streaming_tests {
         );
         assert_eq!((reclaimed, restored), (TREE_DEPTH - tail.len(), tail.len()));
         assert_eq!(
-            witness.normalize_stored_paths(),
+            witness.normalize_stored_paths().unwrap(),
             (0, 0),
             "normalisation is idempotent"
         );
@@ -790,7 +790,7 @@ mod streaming_tests {
             ),
         ]);
         assert!(!witness.is_legacy_delta_form());
-        assert_eq!(witness.normalize_stored_paths(), (0, 0));
+        assert_eq!(witness.normalize_stored_paths().unwrap(), (0, 0));
         assert!(witness.merkle_paths[1].merkle_paths.is_empty());
     }
 
@@ -968,7 +968,7 @@ mod streaming_tests {
         // The legacy form must reach the fold through the normaliser — as it does in
         // `execute` — and then agree with the per-path form exactly.
         let mut legacy_witness = build(false);
-        let (reclaimed, restored) = legacy_witness.normalize_stored_paths();
+        let (reclaimed, restored) = legacy_witness.normalize_stored_paths().unwrap();
         let legacy = verify_paths_and_new_root(legacy_witness, vm_logs, root, 7)
             .expect("legacy delta-compacted witness must still verify once normalised");
         assert_eq!(legacy, truncated, "the two encodings must agree");
@@ -995,7 +995,7 @@ mod streaming_tests {
         // the result is byte-identical to the per-path form.
         let mut normalised = build(false);
         assert_eq!(
-            normalised.normalize_stored_paths(),
+            normalised.normalize_stored_paths().unwrap(),
             (stored(&build(false)) - stored(&build(true)), 0),
             "normalising must reclaim exactly the plant's surplus and splice nothing"
         );
@@ -1005,7 +1005,7 @@ mod streaming_tests {
             "the witness folded above went through the same normalisation"
         );
         assert_eq!(
-            normalised.normalize_stored_paths(),
+            normalised.normalize_stored_paths().unwrap(),
             (0, 0),
             "normalisation is idempotent"
         );
@@ -1180,7 +1180,7 @@ mod streaming_tests {
         // 256-element hash arrays (~150 KB) without saying where it diverged.
         let mut normalised = build(false);
         assert!(normalised.is_legacy_delta_form());
-        let (_, restored) = normalised.normalize_stored_paths();
+        let (_, restored) = normalised.normalize_stored_paths().unwrap();
         assert_eq!(
             restored,
             fui - (TREE_DEPTH - depths[0]),

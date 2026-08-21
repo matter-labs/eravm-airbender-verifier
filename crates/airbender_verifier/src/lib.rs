@@ -156,7 +156,12 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
     // `depth(entry 0) - depth(entry i)`, and entry 0 is the smallest
     // `(address, key)` touched — so one slot ground next to it would otherwise
     // inflate every entry.
-    input.merkle_paths.normalize_stored_paths();
+    //
+    // Fail-closed: also validates the wire form (path length `<= TREE_DEPTH` and the
+    // legacy-form contract), so a malformed witness is rejected here rather than
+    // aborting a later fold. Runs before the version pin — nothing downstream sees an
+    // unvalidated path.
+    input.merkle_paths.normalize_stored_paths()?;
 
     // Pin the protocol version to the single one this verifier is built for.
     // `protocol_version` is operator-supplied and only *gates* commitment fields

@@ -122,6 +122,11 @@ impl WitnessInputMerklePaths {
     ///
     /// `==`, not `>=`: an over-long entry 0 is malformed, not legacy, and the
     /// consumer's `len <= TREE_DEPTH` bound owns that case.
+    ///
+    /// A *length* signal only: [`Self::normalize_stored_paths()`] additionally
+    /// requires entry 0 to carry the padded shape (a leading empty-subtree run)
+    /// before decoding against it, so a full-length but non-padded entry 0 fails
+    /// closed there rather than being mis-interpreted as legacy here.
     pub fn is_legacy_delta_form(&self) -> bool {
         self.merkle_paths
             .first()
@@ -132,6 +137,22 @@ impl WitnessInputMerklePaths {
     /// delta form first if that is what arrived. Returns `(reclaimed, restored)`:
     /// hashes dropped as empty-subtree padding, hashes spliced back from entry 0.
     /// Idempotent; the only place either wire form is interpreted.
+    ///
+    /// # Errors
+    ///
+    /// This is the single place the operator's stored-path encoding is interpreted,
+    /// and — since it also *mutates* that encoding — the single place it is
+    /// validated, before any transform runs. Fails closed on:
+    ///
+    /// * a stored path longer than [`TREE_DEPTH`] (occupies no defined levels and
+    ///   would later abort the fold); or
+    /// * a full-length entry 0 that is not the legacy *padded* form. The legacy
+    ///   encoder padded entry 0 to `TREE_DEPTH`, so a genuine one has real depth
+    ///   `< TREE_DEPTH` and thus a leading empty-subtree run; its absence means the
+    ///   `== TREE_DEPTH` length was about to be trusted as "legacy" on a non-padded
+    ///   shape. Necessary, not sufficient — the commitment fold remains the ultimate
+    ///   arbiter; this just makes the mis-interpretation a clear error at the decode
+    ///   point.
     ///
     /// # Why a trim is not enough
     ///
@@ -149,7 +170,17 @@ impl WitnessInputMerklePaths {
     /// Hence the splice, from entry 0's *populated* part only. Every entry ends at
     /// `depth(i)` in both forms, so the memory win is unaffected: an entry inherits
     /// entry 0's depth only where the two are equal anyway.
-    pub fn normalize_stored_paths(&mut self) -> (usize, usize) {
+    pub fn normalize_stored_paths(&mut self) -> anyhow::Result<(usize, usize)> {
+        // Validate the wire form before interpreting or mutating it (see # Errors).
+        // Over-long paths are rejected up front, before the splice or the VM runs.
+        for log in &self.merkle_paths {
+            anyhow::ensure!(
+                log.merkle_paths.len() <= TREE_DEPTH,
+                "Merkle path longer than TREE_DEPTH before normalisation: {} > {TREE_DEPTH}",
+                log.merkle_paths.len(),
+            );
+        }
+
         let (mut reclaimed, mut restored) = (0, 0);
 
         if self.is_legacy_delta_form() {
@@ -157,6 +188,14 @@ impl WitnessInputMerklePaths {
             // anything: one ~8 KiB clone, not one per entry.
             let prefix = self.merkle_paths[0].merkle_paths.clone();
             let populated_from = empty_subtree_prefix_len(&prefix);
+            // Require the padded *shape*, not just the length, before splicing from
+            // entry 0: a genuine legacy entry 0 has a non-empty empty-subtree prefix.
+            // Its absence means this is not the padded form; fail closed (see # Errors).
+            anyhow::ensure!(
+                populated_from > 0,
+                "entry 0 is stored at TREE_DEPTH but carries no empty-subtree padding, \
+                 so it is not the legacy delta form; refusing to delta-decode against it",
+            );
             for log in &mut self.merkle_paths[1..] {
                 // `fui` follows from the stored length: the encoder cut `padded_i`,
                 // always `TREE_DEPTH` long, at `fui`.
@@ -181,7 +220,7 @@ impl WitnessInputMerklePaths {
             log.merkle_paths.shrink_to_fit();
         }
 
-        (reclaimed, restored)
+        Ok((reclaimed, restored))
     }
 
     /// Expands every stored path to its full [`TREE_DEPTH`] form.
@@ -318,7 +357,7 @@ mod tests {
         let paths = padded_paths();
         let mut legacy = legacy_form(&paths);
         assert!(legacy.is_legacy_delta_form());
-        legacy.normalize_stored_paths();
+        legacy.normalize_stored_paths().unwrap();
 
         let restored: Vec<_> = legacy.into_merkle_paths().map(|m| m.merkle_paths).collect();
         assert_eq!(restored, paths);
@@ -356,7 +395,7 @@ mod tests {
         );
 
         assert_eq!(
-            legacy.normalize_stored_paths(),
+            legacy.normalize_stored_paths().unwrap(),
             (TREE_DEPTH - DEPTH, DEPTH - 1)
         );
         let stored: Vec<usize> = legacy
@@ -394,7 +433,7 @@ mod tests {
         assert!(legacy.is_legacy_delta_form());
         // These depths are all distinct, so every entry is delta'd strictly inside
         // entry 0's empty run: nothing to splice back, pure reclaim.
-        assert_eq!(legacy.normalize_stored_paths(), (surplus, 0));
+        assert_eq!(legacy.normalize_stored_paths().unwrap(), (surplus, 0));
         // The point is to give the memory BACK, not just to shorten `len`: `drain`
         // alone leaves the original allocation intact. Assert the capacity actually
         // shrank, or a dropped `shrink_to_fit` would silently turn this into a no-op
@@ -414,7 +453,7 @@ mod tests {
         assert_eq!(stored, DEPTHS);
         // Idempotent, and it did not lose information: the full form still comes back.
         let mut again = legacy.clone();
-        assert_eq!(again.normalize_stored_paths(), (0, 0));
+        assert_eq!(again.normalize_stored_paths().unwrap(), (0, 0));
         assert_eq!(
             legacy
                 .into_merkle_paths()
@@ -436,5 +475,48 @@ mod tests {
             .map(|m| m.merkle_paths)
             .collect();
         assert_eq!(restored, vec![long]);
+    }
+
+    /// An over-long stored path is rejected up front, before any mutation.
+    #[test]
+    fn normalize_rejects_an_over_long_path() {
+        let mut witness = WitnessInputMerklePaths::new(1);
+        witness.merkle_paths.push(meta(padded(5, 11)));
+        witness
+            .merkle_paths
+            .push(meta(vec![[0xAB; HASH_LEN]; TREE_DEPTH + 1]));
+        let err = witness
+            .normalize_stored_paths()
+            .expect_err("an over-long path must be rejected before normalisation");
+        assert!(
+            err.to_string().contains("longer than TREE_DEPTH"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A full-length entry 0 with no empty-subtree padding (real depth TREE_DEPTH —
+    /// a 255-bit key collision, unreachable for a genuine witness) is not the legacy
+    /// form and must fail closed rather than be delta-decoded against.
+    #[test]
+    fn normalize_rejects_a_full_length_entry_0_without_padding() {
+        let mut witness = WitnessInputMerklePaths::new(1);
+        // Full-length AND fully non-empty ⇒ `is_legacy_delta_form()` fires but the
+        // padding prefix is empty.
+        witness
+            .merkle_paths
+            .push(meta(vec![[0xAB; HASH_LEN]; TREE_DEPTH]));
+        witness.merkle_paths.push(meta(vec![]));
+        assert!(witness.is_legacy_delta_form());
+        assert_eq!(
+            empty_subtree_prefix_len(&witness.merkle_paths[0].merkle_paths),
+            0
+        );
+        let err = witness
+            .normalize_stored_paths()
+            .expect_err("a full-length entry 0 without padding is not the legacy form");
+        assert!(
+            err.to_string().contains("not the legacy delta form"),
+            "unexpected error: {err}"
+        );
     }
 }
