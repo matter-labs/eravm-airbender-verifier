@@ -8,8 +8,9 @@
 use std::path::Path;
 
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
-use zksync_airbender_verifier::Verify;
+use zksync_airbender_verifier::{Verify, PINNED_PROTOCOL_VERSION};
 use zksync_cli_utils::{load_batch, BatchInputFile};
+use zksync_types::ProtocolVersionId;
 
 fn load_batch_84730() -> Option<AirbenderVerifierInput> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -72,4 +73,42 @@ fn validation_gas_limit_pinned_to_canonical() {
             .contains("default_validation_computational_gas_limit"),
         "expected a validation-gas-limit rejection, got: {err}"
     );
+}
+
+/// The protocol-minor labels the input carries are operator-supplied and bound
+/// by no commitment. A real batch carries the version this build models, and
+/// substituting any other minor — older *or* newer — is rejected before the VM
+/// runs, so the label can never select which semantics the batch is proved
+/// under.
+#[test]
+fn protocol_version_pinned_to_modelled_semantics() {
+    let Some(v1) = load_batch_84730() else {
+        return;
+    };
+
+    assert_eq!(
+        v1.system_env.version, PINNED_PROTOCOL_VERSION,
+        "real mainnet batch should carry the protocol version this build models"
+    );
+    assert_eq!(
+        v1.vm_run_data.protocol_version, PINNED_PROTOCOL_VERSION,
+        "the redundant copy in vm_run_data should agree"
+    );
+
+    // Version29 is the previous minor (a different `FastVmVersion`); Version32 is
+    // the speculative next one, which maps to the *same* `FastVmVersion` as the
+    // pinned version — so only the version gate distinguishes it.
+    for version in [ProtocolVersionId::Version29, ProtocolVersionId::Version32] {
+        let mut tampered = v1.clone();
+        tampered.system_env.version = version;
+        tampered.vm_run_data.protocol_version = version;
+        let err = match tampered.verify() {
+            Ok(_) => panic!("substituted protocol version {version:?} must be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("unsupported protocol version"),
+            "expected a protocol-version rejection for {version:?}, got: {err}"
+        );
+    }
 }

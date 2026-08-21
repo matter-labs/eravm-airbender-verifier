@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use zksync_types::{
     block::L2BlockExecutionData,
     commitment::{BlobHash, PubdataParams},
+    protocol_version::deserialize_wire_protocol_version,
     witness_block_state::WitnessStorageState,
     L1BatchNumber, ProtocolVersionId, H256, U256,
 };
@@ -36,6 +37,10 @@ pub struct VMRunWitnessInputData {
     pub l1_batch_number: L1BatchNumber,
     pub used_bytecodes: HashMap<U256, Vec<[u8; HASH_LEN]>>,
     pub initial_heap_content: Vec<(usize, U256)>,
+    /// Redundant copy of `system_env.version`; bound to it by `execute` and then
+    /// overwritten with `PINNED_PROTOCOL_VERSION`. Read leniently for the same
+    /// reason — see [`deserialize_wire_protocol_version`].
+    #[serde(deserialize_with = "deserialize_wire_protocol_version")]
     pub protocol_version: ProtocolVersionId,
     pub bootloader_code: Vec<[u8; HASH_LEN]>,
     pub default_account_code_hash: U256,
@@ -87,8 +92,13 @@ impl Default for CommitmentInput {
 ///
 /// This is the single canonical shape, encoded with bincode for the on-disk
 /// corpus and the host↔guest channel and with JSON for the zksync-era prover
-/// service. There is no version envelope: the repository targets the latest
-/// protocol version only.
+/// service. There is no version envelope, and the protocol-minor labels it
+/// carries (`system_env.version`, `vm_run_data.protocol_version`) do not select
+/// behaviour: `execute` checks them against `PINNED_PROTOCOL_VERSION` — the one
+/// protocol version whose semantics this build models — and then overwrites
+/// them with it. The labels are read leniently, so an Era minor this build
+/// cannot name decodes and is reported by that check rather than aborting the
+/// payload decode.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`

@@ -2,13 +2,23 @@ use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
 use zksync_contracts::BaseSystemContracts;
-use zksync_types::{L2ChainId, ProtocolVersionId};
+use zksync_types::{
+    protocol_version::deserialize_wire_protocol_version, L2ChainId, ProtocolVersionId,
+};
 
 /// Params related to the execution process, not batch it self
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEnv {
     // Always false for VM
     pub zk_porter_available: bool,
+    /// Protocol minor the operator claims this batch executed under.
+    ///
+    /// Read leniently so an Era minor this build cannot name still decodes
+    /// instead of aborting the whole payload — see
+    /// [`deserialize_wire_protocol_version`]. The verifier checks it and then
+    /// overwrites it with `airbender_verifier::PINNED_PROTOCOL_VERSION`, so no
+    /// version-gated behaviour is selected by this field.
+    #[serde(deserialize_with = "deserialize_wire_protocol_version")]
     pub version: ProtocolVersionId,
     pub base_system_smart_contracts: BaseSystemContracts,
     pub bootloader_gas_limit: u32,
