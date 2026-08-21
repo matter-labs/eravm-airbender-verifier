@@ -50,23 +50,28 @@ impl Tracer for CycleFeatureTracer {
         // Opcode → feature-family mapping mirrors `circuits.rs`'s bucketing so
         // the offline categories line up with the sequencer's existing model.
         let id = match OP::VALUE {
+            // The arithmetic bucket is split by MEASURED cost class, not by opcode
+            // taxonomy: isolated measurement put `add` at 137, `mul` at 734 and
+            // `div` at 7,515 effective cycles per op, so opcodes share a feature
+            // only when they cost about the same. Adding a new arithmetic opcode
+            // here means deciding which class it measures into — do not default it
+            // to the cheap one. See ARITHMETIC_FEATURES.
             Opcode::Nop
             | Opcode::Add
             | Opcode::Sub
-            | Opcode::Mul
-            | Opcode::Div
             | Opcode::Jump
             | Opcode::Xor
             | Opcode::And
-            | Opcode::Or
-            | Opcode::ShiftLeft
-            | Opcode::ShiftRight
-            | Opcode::RotateLeft
-            | Opcode::RotateRight
-            | Opcode::PointerAdd
+            | Opcode::Or => FeatureId::ArithCheapOp,
+            Opcode::ShiftLeft | Opcode::ShiftRight | Opcode::RotateLeft | Opcode::RotateRight => {
+                FeatureId::ArithShiftOp
+            }
+            Opcode::Mul => FeatureId::ArithMulOp,
+            Opcode::Div => FeatureId::ArithDivOp,
+            Opcode::PointerAdd
             | Opcode::PointerSub
             | Opcode::PointerPack
-            | Opcode::PointerShrink => FeatureId::RichAddressingOp,
+            | Opcode::PointerShrink => FeatureId::ArithPtrOp,
             Opcode::This
             | Opcode::Caller
             | Opcode::CodeAddress

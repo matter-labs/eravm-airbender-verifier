@@ -13,7 +13,26 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum FeatureId {
     // vm2 opcode-family counts (from `after_instruction`)
+    /// LEGACY AGGREGATE — the whole arithmetic bucket as one count. The tracer no
+    /// longer emits it and `total` must not price it; the variant survives so
+    /// tables and datasets predating the 2026-08-21 split still parse. Superseded
+    /// by [`ARITHMETIC_FEATURES`], because one coefficient cannot serve a bucket
+    /// whose members were measured 67x apart (`add` 137 vs `div` 9,188 cyc/op).
     RichAddressingOp,
+    // Arithmetic bucket, split by MEASURED cost class (2026-08-21). Grouping is by
+    // isolated per-op cost, not by opcode taxonomy: two opcodes share a feature
+    // only if they cost about the same. See ARITHMETIC_FEATURES.
+    /// Single-word ALU and control flow: `Nop`/`Add`/`Sub`/`Jump`/`Xor`/`And`/`Or`.
+    ArithCheapOp,
+    /// `ShiftLeft`/`ShiftRight`/`RotateLeft`/`RotateRight`.
+    ArithShiftOp,
+    /// `Mul` — 256x256 -> 512, materially dearer than the cheap class.
+    ArithMulOp,
+    /// `Div` — 512/256 long division, the most expensive opcode in the VM per erg
+    /// and the reason this split exists.
+    ArithDivOp,
+    /// Fat-pointer arithmetic: `PointerAdd`/`PointerSub`/`PointerPack`/`PointerShrink`.
+    ArithPtrOp,
     AverageOp,
     StorageRead,
     StorageWrite,
@@ -83,8 +102,34 @@ pub const SAFETY_CRITICAL_FEATURES: &[FeatureId] = &[
 /// traffic, arithmetic. All-zero across the whole set therefore does not mean "a
 /// tiny batch", it means **no tracer ran**, and must read as UNRELIABLE — see
 /// [`crate::model::CostModel::trace_missing`].
+/// The arithmetic cost classes that replaced [`FeatureId::RichAddressingOp`].
+///
+/// The bucket was split because isolated measurement found a **55x spread inside
+/// it** — `add` 137, `mul` 871, `div` 9,188 effective cycles per op — so any single
+/// coefficient is either unsafe on `div` or ruinous on `add`: one safe against
+/// the dear end costs 14.73% organic MAPE against 5.97%, and no share- or
+/// volume-based guard can separate
+/// them (organic traffic already runs within 1.23x of the arithmetic COUNT that
+/// reaches the 2^36 ceiling with `div`, and `add`/`div` differ 67x at identical
+/// count and share — the information simply is not in an aggregate count).
+///
+/// This list is also what the arithmetic half of the extrapolation envelope sums
+/// over, so a new arithmetic feature must be added here or it is silently
+/// unguarded.
+pub const ARITHMETIC_FEATURES: &[FeatureId] = &[
+    FeatureId::ArithCheapOp,
+    FeatureId::ArithShiftOp,
+    FeatureId::ArithMulOp,
+    FeatureId::ArithDivOp,
+    FeatureId::ArithPtrOp,
+];
+
 pub const VM_TRACE_FEATURES: &[FeatureId] = &[
-    FeatureId::RichAddressingOp,
+    FeatureId::ArithCheapOp,
+    FeatureId::ArithShiftOp,
+    FeatureId::ArithMulOp,
+    FeatureId::ArithDivOp,
+    FeatureId::ArithPtrOp,
     FeatureId::AverageOp,
     FeatureId::StorageRead,
     FeatureId::StorageWrite,

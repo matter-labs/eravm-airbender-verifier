@@ -58,6 +58,29 @@ fit rests on payloads no current build can re-measure. Dropping them costs corpu
 breadth and buys reproducibility plus vintage consistency — every row here was
 measured by one build on one day.
 
+## The isolation corpus
+
+`dataset.json` is organic traffic; it sets the intercept, the extrapolation
+envelope, and every axis an attacker cannot drive independently. It cannot set
+per-op *rates* — organic batches move all their features together, so the design
+matrix is near-singular (`far_call` had multiple R² = 0.999988 against the rest) and
+no amount of additional organic data fixes that.
+
+Rates therefore come from single-axis synthetic batches, committed here as datasets
+with their `.bin.gz` inputs in `../era_mainnet_batches/binary/` so re-measuring
+after a guest change is a CI job rather than an expedition to a local era node.
+`precompile_dataset.json` is the first such family set; the arithmetic classes and
+the remaining attacker-drivable opcode axes follow the same shape — three volume
+tiers plus a matched control per family, ergs recorded alongside cycles, because
+cycles *per erg* is what decides safety.
+
+Isolate the axes an attacker can drive independently, and only those.
+`merkle_leaf_count` and `storage_application` move together at a ratio of 1.0001 on
+a cold-read flood because they are causally linked; an attacker cannot separate
+them either, so their joint identification is harmless and the axis sum is what
+gets paid. See `scripts/cycle_model/README.md` for the design rules and what each
+one caught.
+
 ## Known gaps
 
 - **No hold-out.** At n=53 every row is needed to identify the coefficients, so

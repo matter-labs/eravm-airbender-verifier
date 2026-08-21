@@ -332,6 +332,100 @@ note it fires on a coefficient being ABSENT, and all eight are now present, so
 `is_reliable()` cannot fire today. That is a smaller concern than it was (these are
 measurements now, not guesses) but it is unchanged.
 
+### The arithmetic split, and why featurization beat flooring
+
+Until 2026-08-21 every arithmetic opcode shared one coefficient,
+`rich_addressing_op`. Isolated measurement showed why that could not work: the
+bucket spans **67×** internally.
+
+| class | opcodes | measured cyc/op | cyc/erg | 200M ergs buys |
+|---|---|---:|---:|---:|
+| `arith_div_op` | `Div` | **9,188** | 1,526 | **4.44× the ceiling** |
+| `arith_mul_op` | `Mul` | 871 | 145 | 0.42× |
+| `arith_ptr_op` | `PointerAdd`/`Sub`/`Pack`/`Shrink` | 601 (fitted) | 120 | 0.35× |
+| `arith_cheap_op` | `Nop`/`Add`/`Sub`/`Jump`/`Xor`/`And`/`Or` | 137 | 27 | 0.08× |
+| `arith_shift_op` | `ShiftLeft`/`Right`, `Rotate*` | 137 (assumed) | 27 | 0.08× |
+
+Classes are grouped by **measured cost**, not by opcode taxonomy: two opcodes
+share a feature only when they cost about the same. Adding a new arithmetic opcode
+to the tracer therefore means deciding which class it *measures* into — do not
+default it to the cheap one.
+
+Three things follow, and they are the argument for featurizing rather than
+flooring an aggregate:
+
+1. **Only `div` can reach the proving ceiling** — 4.44× within the stock 200M-erg
+   batch budget, and 1.78× from a single transaction at the bootloader's hard 80M cap. Every class draws from the same
+   per-batch erg budget, so moving ergs from a dear class into a cheap one strictly
+   *lowers* the true total — a cheap class cannot be combined with `div` to exceed
+   what `div` alone reaches. That makes the floor decision per-class and cheap:
+   floor `div`, leave the rest to the fit. Measured on the organic fit alone, so the
+   configurations are comparable: flooring all five costs **14.73%** MAPE against
+   **5.97%** for `div`-only, and buys nothing — the residual exposure from leaving
+   the cheap classes zero-priced is ~1% of the ceiling, inside the 1.05 margin. (The
+   shipped table reads 8.85%; the difference is the precompile residual pass, not the
+   floor choice.)
+2. **The split made `div` identifiable from organic data.** Averaged into 196M cheap
+   ops it was invisible; as its own column it has real variance (0–92,730 per batch)
+   and the organic fit prices it at 5,746 unaided. The floor raises that to the
+   measured 9,188 — organic divs mix in the cheap `numerator < divisor` path while
+   an attacker picks operands that sustain Knuth D. Fit for organic accuracy, floor
+   for adversarial safety; the 1.6× gap between them is that distinction, not error.
+3. **Organic accuracy improved.** MAPE 10.90% → 8.85%, still 0/53 under-predicted.
+   The aggregate was not merely unsafe, it was *inaccurate*: forcing one coefficient
+   onto a 67× spread cost real precision on ordinary batches. `div` is 0.85% of
+   organic arithmetic *ops* but 31% of arithmetic *cycles*, which is precisely the
+   structure a single coefficient cannot represent.
+
+The extrapolation guard follows the same logic. It now sums the **weighted**
+contribution of all arithmetic classes rather than watching one count, so a `div`
+flood trips it far faster than an equal-length `add` flood — the discrimination an
+aggregate count could not express — and it reports which class pushed the batch
+out. Volume fences are deliberately *not* applied to arithmetic: organic traffic
+already runs within 1.23× of the arithmetic count that reaches 2^36 with `div`, so
+any fence with practical slack admits an unprovable batch while a tighter one
+rejects real ones.
+
+### The isolation corpus
+
+Rates come from designed experiments, not from regression on traffic. The organic
+corpus sets the intercept and the envelope and serves as validation; per-op rates
+come from single-axis synthetic batches, because a near-singular design matrix
+stays singular however much organic data you add (`far_call` had multiple R² =
+0.999988 against the other features).
+
+What makes an isolated rate trustworthy, each rule having caught a real error:
+
+- **Three volume tiers**, so the result is a slope and per-batch fixed cost cancels.
+- **Check each family's fitted intercept against the empty-batch baseline.** Free
+  falsification — a sha256 intercept of 2.27e9 against a 9.4e8 baseline is how the
+  size/arithmetic collinearity in that family announced itself.
+- **A matched control per family.** The `div` unroll-64 vs unroll-1 pair — 86.4% and
+  16.7% div purity, two quite different loop shapes — agrees to 5.4% (8,689 and
+  9,188 cyc/op), which is why that number is believed to be the opcode and not the
+  loop. Note the split *improved the measurement itself*: with one aggregate column
+  those loops read 7,515 (diluted by their own cheap ops) and had to be reconciled
+  by hand-netting; per-class counts remove that step entirely.
+- **A decorrelation batch** moving two co-scaling axes in opposite directions — the
+  most generalizable trick here, and what separated sha256's per-round from its
+  per-call cost.
+- **A held-out mix.** The five-precompile batch was worth more than any in-sample
+  statistic: +290.8% → +3.9% across the precompile refit.
+- **Record ergs, not just cycles.** Cycles per erg is what decides safety, since
+  ergs are what bound an attacker. The table above only exists because of this.
+
+Isolate the axes an attacker can drive *independently*. Not every collinearity is
+worth breaking: `merkle_leaf_count` and `storage_application` move together at
+1.0001 on a cold-read flood because they are causally linked, and an attacker
+cannot separate them either — their joint identification is harmless, and the axis
+sum is what gets paid.
+
+Inputs are committed as `.bin.gz` fixtures rather than as measured numbers, so
+re-measuring after a guest change is a CI job. That is the lesson of the eight
+stale adversarial actuals: `build_adversarial_fixture.py` now rebuilds that fixture
+from a measured dataset, and the rows carry their delegation counts so a weight
+revision can re-scale them instead of invalidating them.
+
 ## Model shape & current accuracy
 
 - **Predictors**: an aggregate `total → effective/native cycles` (= raw RISC-V

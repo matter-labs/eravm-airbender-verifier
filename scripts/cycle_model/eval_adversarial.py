@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fit_cost_model import feature_counts, predict_row
+from fit_cost_model import ARITHMETIC_FEATURES, feature_counts, predict_row
 
 # Keep in lockstep with the Rust gate constants:
 # SHARE_EXTRAPOLATION_FACTOR / VOLUME_EXTRAPOLATION_FACTOR in
@@ -49,16 +49,24 @@ def main() -> int:
     rows = json.loads(Path(args.fixture).read_text())
     tot = model["total"]
     calibration = model.get("calibration", {})
-    cap = calibration.get("rich_addressing_share_max", 0.0)
+    # Post-split the arithmetic envelope is the WEIGHTED share of the prediction
+    # contributed by all arithmetic cost classes; pre-split tables carry only the
+    # single-bucket cap. Mirror the Rust fallback exactly.
+    arith_cap = calibration.get("arithmetic_share_max", 0.0)
+    if arith_cap > 0.0:
+        cap, arith_axes = arith_cap, ARITHMETIC_FEATURES
+    else:
+        cap, arith_axes = calibration.get("rich_addressing_share_max", 0.0), \
+            ["rich_addressing_op"]
     value_max = calibration.get("feature_value_max", {})
-    rich_coef = tot["features"].get("rich_addressing_op", 0.0)
 
     violations = []
     print(f"{'label':>24}  {'actual':>14}  {'pred':>14}  share   verdict")
     for r in rows:
         feats = feature_counts(r)
         pred = predict_row(tot["base"], tot["features"], feats)
-        share = rich_coef * feats.get("rich_addressing_op", 0) / pred if pred > 0 else 0.0
+        weighted = sum(tot["features"].get(c, 0.0) * feats.get(c, 0) for c in arith_axes)
+        share = weighted / pred if pred > 0 else 0.0
         # mirrors CostModel::extrapolated_features — BOTH halves of the envelope:
         # the arithmetic share and the per-feature volume fence. (The fixture uses
         # no unpriced precompile and always has a real trace, so is_reliable is not

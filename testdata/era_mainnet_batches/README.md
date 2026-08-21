@@ -122,3 +122,53 @@ Process every fetched batch in host prove mode:
 ```sh
 cargo run --release -p eravm-prover-host -- --action prove --all-batches
 ```
+
+## The Isolation Corpus (`900101`–`900177`)
+
+Single-axis synthetic batches, generated on a local Era node, whose job is to set
+**per-op rates** — something organic traffic cannot do. In a real batch every
+feature moves with every other, so the design matrix is near-singular (`far_call`
+had multiple R² = 0.999988 against the rest) and no quantity of additional organic
+data fixes that. These are designed experiments instead: one family per cost driver,
+three to four volume tiers per family, so the answer is a slope and per-batch fixed
+cost cancels.
+
+Reduce them with `scripts/cycle_model/isolation_rates.py`, which reports each
+family's slope, R², cycles per erg, and — the number that actually decides whether
+an axis needs pricing at all — what the stock per-batch erg budget buys in units of
+the 2^36 proving ceiling. `scripts/cycle_model/build_adversarial_fixture.py` then
+turns the same measurement into `crates/cycle_estimator/tests/fixtures/adversarial.json`.
+
+Families: the five arithmetic cost classes (`add`, `sub`, `bitwise`, `jump` →
+`arith_cheap_op`; `shift`, `shift_m`, `rotate` → `arith_shift_op`; `mul`; and both
+`div` operand regimes, `div_fast` and `div_worst2`), plus `context` (`average_op`),
+`farcall`, `nearcall`, `twrite`, `tread`, `evt`, `umaread`, `umawrite`. The manifest
+at [`../cycle_model/isolation_corpus.csv`](../cycle_model/isolation_corpus.csv)
+carries family, tier, intended axis, tracer count, ergs consumed and status.
+
+**Committed as inputs, deliberately.** The fixture they build used to be
+hand-maintained rows whose batches were never committed, so when the guest changed
+they could not be re-measured — eight went stale for six weeks and then became
+unusable outright at a feature-schema change. Inputs in the repo make
+re-measurement a CI job.
+
+**Six fixtures were generated and then dropped as dead**, and the reasons are worth
+knowing because each would have shipped a wrong number silently:
+
+- `900104` / `900108` — a single chained `add`/`sub` is an affine induction
+  variable, and the optimizer closed-formed the loop away (132k ergs for 500k
+  iterations).
+- `900162`–`900165` — `arith_div_op` flat at 35 across all tiers. A 256-bit seed
+  made the first `div(K, v)` return 0, `v` collapsed to 0, and zksolc's
+  divide-by-zero guard then short-circuited the division forever. **The ergs looked
+  perfectly healthy and scaled with `n`** — only the tracer count exposed it, which
+  is why checking gas-versus-`n` is necessary but not sufficient, and why the
+  intercept-versus-baseline check in `isolation_rates.py` is a standing rule.
+
+Two axes still have no family. `arith_ptr_op` needs a real fat pointer, which
+Solidity cannot isolate (calldata slicing yields 2–3 pointer ops mixed with UMA) —
+raw zkasm via `zkevm-assembly` is the clean route. And `decommit_repeat` was
+deliberately skipped: it is the only family that can trip `max_pubdata_per_batch`
+and crash-loop the node into a full rebuild. That one matters, because by erg
+arithmetic the `decommit` repeat path is the other axis besides `div` that can reach
+the proving ceiling, and its 285,000 floor has never been measured.

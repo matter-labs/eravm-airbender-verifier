@@ -1,84 +1,58 @@
 //! Adversarial safety regression: no attacker-controlled batch is ever both judged
 //! trustworthy by the gate AND materially under-predicted.
 //!
-//! Each fixture batch was produced on a local era node (see
-//! scripts/precompile_calibration — CycleHammer / SlotReader), maximizing one
-//! opcode/feature the fitted model under-prices, and its TRUE guest cycles were
-//! measured with cycle_bench. Left unhardened, the worst under-predicted ~9×
-//! (transient storage, priced 0) and ~3× (pure arithmetic). The gate must, for
-//! every batch, EITHER cover it within the seal margin OR refuse to price it
-//! (unpriced precompile / out-of-calibration). This locks in the OPCODE_FLOORS +
-//! calibration-envelope guard.
+//! ## The fixture is now a build product
 //!
-//! ⚠️ SCOPE. This shows the estimator never *silently* under-prices — not that
-//! an over-budget batch cannot ship. Declining to certify only helps if the
-//! consumer refuses, and era's `CyclesCriterion` answers distrust with
-//! `IncludeAndSeal` (see `CycleEstimate::fits`). The five rows exempted below
-//! are therefore the shapes production keeps rather than refuses.
+//! Every row is a **single-axis synthetic batch from the isolation corpus**
+//! (`testdata/era_mainnet_batches/binary/9001xx` plus the precompile families),
+//! measured on the CURRENT guest under the CURRENT feature schema, and rebuilt by
+//! `scripts/cycle_model/build_adversarial_fixture.py` from a `cycle_bench`
+//! measurement plus `testdata/cycle_model/isolation_manifest.json`. Re-measuring
+//! after a guest change is therefore a CI job, not an expedition to a local era
+//! node.
 //!
-//! ⚠️ MIXED VINTAGES — read before adding or re-tuning a row. Each row carries an
-//! informational `guest` field. Eight were measured on the PRE-DELEGATION guest
-//! (2026-07-09, cd46640); only `storage_reads_140k` is on the guest the committed
-//! table is fit against. A stale actual is INFLATED, which makes `covered` harder
-//! to satisfy — over-strict for work the delegation guest made cheaper, lenient
-//! only for work it made dearer, which is not the observed direction. Arithmetic
-//! and transient-storage rows are ~guest-invariant; a merkle-dominated row is not.
+//! That replaced a hand-maintained fixture of nine rows whose batch *inputs* were
+//! never committed. Eight of those were measured on the pre-delegation guest
+//! (2026-07-09) and could not be refreshed; the 2026-08-21 arithmetic split then
+//! made them unusable outright, because a single `rich_addressing_op` count cannot
+//! be reinterpreted across the split in either direction — attributing it to the
+//! dear class raises the prediction and makes `covered` *easier* (a weaker test),
+//! and attributing it to the cheap class makes the test fail spuriously. Three of
+//! them (`compute_mem_low`, `context_ops`, `pure_compute`) did fail, with every
+//! row's arithmetic share reading 0.000 because the schema mismatch left the guard
+//! blind rather than merely wrong. Coverage went 9 rows -> 27.
 //!
-//! That retired one row. `storage_reads_80k` (80,065 leaves, 344,807 cyc/leaf
-//! pre-delegation) became uncoverable by any correct current-guest table: the
-//! delegation guest does that work at 189,924 cyc/leaf (1.816×) while the
-//! slot-axis coefficients fell 1.776×, and coverage needs 1.632×. Replaced by
-//! batch 900065 — same cold-slot-flood shape at 1.75× the volume, measured on the
-//! fit guest. Its job is a tripwire against a refit draining the storage/merkle
-//! coefficients: 93.8% of its prediction is the slot axis, and it trips on a
-//! ≥5.10% drain of those three. That figure is arithmetic on today's
-//! coefficients — recompute after any refit — and it catches gross
-//! re-attribution, not drift (the 2026-08-19 reweight moved coefficients >40%).
+//! Rows carry their `delegations` counts, so a future revision of
+//! `DELEGATION_WEIGHTS` can RE-SCALE these actuals instead of invalidating them.
+//! The old fixture stored only `effective_cycles`, which is exactly why a
+//! delegation-weight sensitivity sweep once compared a re-weighted model against a
+//! w=16 actual and produced margins that did not mean what they appeared to.
 //!
-//! ⚠️ NO LONGER HELD OUT (2026-08-21). It was held out of the 176-batch fit; the
-//! reproducible refit that replaced that table FITS ON IT, because it is the only
-//! batch current code can decode that constrains the merkle-leaf axis at all
-//! (140,059 leaves against a 3.8k–18k organic range). Held out, that axis is
-//! unidentified and this row is over-predicted +31.2%; fit on, +0.02%. The
-//! tripwire function survives being in-sample — it is a sensitivity check on the
-//! slot coefficients, not an accuracy claim — but it can no longer be cited as
-//! out-of-sample evidence, and a refit cannot be validated against it. The honest
-//! generalization number is the leave-one-out CV quoted in model_regression.rs,
-//! where this row is exactly the +31.2% worst case. A real held-out high-leaf
-//! batch (docs/generating-batches.md) is what restores the separation.
+//! ## What the rows are
 //!
-//! DELEGATION WEIGHTS, checked not assumed. `effective_cycles = raw + 16·blake2 +
-//! 4·bigint + 4·keccak`, and those weights have no authoritative in-tree source.
-//! This row is the most exposed available (blake2 = 22.25% of its effective cycles
-//! vs 3.60–12.82% across the reproducible corpus). Re-checked 2026-08-21 with the
-//! ACTUAL re-scaled at the same w as the target — the earlier sweep varied w in
-//! the model while leaving the fixture's w=16 `effective_cycles` fixed, which
-//! compares mismatched units, so its 1.2048 → 1.1531 margins do not mean what
-//! they appear to. Re-scaling both, w(blake2) ∈ {8,16,24,40} leaves this row
-//! covered at margin 1.0501–1.0503 and the whole corpus strictly over-predicted
-//! (worst signed +0.01% to +0.02%) at every value. NOTE the other eight rows
-//! cannot be swept at all: the fixture stores only `effective_cycles`, not the
-//! delegation counts needed to re-scale an actual — add `delegations` when any of
-//! them is re-measured. The robustness is structural: blake2 tracks slot count
-//! (r = 0.9977), so heavier weight lands on the coefficient this row saturates,
-//! and at ~2,566 blake2/leaf it sits below the corpus's 3,287 — the refit
-//! over-charges it. What a revision does move is absolute headroom against 2^36
-//! (23.6e9 at w=8 to 35.5e9 at w=40), which is a question about the seal
-//! threshold, not this assertion.
+//! One saturated member per family: the five arithmetic cost classes (including
+//! both `div` operand regimes — `div_fast` at 1,186 cyc/op and `div_worst2` at
+//! 7,667, a 6.5x spread inside one opcode), transient read and write, context ops,
+//! far-call, near-call, events, heap read and write, all seven crypto precompiles,
+//! and the 140k-slot cold-read flood.
 //!
-//! Re-measure the other eight when an era node is available. Until then do NOT
-//! "fix" a failure here by moving a coefficient or fencing a feature without first
-//! checking whether the row's actual predates the table's guest.
+//! ## ⚠️ The arithmetic rows are now REJECTED rather than covered
 //!
-//! **Coverage gap.** All 9 rows sit in one neighbourhood — `decommit_cycles` ∈
-//! [4.7k, 5.3k], `far_call` ∈ [245, 461] — so the invariant is scoped to
-//! transient-storage / compute / memory / context / storage-read shapes. Two axes
-//! are untested and NOT equally guarded: the volume envelope fences the decommit
-//! shapes (fresh flood 8.2× beyond the organic max, thrash 3.6×), while a bare
-//! far-call flood is fenced only at batch scale (~437k calls/tx vs a 859,529
-//! trip) and rests on the `far_call` floor below that. `model.rs` unit-tests the
-//! mechanisms; no fixture pins them end-to-end. See
-//! `scripts/cycle_model/REFIT-RUNBOOK.md`.
+//! Read the verdict column before concluding anything from it. With the arithmetic
+//! classes pinned at measured rates the model prices these batches WELL —
+//! `add_flood` is over-predicted 7% — yet the arithmetic-share guard still rejects
+//! them, because a pure-arithmetic batch reaches a share of 0.51-0.98 against a
+//! 0.315 trip point. The guard is firing on batches it no longer needs to protect
+//! against, which is a pure liveness cost.
+//!
+//! It is kept anyway, deliberately: per the note on
+//! `Calibration::rich_addressing_share_max`, the share guard is the ONLY thing
+//! covering the frame-churn / pooled-stack-clear vector (36.5x under-predicted per
+//! iteration), and it covers it *incidentally*, via the cheap arithmetic that
+//! attack must run rather than via anything modelled. Retiring it needs that vector
+//! to get a cost feature of its own. Until then this fixture cannot distinguish
+//! "rejected because the guard is load-bearing" from "rejected for nothing", and
+//! the arithmetic rows are in the second category.
 
 use serde::Deserialize;
 use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
@@ -98,7 +72,14 @@ struct Row {
 #[test]
 fn no_adversarial_batch_both_fits_and_underpredicts() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse adversarial fixture");
-    assert_eq!(rows.len(), 9, "fixture size changed unexpectedly");
+    assert_eq!(
+        rows.len(),
+        27,
+        "fixture size changed unexpectedly — it is a BUILD PRODUCT of the isolation \
+         corpus (build_adversarial_fixture.py + isolation_manifest.json), so a size \
+         change means a family was added, dropped, or failed to measure. Dropping one \
+         silently retires that invariant."
+    );
     let model = CostModel::embedded();
 
     for r in &rows {
@@ -120,17 +101,16 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
         // the gate distrusts (extrapolated / unpriced) is allowed to under-predict
         // here, because `fits()` would refuse it.
         //
-        // That exemption covers 5 of the 9 rows (worst: `pure_compute`, 2.19x
-        // under) and is NOT a claim that they are handled safely downstream — the
-        // deployed consumer does not take the `fits()` path. This asserts that the
-        // ESTIMATOR does not lie, not that the sequencer is protected; tightening
-        // it needs the consumer to refuse a distrusted tx-level estimate.
+        // The exemption is NOT a claim that a distrusted batch is handled safely
+        // downstream — the deployed consumer does not take the `fits()` path, it
+        // answers distrust with IncludeAndSeal. This asserts that the ESTIMATOR does
+        // not lie, not that the sequencer is protected; tightening it needs the
+        // consumer to refuse a distrusted tx-level estimate.
         //
-        // `mem_high` joined the exempt set when SHARE_EXTRAPOLATION_FACTOR moved
-        // 1.8 -> 1.2: its arithmetic share is 0.181, above the 0.1385 trip point.
-        // It is over-predicted 1.32x, so nothing under-priced is hidden — the
-        // assertion simply no longer applies to it. Recovering that row means a
-        // fixture built below the new trip point, not a looser factor.
+        // Since the arithmetic pinning, the exemption is doing much less work than
+        // it looks: every exempt row is OVER-predicted (the arithmetic floods by
+        // 7-540%), so nothing under-priced hides behind it. That was not true of the
+        // fixture this replaced, where the worst exempt row was 2.19x under.
         assert!(
             !trustworthy || covered,
             "{}: gate trusts it yet conservative(margin)={} < actual={} — live under-estimation vector",

@@ -15,7 +15,9 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::estimator::CycleEstimate;
-use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES, VM_TRACE_FEATURES};
+use crate::features::{
+    FeatureId, FeatureVector, ARITHMETIC_FEATURES, SAFETY_CRITICAL_FEATURES, VM_TRACE_FEATURES,
+};
 
 /// The committed cost table, embedded at compile time. Public so external
 /// consumers (e.g. zksync-era's in-tree cycle-estimator tracer) can source the
@@ -70,6 +72,16 @@ pub struct Calibration {
     /// any counter in the schema.
     #[serde(default)]
     pub rich_addressing_share_max: f64,
+    /// Largest share of the TOTAL prediction that the ARITHMETIC cost classes
+    /// ([`ARITHMETIC_FEATURES`]) together reached in any organic training batch —
+    /// the successor to `rich_addressing_share_max` after the bucket split.
+    ///
+    /// It is share-of-prediction, so it is weighted: a `div` flood drives it far
+    /// faster than an `add` flood of the same length, which is exactly the
+    /// discrimination the aggregate count could not express. A table carrying this
+    /// field uses it; one carrying only the legacy field falls back to that.
+    #[serde(default)]
+    pub arithmetic_share_max: f64,
     /// Largest raw value each fenced feature reached in the calibration corpus. A
     /// linear model says nothing about a batch far outside it, and the shapes that
     /// get there are adversarial by construction. Values above
@@ -181,8 +193,8 @@ impl Provenance {
 /// | opcode | effective cyc/op | vs the 65.01 priced here |
 /// |---|---:|---:|
 /// | `add` | 137 | 2.1× |
-/// | `mul` | 734 | 11.3× |
-/// | `div` | 7,515 | **115.6×** |
+/// | `mul` | 871 | 13.4× |
+/// | `div` | 9,188 | **141×** |
 ///
 /// At `k = 115.6` and this table's trip point (cap 0.0587 × 1.2 = 0.0704) the
 /// worst under-prediction of a *trusted* compute-heavy batch is **~89%**, not
@@ -194,11 +206,12 @@ impl Provenance {
 /// can the volume half — the largest organic arithmetic count is 7,448,659 ops
 /// while reaching 2^36 with `div` takes 9,144,308, a separation of only 1.23×, so
 /// any fence with practical slack admits an unprovable batch. `add` and `div`
-/// differ 54.8× at identical count AND identical share, so no function of the
+/// differ 67× at identical count AND identical share, so no function of the
 /// aggregate bucket separates them: **the information is not in the feature.**
 /// Closing this needs finer featurization — splitting the bucket by opcode
 /// subtype. Flooring instead is not an option: a single coefficient safe against
-/// 7,515 costs 496% organic MAPE.
+/// the dear end costs 14.73% organic MAPE against 5.97% — which is why the
+/// bucket was SPLIT instead (see ARITHMETIC_FEATURES).
 ///
 /// Do not raise the factor without re-deriving these numbers. Lowering it to 1.0
 /// gains a little margin but leaves no slack for a legitimately more
@@ -348,7 +361,7 @@ impl CostModel {
     ///    [`SHARE_EXTRAPOLATION_FACTOR`] — left under-priced because flooring it
     ///    wrecks organic accuracy: `total.rich_addressing_op` is 65.01 on the
     ///    reproducible refit (was ~117, ~71 before that) against a MEASURED
-    ///    7,515/op for `div`, so 115.6× on the worst member of the bucket — not
+    ///    9,188/op for `div`, so 141× on the worst member of the bucket — not
     ///    the ~2× previously assumed. Harmless organically, where arithmetic rides
     ///    alongside priced storage; a batch *dominated* by it is under-estimated
     ///    up to two orders of magnitude. NB use the `total` figure —
@@ -374,18 +387,39 @@ impl CostModel {
     /// vector that currently depends on it.
     pub fn extrapolated_features(&self, fv: &FeatureVector) -> Vec<FeatureId> {
         let mut out = Vec::new();
-        let cap = self.calibration.rich_addressing_share_max;
+        // Arithmetic share. Prefer the post-split envelope; fall back to the
+        // legacy single-bucket one so a table predating the split still guards.
+        let split = self.calibration.arithmetic_share_max > 0.0;
+        let cap = if split {
+            self.calibration.arithmetic_share_max
+        } else {
+            self.calibration.rich_addressing_share_max
+        };
         let total = self.predict_total(fv);
         if cap > 0.0 && total > 0 {
-            let coeff = self
-                .total
-                .features
-                .get(&FeatureId::RichAddressingOp)
-                .copied()
-                .unwrap_or(0.0);
-            let share = coeff * fv.get(FeatureId::RichAddressingOp) as f64 / total as f64;
-            if share > cap * SHARE_EXTRAPOLATION_FACTOR {
-                out.push(FeatureId::RichAddressingOp);
+            let axes: &[FeatureId] = if split {
+                ARITHMETIC_FEATURES
+            } else {
+                &[FeatureId::RichAddressingOp]
+            };
+            let weighted: f64 = axes
+                .iter()
+                .map(|id| self.total.features.get(id).copied().unwrap_or(0.0) * fv.get(*id) as f64)
+                .sum();
+            if weighted / total as f64 > cap * SHARE_EXTRAPOLATION_FACTOR {
+                // Report the dominant contributor, so the caller learns WHICH
+                // arithmetic class pushed the batch out rather than just that one did.
+                let worst = axes
+                    .iter()
+                    .max_by(|a, b| {
+                        let f = |id: &FeatureId| {
+                            self.total.features.get(id).copied().unwrap_or(0.0) * fv.get(*id) as f64
+                        };
+                        f(a).partial_cmp(&f(b)).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .copied()
+                    .unwrap_or(FeatureId::ArithCheapOp);
+                out.push(worst);
             }
         }
         for (id, max_seen) in &self.calibration.feature_value_max {
@@ -522,10 +556,10 @@ mod tests {
         // feature of its own; never as a side effect.
         let cal = &CostModel::embedded().calibration;
         assert!(
-            cal.rich_addressing_share_max > 0.0,
-            "rich_addressing_share_max is 0 — the arithmetic-share guard is DISABLED in \
-             this table. A refit must not retire it as a side effect; see \
-             Calibration::rich_addressing_share_max."
+            cal.arithmetic_share_max > 0.0 || cal.rich_addressing_share_max > 0.0,
+            "both arithmetic-share envelopes are 0 — that half of the guard is DISABLED \
+             in this table. A refit must not retire it as a side effect; see \
+             Calibration::arithmetic_share_max."
         );
         assert!(
             !cal.feature_value_max.is_empty() && cal.feature_value_max.values().any(|&v| v > 0),

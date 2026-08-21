@@ -1,0 +1,3276 @@
+[
+  {
+    "batch_number": 900101,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 613131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 358,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 180,
+        "state_diff_count": 12,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1070029161,
+    "phase_cycles": {
+      "commitment": 139303160,
+      "merkle_verification": 26416939,
+      "setup": 42311682,
+      "vm_execution": 810621023
+    },
+    "delegations": {
+      "1991": 10138370,
+      "1994": 40609,
+      "1995": 11968858
+    }
+  },
+  {
+    "batch_number": 900102,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2437131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1320036037,
+    "phase_cycles": {
+      "commitment": 139304623,
+      "merkle_verification": 26364228,
+      "setup": 42315623,
+      "vm_execution": 1060708930
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40663,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900103,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 9505131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2289461107,
+    "phase_cycles": {
+      "commitment": 139285366,
+      "merkle_verification": 26364242,
+      "setup": 42316058,
+      "vm_execution": 2030151456
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41426,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900105,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 613128,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1074469828,
+    "phase_cycles": {
+      "commitment": 139300534,
+      "merkle_verification": 26364136,
+      "setup": 42311563,
+      "vm_execution": 815149227
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41685,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900106,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2437128,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1338451378,
+    "phase_cycles": {
+      "commitment": 139288839,
+      "merkle_verification": 26364159,
+      "setup": 42312720,
+      "vm_execution": 1079143626
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40545,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900107,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 9505128,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2361456407,
+    "phase_cycles": {
+      "commitment": 139296657,
+      "merkle_verification": 26364187,
+      "setup": 42310563,
+      "vm_execution": 2102143732
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41511,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900109,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 101133,
+        "arith_shift_op": 454,
+        "arith_mul_op": 512032,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1432557085,
+    "phase_cycles": {
+      "commitment": 139247225,
+      "merkle_verification": 26364208,
+      "setup": 42310750,
+      "vm_execution": 1173288739
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41512,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900110,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 389133,
+        "arith_shift_op": 454,
+        "arith_mul_op": 2048032,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2771011126,
+    "phase_cycles": {
+      "commitment": 139281098,
+      "merkle_verification": 26364184,
+      "setup": 42309720,
+      "vm_execution": 2511715016
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40810,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900111,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 60214,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_write": 46400,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 324,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 170,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1421007830,
+    "phase_cycles": {
+      "commitment": 139314361,
+      "merkle_verification": 26364327,
+      "setup": 42206699,
+      "vm_execution": 1158235995
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40780,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900112,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 225514,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_write": 185600,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2946832487,
+    "phase_cycles": {
+      "commitment": 139266327,
+      "merkle_verification": 26364311,
+      "setup": 42205769,
+      "vm_execution": 2673262316
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41006,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900113,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 879114,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_write": 736000,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 9569177737,
+    "phase_cycles": {
+      "commitment": 139270450,
+      "merkle_verification": 26364185,
+      "setup": 42206076,
+      "vm_execution": 9250906016
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41459,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900114,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 189113,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_write": 46000,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1430714685,
+    "phase_cycles": {
+      "commitment": 139296617,
+      "merkle_verification": 26311632,
+      "setup": 42207460,
+      "vm_execution": 1168070773
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40511,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900115,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 159116,
+        "arith_shift_op": 455,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_read": 70400,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1030585424,
+    "phase_cycles": {
+      "commitment": 139270703,
+      "merkle_verification": 26364335,
+      "setup": 42207788,
+      "vm_execution": 765986531
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41397,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900116,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 624616,
+        "arith_shift_op": 455,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_read": 283200,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1165803521,
+    "phase_cycles": {
+      "commitment": 139267930,
+      "merkle_verification": 26364573,
+      "setup": 42205082,
+      "vm_execution": 884034125
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40908,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900117,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2455116,
+        "arith_shift_op": 455,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_read": 1120000,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1698973308,
+    "phase_cycles": {
+      "commitment": 139304716,
+      "merkle_verification": 26364296,
+      "setup": 42205819,
+      "vm_execution": 1348353621
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40980,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900118,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 355116,
+        "arith_shift_op": 455,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "transient_storage_read": 70000,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1051581085,
+    "phase_cycles": {
+      "commitment": 139277984,
+      "merkle_verification": 26311874,
+      "setup": 42205953,
+      "vm_execution": 787079756
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41056,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900119,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 347115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 289005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 271,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1051888835,
+    "phase_cycles": {
+      "commitment": 139248354,
+      "merkle_verification": 26364264,
+      "setup": 42207458,
+      "vm_execution": 792785755
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41305,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900120,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1430115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1201005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 271,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1260187955,
+    "phase_cycles": {
+      "commitment": 139266074,
+      "merkle_verification": 26364191,
+      "setup": 42206991,
+      "vm_execution": 1001065997
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41723,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900121,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 5610115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 4721005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 271,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2064092405,
+    "phase_cycles": {
+      "commitment": 139301323,
+      "merkle_verification": 26364189,
+      "setup": 42204811,
+      "vm_execution": 1804939725
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40914,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900122,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1185115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 296005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 271,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1143646417,
+    "phase_cycles": {
+      "commitment": 139254312,
+      "merkle_verification": 26364231,
+      "setup": 42205830,
+      "vm_execution": 884541069
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41123,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900123,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 154917,
+        "arith_shift_op": 11654,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 45805,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 11260,
+        "uma_write": 11800,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 11492,
+        "pubdata_bytes": 285,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1193393117,
+    "phase_cycles": {
+      "commitment": 139306112,
+      "merkle_verification": 26364369,
+      "setup": 42205371,
+      "vm_execution": 933352786
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41308,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900124,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 604317,
+        "arith_shift_op": 45254,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 180205,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 44860,
+        "uma_write": 45400,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 45092,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1802765613,
+    "phase_cycles": {
+      "commitment": 139259152,
+      "merkle_verification": 26312015,
+      "setup": 42205090,
+      "vm_execution": 1540252174
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40856,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900125,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2359117,
+        "arith_shift_op": 176454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 705005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 176060,
+        "uma_write": 176600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 176292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 4186937165,
+    "phase_cycles": {
+      "commitment": 139268675,
+      "merkle_verification": 26311961,
+      "setup": 42205732,
+      "vm_execution": 3914179065
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41359,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900126,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 214117,
+        "arith_shift_op": 11454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 45005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 11060,
+        "uma_write": 11600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 11292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1198758594,
+    "phase_cycles": {
+      "commitment": 139247462,
+      "merkle_verification": 26311690,
+      "setup": 42205738,
+      "vm_execution": 938892195
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41460,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900127,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 351619,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 98505,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 49042,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1031273879,
+    "phase_cycles": {
+      "commitment": 139299342,
+      "merkle_verification": 26364010,
+      "setup": 42204701,
+      "vm_execution": 772144967
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41123,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900128,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1391119,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 391005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 195292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1166686366,
+    "phase_cycles": {
+      "commitment": 139305075,
+      "merkle_verification": 26364029,
+      "setup": 42209217,
+      "vm_execution": 907549678
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41231,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900129,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 5549119,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1561005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 780292,
+        "pubdata_bytes": 269,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1708287930,
+    "phase_cycles": {
+      "commitment": 139251226,
+      "merkle_verification": 26364226,
+      "setup": 42206148,
+      "vm_execution": 1449180919
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41208,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900130,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 257119,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 49005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 24292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1023377339,
+    "phase_cycles": {
+      "commitment": 139311323,
+      "merkle_verification": 26364397,
+      "setup": 42205813,
+      "vm_execution": 764237788
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41682,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900131,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 202022,
+        "arith_shift_op": 26854,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 45005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 8810,
+        "precompile_call": 24,
+        "far_call": 8860,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 9092,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1190359687,
+    "phase_cycles": {
+      "commitment": 139283039,
+      "merkle_verification": 26416765,
+      "setup": 42208824,
+      "vm_execution": 930503593
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41348,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900132,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 4152028,
+        "arith_shift_op": 550626,
+        "arith_mul_op": 94,
+        "arith_div_op": 99,
+        "arith_ptr_op": 866,
+        "average_op": 918437,
+        "storage_read": 91,
+        "storage_write": 60,
+        "event": 183122,
+        "precompile_call": 70,
+        "far_call": 183272,
+        "uma_write": 1736,
+        "uma_read": 1379,
+        "keccak256_cycles": 70,
+        "ec_recover_cycles": 3,
+        "decommit_cycles": 4793,
+        "storage_application": 73,
+        "transaction_count": 3,
+        "near_call_count": 183956,
+        "pubdata_bytes": 340,
+        "merkle_leaf_count": 58,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 84,
+        "initial_heap_words": 270,
+        "state_diff_count": 13,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 5179528817,
+    "phase_cycles": {
+      "commitment": 139310269,
+      "merkle_verification": 27860281,
+      "setup": 42231925,
+      "vm_execution": 4902986119
+    },
+    "delegations": {
+      "1991": 10151220,
+      "1994": 122565,
+      "1995": 12012990
+    }
+  },
+  {
+    "batch_number": 900133,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 390115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 176473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 265,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1109036616,
+    "phase_cycles": {
+      "commitment": 139286122,
+      "merkle_verification": 26364228,
+      "setup": 42205423,
+      "vm_execution": 849916041
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41042,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900134,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1545115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 704473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1477624875,
+    "phase_cycles": {
+      "commitment": 139286115,
+      "merkle_verification": 26311881,
+      "setup": 42210210,
+      "vm_execution": 1218574833
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41664,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900135,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 6235115,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 2848473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2974947600,
+    "phase_cycles": {
+      "commitment": 139300808,
+      "merkle_verification": 26311823,
+      "setup": 42205043,
+      "vm_execution": 2715886581
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41445,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900136,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 895113,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 178473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1164680927,
+    "phase_cycles": {
+      "commitment": 139298404,
+      "merkle_verification": 26311882,
+      "setup": 42205380,
+      "vm_execution": 905623187
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40795,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900137,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 86817,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 69400,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1024753447,
+    "phase_cycles": {
+      "commitment": 139289687,
+      "merkle_verification": 26364178,
+      "setup": 42206257,
+      "vm_execution": 765638154
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41629,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900138,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 333817,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 277400,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 268,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1146813596,
+    "phase_cycles": {
+      "commitment": 139260078,
+      "merkle_verification": 26364291,
+      "setup": 42206853,
+      "vm_execution": 887722566
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41035,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900139,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1316117,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 1104600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 269,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1666731229,
+    "phase_cycles": {
+      "commitment": 139250798,
+      "merkle_verification": 26364601,
+      "setup": 42208910,
+      "vm_execution": 1407623274
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41124,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900140,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 281117,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 69600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1087457604,
+    "phase_cycles": {
+      "commitment": 139239990,
+      "merkle_verification": 26311559,
+      "setup": 42207659,
+      "vm_execution": 828457216
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40475,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900141,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 599126,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1057092665,
+    "phase_cycles": {
+      "commitment": 139269443,
+      "merkle_verification": 26364240,
+      "setup": 42314526,
+      "vm_execution": 797800822
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41692,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900142,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2417126,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1273316991,
+    "phase_cycles": {
+      "commitment": 139282455,
+      "merkle_verification": 26364535,
+      "setup": 42311793,
+      "vm_execution": 1014023551
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40952,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900143,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 9545126,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2120971355,
+    "phase_cycles": {
+      "commitment": 139265304,
+      "merkle_verification": 26311918,
+      "setup": 42311501,
+      "vm_execution": 1861768277
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41670,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900144,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 792722,
+        "arith_shift_op": 106054,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 177005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 35210,
+        "precompile_call": 24,
+        "far_call": 35260,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 35492,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1786615699,
+    "phase_cycles": {
+      "commitment": 139296935,
+      "merkle_verification": 26575546,
+      "setup": 42206120,
+      "vm_execution": 1524529717
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41251,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900145,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 792722,
+        "arith_shift_op": 106054,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 177005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 35210,
+        "precompile_call": 24,
+        "far_call": 35260,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 35492,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1785948765,
+    "phase_cycles": {
+      "commitment": 139255532,
+      "merkle_verification": 26523000,
+      "setup": 42205983,
+      "vm_execution": 1523974819
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41100,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900146,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 3119722,
+        "arith_shift_op": 418054,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 697005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 139210,
+        "precompile_call": 24,
+        "far_call": 139260,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4793,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 139492,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 395872,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 4139237667,
+    "phase_cycles": {
+      "commitment": 139272682,
+      "merkle_verification": 27147160,
+      "setup": 42204672,
+      "vm_execution": 3868511887
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41165,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900147,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1505133,
+        "arith_shift_op": 454,
+        "arith_mul_op": 8000032,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 7957459866,
+    "phase_cycles": {
+      "commitment": 139300027,
+      "merkle_verification": 26364271,
+      "setup": 42310857,
+      "vm_execution": 7698142752
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40855,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900148,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1505136,
+        "arith_shift_op": 454,
+        "arith_mul_op": 500032,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1574966920,
+    "phase_cycles": {
+      "commitment": 139305926,
+      "merkle_verification": 26364230,
+      "setup": 42310020,
+      "vm_execution": 1315644741
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41010,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900149,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2125131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1223350608,
+    "phase_cycles": {
+      "commitment": 139299827,
+      "merkle_verification": 26364517,
+      "setup": 42314560,
+      "vm_execution": 964040023
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40920,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900150,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 425126,
+        "arith_shift_op": 192454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1060644575,
+    "phase_cycles": {
+      "commitment": 139307546,
+      "merkle_verification": 26364117,
+      "setup": 42310164,
+      "vm_execution": 801320436
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40426,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900151,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1650126,
+        "arith_shift_op": 752454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1276775209,
+    "phase_cycles": {
+      "commitment": 139254604,
+      "merkle_verification": 26312027,
+      "setup": 42311484,
+      "vm_execution": 1017583737
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40319,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900152,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 6585126,
+        "arith_shift_op": 3008454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2148448176,
+    "phase_cycles": {
+      "commitment": 139256825,
+      "merkle_verification": 26311514,
+      "setup": 42310337,
+      "vm_execution": 1889255313
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41346,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900153,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 945131,
+        "arith_shift_op": 188454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1125754402,
+    "phase_cycles": {
+      "commitment": 139296594,
+      "merkle_verification": 26364581,
+      "setup": 42314302,
+      "vm_execution": 866443907
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41529,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900154,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 328131,
+        "arith_shift_op": 272454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 278,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1066232356,
+    "phase_cycles": {
+      "commitment": 139294560,
+      "merkle_verification": 26364254,
+      "setup": 42314646,
+      "vm_execution": 806908353
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41494,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900155,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1316131,
+        "arith_shift_op": 1104454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1310026014,
+    "phase_cycles": {
+      "commitment": 139297320,
+      "merkle_verification": 26311574,
+      "setup": 42314825,
+      "vm_execution": 1050787823
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41544,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900156,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 5230131,
+        "arith_shift_op": 4400454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2276550670,
+    "phase_cycles": {
+      "commitment": 139284176,
+      "merkle_verification": 26311925,
+      "setup": 42310877,
+      "vm_execution": 2017328092
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40211,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900157,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 830132,
+        "arith_shift_op": 275454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 278,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1128330393,
+    "phase_cycles": {
+      "commitment": 139262389,
+      "merkle_verification": 26364215,
+      "setup": 42309953,
+      "vm_execution": 869041724
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40866,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900158,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 233129,
+        "arith_shift_op": 384454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 274,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1089200881,
+    "phase_cycles": {
+      "commitment": 139249663,
+      "merkle_verification": 26364207,
+      "setup": 42309850,
+      "vm_execution": 829930812
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40771,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900159,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 898129,
+        "arith_shift_op": 1504454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 276,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1389046641,
+    "phase_cycles": {
+      "commitment": 139293847,
+      "merkle_verification": 26364362,
+      "setup": 42314015,
+      "vm_execution": 1129730899
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40542,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900160,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 3577129,
+        "arith_shift_op": 6016454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 274,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2596854951,
+    "phase_cycles": {
+      "commitment": 139280696,
+      "merkle_verification": 26364327,
+      "setup": 42311496,
+      "vm_execution": 2337549819
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40301,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900161,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 569129,
+        "arith_shift_op": 188454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 297,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1107342714,
+    "phase_cycles": {
+      "commitment": 139303396,
+      "merkle_verification": 26364237,
+      "setup": 42311828,
+      "vm_execution": 848021414
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40219,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900166,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 53151,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 256035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 619,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 264,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1291638477,
+    "phase_cycles": {
+      "commitment": 139302190,
+      "merkle_verification": 26364568,
+      "setup": 42313208,
+      "vm_execution": 1032316073
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41463,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900167,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 194151,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 1008035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 619,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2187894033,
+    "phase_cycles": {
+      "commitment": 139243022,
+      "merkle_verification": 26312054,
+      "setup": 42315861,
+      "vm_execution": 1928708408
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40930,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900168,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 755151,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 4000035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 619,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 5754729354,
+    "phase_cycles": {
+      "commitment": 139240524,
+      "merkle_verification": 26311954,
+      "setup": 42313207,
+      "vm_execution": 5495548992
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41485,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900169,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 755141,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 250035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1335498093,
+    "phase_cycles": {
+      "commitment": 139273275,
+      "merkle_verification": 26312083,
+      "setup": 42312499,
+      "vm_execution": 1076286458
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40958,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900170,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 605131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 265,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1047429464,
+    "phase_cycles": {
+      "commitment": 139269444,
+      "merkle_verification": 26364535,
+      "setup": 42311029,
+      "vm_execution": 788146147
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40090,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900171,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 2405131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1230323345,
+    "phase_cycles": {
+      "commitment": 139251990,
+      "merkle_verification": 26311599,
+      "setup": 42311946,
+      "vm_execution": 971123256
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 41465,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900172,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 9605131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1962566839,
+    "phase_cycles": {
+      "commitment": 139270228,
+      "merkle_verification": 26311912,
+      "setup": 42316383,
+      "vm_execution": 1703354555
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40862,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900173,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1205131,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 35,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 1110706066,
+    "phase_cycles": {
+      "commitment": 139245136,
+      "merkle_verification": 26364538,
+      "setup": 42310539,
+      "vm_execution": 851455139
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41073,
+      "1995": 11965613
+    }
+  },
+  {
+    "batch_number": 900174,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 435132,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 160035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 282,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 169,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2220129531,
+    "phase_cycles": {
+      "commitment": 139264970,
+      "merkle_verification": 26364242,
+      "setup": 42314408,
+      "vm_execution": 1960849446
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 41187,
+      "1995": 11966262
+    }
+  },
+  {
+    "batch_number": 900175,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 1768132,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 656035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 6044401485,
+    "phase_cycles": {
+      "commitment": 139253967,
+      "merkle_verification": 26311927,
+      "setup": 42316783,
+      "vm_execution": 5785203170
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40861,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900176,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 7014132,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 2608035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 260,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 160,
+        "state_diff_count": 10,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 21095540527,
+    "phase_cycles": {
+      "commitment": 139255372,
+      "merkle_verification": 26311930,
+      "setup": 42311413,
+      "vm_execution": 20836345520
+    },
+    "delegations": {
+      "1991": 10133230,
+      "1994": 40999,
+      "1995": 11963017
+    }
+  },
+  {
+    "batch_number": 900177,
+    "features": {
+      "counts": {
+        "arith_cheap_op": 820137,
+        "arith_shift_op": 454,
+        "arith_mul_op": 32,
+        "arith_div_op": 163035,
+        "arith_ptr_op": 296,
+        "average_op": 1005,
+        "storage_read": 33,
+        "storage_write": 22,
+        "event": 10,
+        "precompile_call": 24,
+        "far_call": 60,
+        "uma_write": 600,
+        "uma_read": 473,
+        "keccak256_cycles": 24,
+        "ec_recover_cycles": 1,
+        "decommit_cycles": 4819,
+        "storage_application": 64,
+        "transaction_count": 1,
+        "near_call_count": 292,
+        "pubdata_bytes": 266,
+        "merkle_leaf_count": 54,
+        "used_bytecode_bytes": 397536,
+        "used_bytecode_count": 19,
+        "storage_key_count": 78,
+        "initial_heap_words": 168,
+        "state_diff_count": 11,
+        "system_log_count": 10
+      }
+    },
+    "raw_cycles": 2484040225,
+    "phase_cycles": {
+      "commitment": 139249621,
+      "merkle_verification": 26364490,
+      "setup": 42314326,
+      "vm_execution": 2224777674
+    },
+    "delegations": {
+      "1991": 10135800,
+      "1994": 40632,
+      "1995": 11965613
+    }
+  }
+]

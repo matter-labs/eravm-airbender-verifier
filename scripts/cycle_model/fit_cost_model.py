@@ -64,7 +64,8 @@ from scipy.optimize import nnls
 # dataset are used; the rest are ignored. `vm_execution` gets everything
 # execution-related, the others get their specific cost drivers.
 VM_FEATURES = [
-    "rich_addressing_op", "average_op", "storage_read", "storage_write",
+    "arith_cheap_op", "arith_shift_op", "arith_mul_op", "arith_div_op",
+    "arith_ptr_op", "average_op", "storage_read", "storage_write",
     "transient_storage_read", "transient_storage_write", "event",
     "precompile_call", "decommit", "far_call", "uma_write", "uma_read",
     "near_call_count", "keccak256_cycles", "sha256_cycles", "ec_recover_cycles",
@@ -171,6 +172,19 @@ PRECOMPILE_FEATURES = [
 # Keep this list SHORT and volume-oriented: every entry is also a false-positive
 # risk on an unusually busy organic batch (the failure is a smaller batch, not a
 # wrong one, but it costs throughput). Widening the corpus widens the fence.
+# Arithmetic cost classes — must mirror ARITHMETIC_FEATURES in
+# crates/cycle_estimator/src/features.rs. The estimator's share guard sums the
+# WEIGHTED contribution of these, so a class missing here is silently unguarded.
+ARITHMETIC_FEATURES = [
+    "arith_cheap_op", "arith_shift_op", "arith_mul_op", "arith_div_op",
+    "arith_ptr_op",
+]
+
+# Deliberately NOT fenced by volume: the arithmetic classes. A volume fence cannot
+# work on them — organic traffic already runs within 1.23x of the arithmetic COUNT
+# that reaches 2^36 with `div`, so any fence with practical slack admits an
+# unprovable batch while a tighter one rejects real batches. They are handled by
+# per-class pricing (OPCODE_FLOORS) plus the weighted share guard instead.
 ENVELOPE_FEATURES = [
     "decommit_cycles", "far_call", "decommit", "storage_write", "uma_write",
 ]
@@ -221,146 +235,106 @@ REQUIRED_DATASET_FEATURES = sorted(
 #   - average_op (context ops: caller/gasleft/address/…): ~236 cyc dispatch;
 #     priced 0 by the fit. Measured 1.5x under-estimate.
 #   - near_call_count: dispatch minimum (no clean isolate available; conservative).
-# rich_addressing_op is deliberately NOT floored: its true per-op cost (~236) is 3x
-# the fitted 71, but flooring it costs ~6% on organic batches (which run millions of
-# arithmetic ops that legitimately share cost with priced storage). That compute
-# vector is handled by the calibration-envelope guard in the estimator crate.
+# Measured marginal rates from the ISOLATION CORPUS — pinned, not fitted.
 #
-# EVALUATED AND REJECTED — dispatch decomposition. The natural-looking fix
-# (pin a uniform ~236 cyc/op dispatch term by fitting on
-# `y - 236*total_opcode_count` and folding 236 back into every bucket, so no
-# bucket can be routed to for free) was implemented and refit on the real
-# corpus, and it makes the gate LESS safe:
-#   - total attribution is conserved, so forcing 236 into every opcode bucket
-#     makes the fit SHRINK the storage/merkle coefficients to keep matching
-#     organic totals — the isolated storage_reads_80k adversarial batch then
-#     under-predicts past the seal margin (-11%), a NEW invariant violation the
-#     shipped floors+guard model does not have;
-#   - the mandatory dispatch term is re-absorbed by the asymmetric fit, erasing
-#     the floors' deliberate conservative bias (513xxx hold-out flips from 0/49
-#     under-predicted, worst +0.03%, to 40+/49 under, worst -1.9%); raising tau
-#     to 0.97 does not fix either effect.
-# The structural lesson: post-fit FLOORS only ever add cost (strictly
-# conservative), while re-attribution inside the fit moves cost away from other
-# levers — some of which (storage) are load-bearing for isolated batches. Run
-# `eval_adversarial.py` against any candidate table to check the invariant
-# before committing it. The long-term fix for the compute vector is finer
-# featurization (split rich_addressing by op subtype) plus compute-heavy
-# synthetic batches residual-fit like the precompiles — not re-attribution.
+# These come from single-axis synthetic batches (testdata/era_mainnet_batches/binary/
+# 9001xx, three to four volume tiers per family), reduced by
+# scripts/cycle_model/isolation_rates.py: slope in effective cycles per unit, R^2,
+# and the fitted intercept checked against the measured empty-batch baseline. Every
+# family below came in at R^2 >= 0.9896 with an intercept within 3% of that baseline.
+#
+# PINNED, NOT FLOORED — this distinction is the whole design and getting it wrong
+# costs 24% MAPE. A floor ADDS cost on top of a fit that has already distributed it:
+# the organic fit is accurate in total (it just misattributes), so raising a
+# coefficient to its true rate double-counts, and flooring all of these measured
+# rates scores MAPE 24.33%. Pinning instead SUBTRACTS the pinned contribution from
+# the target and fits only the remainder, so each axis carries its measured cost
+# exactly once and the base absorbs what is left: MAPE 0.90%.
+#
+# That is the payoff of measuring rather than fitting rates — a 10x accuracy
+# improvement over the floored table (8.85%) — and it is also what makes the model
+# safe on shapes it has never seen. A 9% systematic over-prediction on organic
+# batches tells you nothing about a div flood; a measured per-op rate does.
+#
+# Where two opcodes share a class the rate is the WORST member, because an attacker
+# picks the shape: arith_cheap_op takes `sub` 145 over `add` 137 / `bitwise` 119 /
+# `jump` 102; arith_shift_op takes `shift` 376 over `shift_m` 287 / `rotate` 262;
+# arith_div_op takes 9,188 (the original div control loop) over div_worst2's 7,667
+# and div_fast's 1,186 — a 7.7x spread inside one opcode, driven purely by operands.
+#
+# Re-derive all of these after any guest change; that is what the nightly drift job
+# and the committed fixtures exist for.
+# Explicit safety bump on the base term, in effective cycles.
+#
+# Pinning the measured rates makes the model accurate rather than conservative:
+# organic MAPE falls 8.85% -> 1.06%, and with the bias gone the residual becomes
+# two-sided, so ~18 of 149 measured batches land fractionally under (worst -1.37%).
+# Raising the asymmetric-loss expectile does not fix that — even tau=0.999 leaves 10
+# batches under, because what remains is noise, not bias.
+#
+# So the conservatism is made EXPLICIT instead of being smuggled in through inflated
+# per-op coefficients. 105,734,000 is 1.25x the worst shortfall observed across all
+# three corpora (84,587,199 cycles, on the 32 kB sha256 batch), and it restores
+# strict over-prediction on every measured batch at a cost of 1.06% -> 3.04% organic
+# MAPE. That is still 3.6x better than the floored table it replaces, and unlike a
+# floor it does not distort any per-axis RATE — which is what has to stay honest for
+# the model to extrapolate to shapes it has never seen.
+#
+# Note what this does and does not cover. It is a CONSTANT, so it protects small
+# batches proportionally more than large ones: at ceiling scale it is only ~0.15%.
+# The scale-proportional residual (worst -1.37% relative) is covered by the seal
+# margin instead, which at 1.05 leaves a 3.6x cushion over it. Do not treat the bump
+# as a substitute for the margin, or the margin as a substitute for the bump.
+SAFETY_BASE_BUMP = 105_734_000
+
+PINNED_RATES = {
+    "arith_cheap_op": 145,
+    "arith_shift_op": 376,
+    "arith_mul_op": 862,
+    "arith_div_op": 9188,
+    "average_op": 219,
+    "near_call_count": 916,
+    "event": 22831,
+    "uma_read": 689,
+    "uma_write": 594,
+    "transient_storage_read": 628,
+    "transient_storage_write": 11832,
+    "far_call": 18141,
+}
+
+# What the isolation corpus says about the OLD floors it replaces. Recorded because
+# the direction was not uniform and two of them were badly wrong:
+#   transient_storage_write  11,000 -> 11,832   floor was nearly right
+#   average_op                  236 ->    219   floor was slightly conservative
+#   far_call                 15,000 -> 18,141   1.21x low (gross). NOTE an earlier
+#     constrained solve read 23,090 by attributing the callee's dispatcher ops to
+#     far_call; the isolated family settles it, and net of the 13.4 cheap + 4.0
+#     context ops each call drags it is ~14,000, i.e. essentially AT the old floor.
+#   transient_storage_read      500 ->    628   1.26x low
+#   near_call_count             236 ->    916   3.9x low
+#   uma_read                     77 ->    689   8.9x low
+#   event                     2,287 -> 22,831   10.0x low
+# None of the four badly-low ones can reach the proving ceiling on its own (0.04x to
+# 0.16x of it within the stock per-batch erg budget), which is why they were survivable
+# — but they were wrong, and now they are measured.
+
+# Floors remain ONLY for axes the isolation corpus does not yet measure. A floor is
+# a guess that can only raise a prediction; a pinned rate is a measurement. Prefer
+# the latter, and retire a floor the moment its family exists.
 OPCODE_FLOORS = {
-    "transient_storage_write": 11000,
-    "transient_storage_read": 500,
-    "average_op": 236,
-    "near_call_count": 236,
-    # --- collinear-zeroed buckets (added 2026-08-19) ------------------------
-    # NNLS prices these at exactly 0 on organic mainnet: each is near-perfectly
-    # collinear with costlier priced work that absorbs its cost (far_call with
-    # near_call_count/storage_read at |r| > 0.99; uma_read with
-    # rich_addressing_op). The TOTAL stays accurate, but a batch DOMINATED by
-    # one bucket is then priced at ~0 on that axis. A zero coefficient is
-    # invisible to every guard: `unpriced_used` keys on a feature's ABSENCE
-    # from the table, not on its value (model.rs:148), and
-    # `extrapolated_features` only watches the rich-addressing share — which a
-    # degenerate flood has none of. Floors only ever RAISE a prediction, so
-    # they are strictly conservative for the seal gate.
-    #
-    # far_call: `far_call r0, r0, @self` is a complete attack iteration at
-    # exactly 183 ergs (STORAGE_READ_IO_PRICE 150 + CALL_LIKE_ERGS_COST 20 +
-    # 8+2+1+1+1; the code-hash sload is inside the 183) with ZERO
-    # rich_addressing_op — the ABI register may be r0 and the exception handler
-    # is a free back-edge. With no batch-level gas cap, ~46 txs x 80M gas reach
-    # ~20M far calls (46*80e6/183 = 20.1M).
-    #
-    # NOT priced at zero before this floor: the Ret<Panic> back-edge bumps
-    # `average_op` (tracer.rs:80, `Opcode::Ret(_) => FeatureId::AverageOp`),
-    # which is floored at 236 — so the flood was under-priced ~15x, not
-    # infinitely. Still load-bearing: at 236 the flood predicts 4.7e9 and the
-    # gate ACCEPTS a batch whose true cost is >=72e9, past the 2^36 budget; at
-    # 15,000 it predicts 300e9 and the gate rejects.
-    #
-    # 15,000 is a deliberately conservative STOPGAP, not a measurement. The
-    # empirical anchors, all well below it:
-    #   6,156  fitted far_call, 49-batch total fit (effective cycles)
-    #   5,794  fitted far_call, 176-batch vm_execution phase fit (raw cycles)
-    #   ~3.6k  measured per-iteration intercept B, the floor a bare iteration
-    #          cannot go below. Across every arm and mode in stackbench
-    #          dos-cycle-test/results/stack-clear/RESULTS.md:134-143 it spans
-    #          3,555-3,755 (dense-master mode 1 = 3,723; S115 = 3,680;
-    #          S124 = 3,607). The pinned v0.6.3 (be1e50b) carries chunked-stack
-    #          machinery (SlotChunk/zeroed_chunk) that the plain dense revs lack
-    #          but does not map cleanly onto one bench arm, so the band — not any
-    #          single arm — is the honest anchor. The cost is the `pointer_flags`
-    #          Bitset reset, NOT Stack::zero, which runs only on pool REUSE.
-    # 15,000 is ~2.4x the highest anchor, chosen to leave headroom for the
-    # per-call work none of these isolate (code-hash storage read, decommit +
-    # program-cache lookups, two heap allocations, 512-byte register wipe).
-    # It is NOT de-staled from the old table's 15,004: a warm far call does no
-    # blake2/keccak, so the ~2.06x delegation speedup never applied to it.
-    # REPLACE WITH A DIRECT MEASUREMENT (~1 day) — this value is not derived
-    # from one, and its closeness to the old coefficient is not evidence.
-    "far_call": 15000,
-    # decommit: the CodeOracle.decommitCode repeat path refunds the ergs but
-    # still re-resolves the bytes O(len) per query (vm_fast/world.rs:237-260),
-    # and `decommit_cycles` does NOT cover it — that counter fires only on a
-    # FRESH decommit. For a 2 MiB contract this value is ~4x under on that
-    # path, and ~70x under on the program_cache-hit rebuild (world.rs:104-115)
-    # an attacker can force with a single far call. Not de-staled either.
+    # decommit: the CodeOracle.decommitCode REPEAT path, which re-resolves the bytes
+    # O(len) per query while `decommit_cycles` fires only on a FRESH decommit. Never
+    # measured — its family was the one deliberately skipped, being the only one that
+    # can trip the pubdata cap and crash-loop the node. It is also, by erg arithmetic,
+    # the one axis besides `div` that can reach the ceiling, so this is the top
+    # remaining gap in the corpus.
     "decommit": 285000,
-    "event": 2287,
-    "uma_read": 77,
-    # --- crypto precompiles: MEASURED 2026-08-21, floors REMOVED ---------
-    # These were pinned literals carried forward from the PRE-delegation guest
-    # because no synthetic set existed for the delegated one. One exists now
-    # (three volume tiers per axis, driven on a local era node, every slope
-    # R^2 >= 0.9965), so they come from `residual_precompile_fit` again and the
-    # floors are gone. Keeping them would defeat the measurement: a floor only
-    # ever RAISES, and the pre-delegation values are 2-16x ABOVE the measured
-    # cost, so they silently overwrote the residual fit — the ec_pairing and
-    # secp256r1 synthetic batches were over-predicted 5.2x and 15.1x with the
-    # floors in place.
-    #
-    # Removing them also makes a refit WITHOUT --precompile-dataset fail closed
-    # rather than ship stale numbers: the organic corpus has zero volume on five
-    # of these, so their coefficients go absent, and absence is what
-    # `unpriced_used` keys on. That is the correct outcome — #107 already made an
-    # unidentifiable `ec_recover_cycles` abort the fit outright.
-    #
-    # Do NOT re-add a literal here. If a future guest change moves these costs,
-    # re-measure (scripts/precompile_calibration + REFIT-RUNBOOK.md); a floor
-    # would mask the change rather than surface it.
-    # --- batch-level buckets the 53-batch corpus zeroes (added 2026-08-21) ---
-    # The reproducible corpus (49x 513xxx + 84730/1/2 + 900065 — everything current
-    # code can decode; see testdata/cycle_model/README.md) is 3.3x smaller than the
-    # 176-batch one, and NNLS answers the extra collinearity by zeroing these two
-    # where the larger fit priced them. Same failure mode the far_call/decommit
-    # floors above address: a zero coefficient is invisible to `unpriced_used`
-    # (which keys on ABSENCE) and to the arithmetic-share half of
-    # `extrapolated_features`, so a batch dominated by either axis is priced at ~0
-    # on it. Neither is in ENVELOPE_FEATURES either, so the volume half does not
-    # cover them.
-    #
-    # ANCHORS, not measurements: both values are the 176-batch fit's own
-    # coefficients, carried forward because that fit had the corpus breadth to
-    # identify them and floors only ever RAISE a prediction. Cost on the
-    # reproducible corpus: MAPE 7.55% -> 10.37%, still strictly over-predicting all
-    # 53 (and better than the 176-batch table's 12.02%, which UNDER-predicted the
-    # three v31 batches by 2.56%).
-    #   - transaction_count: per-tx validation/nonce/refund work. An attacker's
-    #     lever is many minimal txs, and at 0 they are free on this axis.
-    #   - state_diff_count: tree-update work per changed slot. Bounded above by
-    #     merkle_leaf_count (a written slot is a witnessed slot), so it is not
-    #     independently floodable — floored for the zero-coefficient reason, not a
-    #     known vector.
-    # Deliberately NOT floored to the 176-fit values: storage_read/-write,
-    # precompile_call, pubdata_bytes, near_call_count, rich_addressing_op. Those
-    # re-attributed WITHIN a collinear axis rather than to zero, and the axis SUM is
-    # what an attacker pays. Per cold read the two tables agree to 2.7% (fit53
-    # storage_read + storage_application + merkle_leaf = 181,113 vs the 176-fit's
-    # 186,115); per warm read the refit is 2.0x DEARER. Flooring them anyway costs
-    # 28.5-33.7% MAPE for no safety gain; both variants were fit and measured.
+    # Batch-level buckets the 53-batch corpus zeroes: anchors from the 176-batch fit,
+    # carried because that fit had the breadth to identify them. Not measurements.
     "transaction_count": 278015,
     "state_diff_count": 99969,
 }
+
 
 
 def apply_opcode_floors(table: dict) -> list:
@@ -670,7 +644,7 @@ def main():
                          "cost, so a wider sample is strictly better and re-deriving a "
                          "tighter one rejects legitimate batches. The arithmetic-SHARE "
                          "cap is never carried — it is relative to this table's own "
-                         "rich_addressing_op coefficient.")
+                         "arithmetic coefficients.")
     ap.add_argument("--stale-reason", default=None,
                     help="declare the emitted table knowingly stale (why, and what "
                          "must happen before it can be trusted). Required when the "
@@ -723,8 +697,32 @@ def main():
     y = df["effective_cycles"].to_numpy(dtype=float)
     used = [c for c in feature_cols if c in df.columns]
     X = df[used].to_numpy(dtype=float)
-    coeffs, base, r2 = fit_asymmetric(X, y, args.tau)
-    total_table = {c: float(w) for c, w in zip(used, coeffs)}
+    # Measured axes are PINNED: subtract their contribution from the target and fit
+    # only the remainder, so each carries its measured cost exactly once. Flooring
+    # them instead double-counts what the (accurate-in-total) organic fit has already
+    # distributed — 24.33% MAPE against 0.90%. See PINNED_RATES.
+    pinned = {i: PINNED_RATES[c] for i, c in enumerate(used) if c in PINNED_RATES}
+    if pinned:
+        y_free = y - sum(X[:, i] * w for i, w in pinned.items())
+        free = [i for i in range(len(used)) if i not in pinned]
+        coeffs_free, base, r2 = fit_asymmetric(X[:, free], y_free, args.tau)
+        total_table = {used[i]: float(PINNED_RATES[used[i]]) for i in pinned}
+        for j, i in enumerate(free):
+            total_table[used[i]] = float(coeffs_free[j])
+        # r2 above is against the RESIDUAL target, which flatters it; recompute
+        # against the real one so the reported number means what it says.
+        pred = np.array([predict_row(base, total_table, row) for _, row in df.iterrows()])
+        ss_res = float(((y - pred) ** 2).sum())
+        ss_tot = float(((y - y.mean()) ** 2).sum()) or 1.0
+        r2 = 1.0 - ss_res / ss_tot
+        report.append(f"\n## pinned rates (measured, not fitted): {len(pinned)} axes")
+        report.append("| feature | measured cyc/unit |")
+        report.append("|---|---:|")
+        for i, w in sorted(pinned.items(), key=lambda kv: used[kv[0]]):
+            report.append(f"| {used[i]} | {w:,} |")
+    else:
+        coeffs, base, r2 = fit_asymmetric(X, y, args.tau)
+        total_table = {c: float(w) for c, w in zip(used, coeffs)}
     # Add precompile coeffs via residual fit (organic total frozen) so their cost is
     # attributed to the precompile features, not to collinear generic opcodes.
     if pdf is not None:
@@ -736,7 +734,15 @@ def main():
         report.append("|---|---:|")
         for c, w in pc.items():
             report.append(f"| {c} | {w:,.2f} |")
-    # Post-fit safety floors on under-priced opcode buckets (see OPCODE_FLOORS).
+    # Explicit conservatism, applied to the base rather than to any rate (see
+    # SAFETY_BASE_BUMP). Done BEFORE the envelope is derived so the arithmetic-share
+    # denominator is the shipped prediction, not a pre-bump one.
+    base = float(base) + SAFETY_BASE_BUMP
+    report.append(f"\n## safety base bump: +{SAFETY_BASE_BUMP:,} effective cycles")
+    report.append("Restores strict over-prediction after pinning removed the fit's "
+                  "conservative bias; 1.25x the worst measured shortfall.")
+
+    # Post-fit safety floors on axes with no isolated measurement (see OPCODE_FLOORS).
     raised = apply_opcode_floors(total_table)
     if raised:
         report.append("\n## opcode-cost floors applied (adversarial hardening)")
@@ -745,26 +751,18 @@ def main():
         for feat, fitted, floor in raised:
             report.append(f"| {feat} | {fitted:,.2f} | {floor:,.0f} |")
     result["total"] = {"features": total_table, "base": float(base), "r2": r2}
-    # Calibration envelope for the compute-vector guard. rich_addressing_op is left
-    # UNDER-priced (coef ~117 after the 2026-08-19 refit, was ~71, vs true ~236)
-    # because flooring it wrecks organic
-    # accuracy; instead the estimator flags any batch where rich_addressing's SHARE
-    # of the prediction exceeds what organic batches ever reach (absolute count
-    # can't separate them — big mainnet batches have more rich ops than an attack
-    # batch, but carry heavy priced storage that dwarfs it). Such a batch is
-    # compute-dominated and its under-priced arithmetic drives the estimate, so the
-    # gate fails safe. Emit the organic max share as the data-derived basis.
-    crich = total_table.get("rich_addressing_op", 0.0)
-    rich_shares = [
-        crich * row["rich_addressing_op"] / predict_row(base, total_table, row)
-        for _, row in df.iterrows()
-        if predict_row(base, total_table, row) > 0
-    ]
-    # Second half of the envelope: the max organic VALUE of each fenced volume
-    # feature (see ENVELOPE_FEATURES). The share guard above cannot see a flood —
-    # a bytecode/decommit or far-call flood carries almost no arithmetic — so
-    # without these the estimator reports "within calibration" for a batch sitting
-    # 6-15x outside every counter the corpus ever showed.
+    # Calibration envelope, arithmetic half. Post-split this is the WEIGHTED
+    # share of the prediction that the arithmetic classes together contribute, so
+    # a `div` flood drives it far faster than an `add` flood of equal length —
+    # the discrimination an aggregate count could not express. The estimator's
+    # extrapolated_features() sums the same way.
+    arith_cols = [c for c in ARITHMETIC_FEATURES if c in df.columns]
+    arith_shares = []
+    for _, row in df.iterrows():
+        pred = predict_row(base, total_table, row)
+        if pred > 0:
+            weighted = sum(total_table.get(c, 0.0) * row[c] for c in arith_cols)
+            arith_shares.append(weighted / pred)
     # The volume fence may come from a WIDER corpus than the coefficients, via
     # --envelope-from. It is an "what have we ever seen" envelope, not a cost
     # claim: it carries no reproducibility requirement, and a narrow sample fails
@@ -772,8 +770,8 @@ def main():
     # 52/176 = 29.5% of ordinary training batches). So when a refit shrinks the
     # corpus for reproducibility, carrying the old fence forward is strictly
     # better than re-deriving a tighter one. The share half is NOT carried: it is
-    # a ratio against THIS table's own rich_addressing_op coefficient, so a
-    # borrowed value would fence against a coefficient that no longer exists.
+    # a ratio against THIS table's own arithmetic coefficients, so a borrowed
+    # value would fence against coefficients that no longer exist.
     fence = {f: int(df[f].max()) for f in ENVELOPE_FEATURES if f in df.columns}
     fence_source = args.dataset_desc or str(args.dataset)
     if args.envelope_from:
@@ -801,7 +799,7 @@ def main():
             for f, (mine, theirs) in sorted(narrowed.items()):
                 print(f"  {f}: {mine:,} -> {theirs:,}", file=sys.stderr)
     result["calibration"] = {
-        "rich_addressing_share_max": max(rich_shares) if rich_shares else 0.0,
+        "arithmetic_share_max": max(arith_shares) if arith_shares else 0.0,
         "feature_value_max": fence,
         "feature_value_max_source": fence_source,
     }

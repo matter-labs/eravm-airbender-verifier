@@ -1,11 +1,15 @@
 [
  {
   "batch_number": 84730,
-  "raw_cycles": 1062542802,
-  "effective_cycles": 1279026294,
+  "raw_cycles": 1062543163,
+  "effective_cycles": 1279026655,
   "features": {
    "counts": {
-    "rich_addressing_op": 42542,
+    "arith_cheap_op": 36471,
+    "arith_shift_op": 3274,
+    "arith_mul_op": 282,
+    "arith_div_op": 289,
+    "arith_ptr_op": 2226,
     "average_op": 7402,
     "storage_read": 244,
     "storage_write": 142,
@@ -33,11 +37,15 @@
  },
  {
   "batch_number": 84731,
-  "raw_cycles": 1062402229,
-  "effective_cycles": 1278839157,
+  "raw_cycles": 1062402804,
+  "effective_cycles": 1278839732,
   "features": {
    "counts": {
-    "rich_addressing_op": 42542,
+    "arith_cheap_op": 36471,
+    "arith_shift_op": 3274,
+    "arith_mul_op": 282,
+    "arith_div_op": 289,
+    "arith_ptr_op": 2226,
     "average_op": 7402,
     "storage_read": 244,
     "storage_write": 142,
@@ -65,11 +73,15 @@
  },
  {
   "batch_number": 84732,
-  "raw_cycles": 1062552577,
-  "effective_cycles": 1279042621,
+  "raw_cycles": 1062553282,
+  "effective_cycles": 1279043326,
   "features": {
    "counts": {
-    "rich_addressing_op": 42542,
+    "arith_cheap_op": 36471,
+    "arith_shift_op": 3274,
+    "arith_mul_op": 282,
+    "arith_div_op": 289,
+    "arith_ptr_op": 2226,
     "average_op": 7402,
     "storage_read": 244,
     "storage_write": 142,
@@ -97,11 +109,15 @@
  },
  {
   "batch_number": 513601,
-  "raw_cycles": 6797476066,
-  "effective_cycles": 7442074838,
+  "raw_cycles": 6797477286,
+  "effective_cycles": 7442076058,
   "features": {
    "counts": {
-    "rich_addressing_op": 5322271,
+    "arith_cheap_op": 4443129,
+    "arith_shift_op": 470113,
+    "arith_mul_op": 70711,
+    "arith_div_op": 49110,
+    "arith_ptr_op": 289208,
     "average_op": 524222,
     "storage_read": 32344,
     "storage_write": 12555,
@@ -133,11 +149,15 @@
  },
  {
   "batch_number": 513602,
-  "raw_cycles": 7286270271,
-  "effective_cycles": 7846917135,
+  "raw_cycles": 7286283377,
+  "effective_cycles": 7846930241,
   "features": {
    "counts": {
-    "rich_addressing_op": 7023484,
+    "arith_cheap_op": 5809658,
+    "arith_shift_op": 659790,
+    "arith_mul_op": 86259,
+    "arith_div_op": 51395,
+    "arith_ptr_op": 416382,
     "average_op": 576583,
     "storage_read": 33500,
     "storage_write": 10916,
@@ -169,11 +189,15 @@
  },
  {
   "batch_number": 513603,
-  "raw_cycles": 7436573749,
-  "effective_cycles": 7910718341,
+  "raw_cycles": 7436582864,
+  "effective_cycles": 7910727456,
   "features": {
    "counts": {
-    "rich_addressing_op": 7359554,
+    "arith_cheap_op": 6111528,
+    "arith_shift_op": 658595,
+    "arith_mul_op": 113126,
+    "arith_div_op": 92730,
+    "arith_ptr_op": 383575,
     "average_op": 552745,
     "storage_read": 39924,
     "storage_write": 10581,
@@ -205,11 +229,15 @@
  },
  {
   "batch_number": 513604,
-  "raw_cycles": 7012689172,
-  "effective_cycles": 7484214636,
+  "raw_cycles": 7012698207,
+  "effective_cycles": 7484223671,
   "features": {
    "counts": {
-    "rich_addressing_op": 7420474,
+    "arith_cheap_op": 6107090,
+    "arith_shift_op": 675748,
+    "arith_mul_op": 94437,
+    "arith_div_op": 84144,
+    "arith_ptr_op": 459055,
     "average_op": 502675,
     "storage_read": 33048,
     "storage_write": 9294,
@@ -241,11 +269,15 @@
  },
  {
   "batch_number": 513605,
-  "raw_cycles": 7344813019,
-  "effective_cycles": 7883148591,
+  "raw_cycles": 7344790034,
+  "effective_cycles": 7883125606,
   "features": {
    "counts": {
-    "rich_addressing_op": 7099561,
+    "arith_cheap_op": 5882987,
+    "arith_shift_op": 639515,
+    "arith_mul_op": 90192,
+    "arith_div_op": 77715,
+    "arith_ptr_op": 409152,
     "average_op": 591476,
     "storage_read": 35911,
     "storage_write": 11411,
@@ -277,11 +309,15 @@
  },
  {
   "batch_number": 513606,
-  "raw_cycles": 7333995018,
-  "effective_cycles": 7883641954,
+  "raw_cycles": 7334008510,
+  "effective_cycles": 7883655446,
   "features": {
    "counts": {
-    "rich_addressing_op": 7099286,
+    "arith_cheap_op": 5882317,
+    "arith_shift_op": 643483,
+    "arith_mul_op": 82792,
+    "arith_div_op": 69129,
+    "arith_ptr_op": 421565,
     "average_op": 576134,
     "storage_read": 34861,
     "storage_write": 11079,
@@ -313,11 +349,15 @@
  },
  {
   "batch_number": 513607,
-  "raw_cycles": 7590373950,
-  "effective_cycles": 8135437914,
+  "raw_cycles": 7590371519,
+  "effective_cycles": 8135435483,
   "features": {
    "counts": {
-    "rich_addressing_op": 7117076,
+    "arith_cheap_op": 5930321,
+    "arith_shift_op": 627737,
+    "arith_mul_op": 104786,
+    "arith_div_op": 92695,
+    "arith_ptr_op": 361537,
     "average_op": 603130,
     "storage_read": 42442,
     "storage_write": 12798,
@@ -349,11 +389,15 @@
  },
  {
   "batch_number": 513608,
-  "raw_cycles": 6951075531,
-  "effective_cycles": 7403655059,
+  "raw_cycles": 6951064362,
+  "effective_cycles": 7403643890,
   "features": {
    "counts": {
-    "rich_addressing_op": 7448659,
+    "arith_cheap_op": 6185264,
+    "arith_shift_op": 667945,
+    "arith_mul_op": 97691,
+    "arith_div_op": 80167,
+    "arith_ptr_op": 417592,
     "average_op": 555760,
     "storage_read": 37321,
     "storage_write": 10205,
@@ -385,11 +429,15 @@
  },
  {
   "batch_number": 513609,
-  "raw_cycles": 6596930089,
-  "effective_cycles": 7198825913,
+  "raw_cycles": 6596924501,
+  "effective_cycles": 7198820325,
   "features": {
    "counts": {
-    "rich_addressing_op": 5257381,
+    "arith_cheap_op": 4357246,
+    "arith_shift_op": 475772,
+    "arith_mul_op": 53807,
+    "arith_div_op": 41038,
+    "arith_ptr_op": 329518,
     "average_op": 484513,
     "storage_read": 25894,
     "storage_write": 10697,
@@ -421,11 +469,15 @@
  },
  {
   "batch_number": 513610,
-  "raw_cycles": 4103919396,
-  "effective_cycles": 4569247860,
+  "raw_cycles": 4103918039,
+  "effective_cycles": 4569246503,
   "features": {
    "counts": {
-    "rich_addressing_op": 2578507,
+    "arith_cheap_op": 2134236,
+    "arith_shift_op": 230198,
+    "arith_mul_op": 26398,
+    "arith_div_op": 17038,
+    "arith_ptr_op": 170637,
     "average_op": 247179,
     "storage_read": 11672,
     "storage_write": 5226,
@@ -457,11 +509,15 @@
  },
  {
   "batch_number": 513611,
-  "raw_cycles": 4111713708,
-  "effective_cycles": 4574346784,
+  "raw_cycles": 4111718964,
+  "effective_cycles": 4574352040,
   "features": {
    "counts": {
-    "rich_addressing_op": 2485980,
+    "arith_cheap_op": 2057705,
+    "arith_shift_op": 223899,
+    "arith_mul_op": 16766,
+    "arith_div_op": 12133,
+    "arith_ptr_op": 175477,
     "average_op": 243099,
     "storage_read": 11103,
     "storage_write": 5133,
@@ -493,11 +549,15 @@
  },
  {
   "batch_number": 513612,
-  "raw_cycles": 4800327051,
-  "effective_cycles": 5321461619,
+  "raw_cycles": 4800329472,
+  "effective_cycles": 5321464040,
   "features": {
    "counts": {
-    "rich_addressing_op": 3581980,
+    "arith_cheap_op": 2944632,
+    "arith_shift_op": 329802,
+    "arith_mul_op": 32501,
+    "arith_div_op": 19837,
+    "arith_ptr_op": 255208,
     "average_op": 308248,
     "storage_read": 15305,
     "storage_write": 6515,
@@ -529,11 +589,15 @@
  },
  {
   "batch_number": 513613,
-  "raw_cycles": 4249383833,
-  "effective_cycles": 4749084217,
+  "raw_cycles": 4249386258,
+  "effective_cycles": 4749086642,
   "features": {
    "counts": {
-    "rich_addressing_op": 2853650,
+    "arith_cheap_op": 2367011,
+    "arith_shift_op": 254050,
+    "arith_mul_op": 25927,
+    "arith_div_op": 18073,
+    "arith_ptr_op": 188589,
     "average_op": 289726,
     "storage_read": 13532,
     "storage_write": 6195,
@@ -565,11 +629,15 @@
  },
  {
   "batch_number": 513614,
-  "raw_cycles": 4413263895,
-  "effective_cycles": 4905550655,
+  "raw_cycles": 4413261546,
+  "effective_cycles": 4905548306,
   "features": {
    "counts": {
-    "rich_addressing_op": 2955473,
+    "arith_cheap_op": 2453799,
+    "arith_shift_op": 264769,
+    "arith_mul_op": 27890,
+    "arith_div_op": 18735,
+    "arith_ptr_op": 190280,
     "average_op": 290894,
     "storage_read": 14916,
     "storage_write": 6231,
@@ -601,11 +669,15 @@
  },
  {
   "batch_number": 513615,
-  "raw_cycles": 8077278312,
-  "effective_cycles": 8766567872,
+  "raw_cycles": 8077294337,
+  "effective_cycles": 8766583897,
   "features": {
    "counts": {
-    "rich_addressing_op": 6577338,
+    "arith_cheap_op": 5434104,
+    "arith_shift_op": 608511,
+    "arith_mul_op": 76249,
+    "arith_div_op": 51814,
+    "arith_ptr_op": 406660,
     "average_op": 547375,
     "storage_read": 35118,
     "storage_write": 12604,
@@ -637,11 +709,15 @@
  },
  {
   "batch_number": 513616,
-  "raw_cycles": 7878679366,
-  "effective_cycles": 8472046942,
+  "raw_cycles": 7878678574,
+  "effective_cycles": 8472046150,
   "features": {
    "counts": {
-    "rich_addressing_op": 6946230,
+    "arith_cheap_op": 5780010,
+    "arith_shift_op": 645754,
+    "arith_mul_op": 112750,
+    "arith_div_op": 73948,
+    "arith_ptr_op": 333768,
     "average_op": 590728,
     "storage_read": 47425,
     "storage_write": 15274,
@@ -673,11 +749,15 @@
  },
  {
   "batch_number": 513617,
-  "raw_cycles": 8214264470,
-  "effective_cycles": 8880846862,
+  "raw_cycles": 8214262407,
+  "effective_cycles": 8880844799,
   "features": {
    "counts": {
-    "rich_addressing_op": 6568401,
+    "arith_cheap_op": 5486111,
+    "arith_shift_op": 586538,
+    "arith_mul_op": 106317,
+    "arith_div_op": 74657,
+    "arith_ptr_op": 314778,
     "average_op": 548781,
     "storage_read": 42395,
     "storage_write": 14521,
@@ -709,11 +789,15 @@
  },
  {
   "batch_number": 513618,
-  "raw_cycles": 7786150773,
-  "effective_cycles": 8455121121,
+  "raw_cycles": 7786150929,
+  "effective_cycles": 8455121277,
   "features": {
    "counts": {
-    "rich_addressing_op": 6568119,
+    "arith_cheap_op": 5437685,
+    "arith_shift_op": 602792,
+    "arith_mul_op": 97071,
+    "arith_div_op": 60299,
+    "arith_ptr_op": 370272,
     "average_op": 544991,
     "storage_read": 35891,
     "storage_write": 12308,
@@ -745,11 +829,15 @@
  },
  {
   "batch_number": 513619,
-  "raw_cycles": 4672606680,
-  "effective_cycles": 5164047368,
+  "raw_cycles": 4672616261,
+  "effective_cycles": 5164056949,
   "features": {
    "counts": {
-    "rich_addressing_op": 3074296,
+    "arith_cheap_op": 2541239,
+    "arith_shift_op": 280785,
+    "arith_mul_op": 22843,
+    "arith_div_op": 16090,
+    "arith_ptr_op": 213339,
     "average_op": 269123,
     "storage_read": 13850,
     "storage_write": 5684,
@@ -781,11 +869,15 @@
  },
  {
   "batch_number": 513620,
-  "raw_cycles": 4590745907,
-  "effective_cycles": 5082495599,
+  "raw_cycles": 4590773118,
+  "effective_cycles": 5082522810,
   "features": {
    "counts": {
-    "rich_addressing_op": 2992393,
+    "arith_cheap_op": 2479888,
+    "arith_shift_op": 269378,
+    "arith_mul_op": 29748,
+    "arith_div_op": 21076,
+    "arith_ptr_op": 192303,
     "average_op": 273115,
     "storage_read": 14900,
     "storage_write": 6074,
@@ -817,11 +909,15 @@
  },
  {
   "batch_number": 513621,
-  "raw_cycles": 4755042615,
-  "effective_cycles": 5252996639,
+  "raw_cycles": 4755043683,
+  "effective_cycles": 5252997707,
   "features": {
    "counts": {
-    "rich_addressing_op": 3781460,
+    "arith_cheap_op": 3109279,
+    "arith_shift_op": 348551,
+    "arith_mul_op": 32957,
+    "arith_div_op": 22305,
+    "arith_ptr_op": 268368,
     "average_op": 308226,
     "storage_read": 16246,
     "storage_write": 6497,
@@ -853,11 +949,15 @@
  },
  {
   "batch_number": 513622,
-  "raw_cycles": 5707804966,
-  "effective_cycles": 6251600382,
+  "raw_cycles": 5707815137,
+  "effective_cycles": 6251610553,
   "features": {
    "counts": {
-    "rich_addressing_op": 4012702,
+    "arith_cheap_op": 3321596,
+    "arith_shift_op": 363626,
+    "arith_mul_op": 38762,
+    "arith_div_op": 26833,
+    "arith_ptr_op": 261885,
     "average_op": 353645,
     "storage_read": 20286,
     "storage_write": 7632,
@@ -889,11 +989,15 @@
  },
  {
   "batch_number": 513623,
-  "raw_cycles": 6168352044,
-  "effective_cycles": 6760566012,
+  "raw_cycles": 6168360361,
+  "effective_cycles": 6760574329,
   "features": {
    "counts": {
-    "rich_addressing_op": 4164738,
+    "arith_cheap_op": 3466853,
+    "arith_shift_op": 371553,
+    "arith_mul_op": 52183,
+    "arith_div_op": 38010,
+    "arith_ptr_op": 236139,
     "average_op": 394077,
     "storage_read": 24780,
     "storage_write": 9741,
@@ -925,11 +1029,15 @@
  },
  {
   "batch_number": 513624,
-  "raw_cycles": 4765936508,
-  "effective_cycles": 5258877272,
+  "raw_cycles": 4765950273,
+  "effective_cycles": 5258891037,
   "features": {
    "counts": {
-    "rich_addressing_op": 3096269,
+    "arith_cheap_op": 2555212,
+    "arith_shift_op": 277454,
+    "arith_mul_op": 42139,
+    "arith_div_op": 29259,
+    "arith_ptr_op": 192205,
     "average_op": 274599,
     "storage_read": 15026,
     "storage_write": 6091,
@@ -961,11 +1069,15 @@
  },
  {
   "batch_number": 513625,
-  "raw_cycles": 7716654049,
-  "effective_cycles": 8402611445,
+  "raw_cycles": 7716635663,
+  "effective_cycles": 8402593059,
   "features": {
    "counts": {
-    "rich_addressing_op": 5981418,
+    "arith_cheap_op": 4983265,
+    "arith_shift_op": 536122,
+    "arith_mul_op": 80645,
+    "arith_div_op": 60366,
+    "arith_ptr_op": 321020,
     "average_op": 557659,
     "storage_read": 37151,
     "storage_write": 13448,
@@ -997,11 +1109,15 @@
  },
  {
   "batch_number": 513626,
-  "raw_cycles": 3891153312,
-  "effective_cycles": 4331990904,
+  "raw_cycles": 3891157016,
+  "effective_cycles": 4331994608,
   "features": {
    "counts": {
-    "rich_addressing_op": 2934314,
+    "arith_cheap_op": 2394000,
+    "arith_shift_op": 276899,
+    "arith_mul_op": 23394,
+    "arith_div_op": 13361,
+    "arith_ptr_op": 226660,
     "average_op": 219005,
     "storage_read": 11229,
     "storage_write": 4497,
@@ -1033,11 +1149,15 @@
  },
  {
   "batch_number": 513627,
-  "raw_cycles": 5761440615,
-  "effective_cycles": 6311375575,
+  "raw_cycles": 5761437859,
+  "effective_cycles": 6311372819,
   "features": {
    "counts": {
-    "rich_addressing_op": 3938810,
+    "arith_cheap_op": 3284784,
+    "arith_shift_op": 353020,
+    "arith_mul_op": 54612,
+    "arith_div_op": 36391,
+    "arith_ptr_op": 210003,
     "average_op": 374856,
     "storage_read": 24913,
     "storage_write": 9084,
@@ -1069,11 +1189,15 @@
  },
  {
   "batch_number": 513628,
-  "raw_cycles": 7653854988,
-  "effective_cycles": 8336162616,
+  "raw_cycles": 7653855663,
+  "effective_cycles": 8336163291,
   "features": {
    "counts": {
-    "rich_addressing_op": 5439756,
+    "arith_cheap_op": 4531806,
+    "arith_shift_op": 489311,
+    "arith_mul_op": 68622,
+    "arith_div_op": 50216,
+    "arith_ptr_op": 299801,
     "average_op": 512838,
     "storage_read": 33138,
     "storage_write": 11861,
@@ -1105,11 +1229,15 @@
  },
  {
   "batch_number": 513629,
-  "raw_cycles": 5815061689,
-  "effective_cycles": 6372000393,
+  "raw_cycles": 5815067912,
+  "effective_cycles": 6372006616,
   "features": {
    "counts": {
-    "rich_addressing_op": 3873081,
+    "arith_cheap_op": 3212194,
+    "arith_shift_op": 349371,
+    "arith_mul_op": 43276,
+    "arith_div_op": 29807,
+    "arith_ptr_op": 238433,
     "average_op": 357390,
     "storage_read": 20082,
     "storage_write": 8020,
@@ -1141,11 +1269,15 @@
  },
  {
   "batch_number": 513630,
-  "raw_cycles": 6624886544,
-  "effective_cycles": 7217570056,
+  "raw_cycles": 6624889685,
+  "effective_cycles": 7217573197,
   "features": {
    "counts": {
-    "rich_addressing_op": 4495545,
+    "arith_cheap_op": 3707403,
+    "arith_shift_op": 409548,
+    "arith_mul_op": 47821,
+    "arith_div_op": 35937,
+    "arith_ptr_op": 294836,
     "average_op": 397075,
     "storage_read": 24278,
     "storage_write": 8897,
@@ -1177,11 +1309,15 @@
  },
  {
   "batch_number": 513631,
-  "raw_cycles": 4394038673,
-  "effective_cycles": 4860311229,
+  "raw_cycles": 4394045521,
+  "effective_cycles": 4860318077,
   "features": {
    "counts": {
-    "rich_addressing_op": 2580713,
+    "arith_cheap_op": 2140870,
+    "arith_shift_op": 231245,
+    "arith_mul_op": 22434,
+    "arith_div_op": 16099,
+    "arith_ptr_op": 170065,
     "average_op": 246075,
     "storage_read": 12474,
     "storage_write": 5501,
@@ -1213,11 +1349,15 @@
  },
  {
   "batch_number": 513632,
-  "raw_cycles": 6403997679,
-  "effective_cycles": 6973445479,
+  "raw_cycles": 6404018537,
+  "effective_cycles": 6973466337,
   "features": {
    "counts": {
-    "rich_addressing_op": 4702153,
+    "arith_cheap_op": 3888106,
+    "arith_shift_op": 428893,
+    "arith_mul_op": 52197,
+    "arith_div_op": 38225,
+    "arith_ptr_op": 294732,
     "average_op": 393861,
     "storage_read": 24325,
     "storage_write": 8917,
@@ -1249,11 +1389,15 @@
  },
  {
   "batch_number": 513633,
-  "raw_cycles": 5607585675,
-  "effective_cycles": 6139114923,
+  "raw_cycles": 5607593260,
+  "effective_cycles": 6139122508,
   "features": {
    "counts": {
-    "rich_addressing_op": 4157193,
+    "arith_cheap_op": 3414376,
+    "arith_shift_op": 388920,
+    "arith_mul_op": 44318,
+    "arith_div_op": 29274,
+    "arith_ptr_op": 280305,
     "average_op": 327393,
     "storage_read": 19903,
     "storage_write": 7078,
@@ -1285,11 +1429,15 @@
  },
  {
   "batch_number": 513634,
-  "raw_cycles": 5393561456,
-  "effective_cycles": 5920924868,
+  "raw_cycles": 5393553765,
+  "effective_cycles": 5920917177,
   "features": {
    "counts": {
-    "rich_addressing_op": 4207332,
+    "arith_cheap_op": 3465039,
+    "arith_shift_op": 386737,
+    "arith_mul_op": 46289,
+    "arith_div_op": 29695,
+    "arith_ptr_op": 279572,
     "average_op": 345645,
     "storage_read": 19832,
     "storage_write": 7945,
@@ -1321,11 +1469,15 @@
  },
  {
   "batch_number": 513635,
-  "raw_cycles": 4278485716,
-  "effective_cycles": 4725612276,
+  "raw_cycles": 4278491653,
+  "effective_cycles": 4725618213,
   "features": {
    "counts": {
-    "rich_addressing_op": 2735397,
+    "arith_cheap_op": 2253744,
+    "arith_shift_op": 249194,
+    "arith_mul_op": 27663,
+    "arith_div_op": 19094,
+    "arith_ptr_op": 185702,
     "average_op": 240005,
     "storage_read": 12083,
     "storage_write": 5049,
@@ -1357,11 +1509,15 @@
  },
  {
   "batch_number": 513636,
-  "raw_cycles": 5787274876,
-  "effective_cycles": 6365780748,
+  "raw_cycles": 5787282744,
+  "effective_cycles": 6365788616,
   "features": {
    "counts": {
-    "rich_addressing_op": 3972499,
+    "arith_cheap_op": 3318991,
+    "arith_shift_op": 349167,
+    "arith_mul_op": 46825,
+    "arith_div_op": 32138,
+    "arith_ptr_op": 225378,
     "average_op": 399396,
     "storage_read": 22286,
     "storage_write": 9160,
@@ -1393,11 +1549,15 @@
  },
  {
   "batch_number": 513637,
-  "raw_cycles": 5114688113,
-  "effective_cycles": 5651122197,
+  "raw_cycles": 5114678922,
+  "effective_cycles": 5651113006,
   "features": {
    "counts": {
-    "rich_addressing_op": 3469642,
+    "arith_cheap_op": 2897504,
+    "arith_shift_op": 304450,
+    "arith_mul_op": 27228,
+    "arith_div_op": 21130,
+    "arith_ptr_op": 219330,
     "average_op": 390129,
     "storage_read": 16907,
     "storage_write": 8271,
@@ -1429,11 +1589,15 @@
  },
  {
   "batch_number": 513638,
-  "raw_cycles": 5259940712,
-  "effective_cycles": 5815230380,
+  "raw_cycles": 5259936511,
+  "effective_cycles": 5815226179,
   "features": {
    "counts": {
-    "rich_addressing_op": 3685379,
+    "arith_cheap_op": 3065621,
+    "arith_shift_op": 325992,
+    "arith_mul_op": 36344,
+    "arith_div_op": 26160,
+    "arith_ptr_op": 231262,
     "average_op": 378174,
     "storage_read": 18264,
     "storage_write": 8120,
@@ -1465,11 +1629,15 @@
  },
  {
   "batch_number": 513639,
-  "raw_cycles": 4798027844,
-  "effective_cycles": 5273509776,
+  "raw_cycles": 4798015799,
+  "effective_cycles": 5273497731,
   "features": {
    "counts": {
-    "rich_addressing_op": 3240040,
+    "arith_cheap_op": 2672864,
+    "arith_shift_op": 296885,
+    "arith_mul_op": 26863,
+    "arith_div_op": 19335,
+    "arith_ptr_op": 224093,
     "average_op": 289725,
     "storage_read": 14073,
     "storage_write": 6204,
@@ -1501,11 +1669,15 @@
  },
  {
   "batch_number": 513640,
-  "raw_cycles": 3530421213,
-  "effective_cycles": 3951310397,
+  "raw_cycles": 3530416252,
+  "effective_cycles": 3951305436,
   "features": {
    "counts": {
-    "rich_addressing_op": 2360852,
+    "arith_cheap_op": 1946346,
+    "arith_shift_op": 214029,
+    "arith_mul_op": 15530,
+    "arith_div_op": 11515,
+    "arith_ptr_op": 173432,
     "average_op": 207601,
     "storage_read": 9624,
     "storage_write": 4348,
@@ -1537,11 +1709,15 @@
  },
  {
   "batch_number": 513641,
-  "raw_cycles": 5379749764,
-  "effective_cycles": 5876606692,
+  "raw_cycles": 5379765217,
+  "effective_cycles": 5876622145,
   "features": {
    "counts": {
-    "rich_addressing_op": 3257439,
+    "arith_cheap_op": 2696268,
+    "arith_shift_op": 291488,
+    "arith_mul_op": 47181,
+    "arith_div_op": 32975,
+    "arith_ptr_op": 189527,
     "average_op": 304284,
     "storage_read": 17346,
     "storage_write": 7151,
@@ -1573,11 +1749,15 @@
  },
  {
   "batch_number": 513642,
-  "raw_cycles": 7605368622,
-  "effective_cycles": 8266355854,
+  "raw_cycles": 7605366056,
+  "effective_cycles": 8266353288,
   "features": {
    "counts": {
-    "rich_addressing_op": 6669414,
+    "arith_cheap_op": 5495861,
+    "arith_shift_op": 616816,
+    "arith_mul_op": 73808,
+    "arith_div_op": 50254,
+    "arith_ptr_op": 432675,
     "average_op": 527439,
     "storage_read": 32384,
     "storage_write": 12379,
@@ -1609,11 +1789,15 @@
  },
  {
   "batch_number": 513643,
-  "raw_cycles": 7793887496,
-  "effective_cycles": 8463848852,
+  "raw_cycles": 7793898467,
+  "effective_cycles": 8463859823,
   "features": {
    "counts": {
-    "rich_addressing_op": 6487928,
+    "arith_cheap_op": 5374917,
+    "arith_shift_op": 594389,
+    "arith_mul_op": 68705,
+    "arith_div_op": 47336,
+    "arith_ptr_op": 402581,
     "average_op": 541626,
     "storage_read": 33341,
     "storage_write": 11767,
@@ -1645,11 +1829,15 @@
  },
  {
   "batch_number": 513644,
-  "raw_cycles": 7219905366,
-  "effective_cycles": 7847385194,
+  "raw_cycles": 7219895002,
+  "effective_cycles": 7847374830,
   "features": {
    "counts": {
-    "rich_addressing_op": 6804033,
+    "arith_cheap_op": 5588801,
+    "arith_shift_op": 635091,
+    "arith_mul_op": 65162,
+    "arith_div_op": 43030,
+    "arith_ptr_op": 471949,
     "average_op": 524238,
     "storage_read": 29735,
     "storage_write": 11913,
@@ -1681,11 +1869,15 @@
  },
  {
   "batch_number": 513645,
-  "raw_cycles": 7803564594,
-  "effective_cycles": 8468391114,
+  "raw_cycles": 7803562698,
+  "effective_cycles": 8468389218,
   "features": {
    "counts": {
-    "rich_addressing_op": 6611848,
+    "arith_cheap_op": 5469267,
+    "arith_shift_op": 606896,
+    "arith_mul_op": 88072,
+    "arith_div_op": 61033,
+    "arith_ptr_op": 386580,
     "average_op": 580116,
     "storage_read": 37459,
     "storage_write": 14846,
@@ -1717,11 +1909,15 @@
  },
  {
   "batch_number": 513646,
-  "raw_cycles": 6524188890,
-  "effective_cycles": 7150308318,
+  "raw_cycles": 6524205428,
+  "effective_cycles": 7150324856,
   "features": {
    "counts": {
-    "rich_addressing_op": 4529006,
+    "arith_cheap_op": 3780865,
+    "arith_shift_op": 400012,
+    "arith_mul_op": 51582,
+    "arith_div_op": 37399,
+    "arith_ptr_op": 259148,
     "average_op": 491930,
     "storage_read": 25230,
     "storage_write": 10931,
@@ -1753,11 +1949,15 @@
  },
  {
   "batch_number": 513647,
-  "raw_cycles": 8205195652,
-  "effective_cycles": 8933566412,
+  "raw_cycles": 8205191832,
+  "effective_cycles": 8933562592,
   "features": {
    "counts": {
-    "rich_addressing_op": 6410789,
+    "arith_cheap_op": 5324425,
+    "arith_shift_op": 577480,
+    "arith_mul_op": 88619,
+    "arith_div_op": 60380,
+    "arith_ptr_op": 359885,
     "average_op": 600406,
     "storage_read": 37526,
     "storage_write": 14469,
@@ -1789,11 +1989,15 @@
  },
  {
   "batch_number": 513648,
-  "raw_cycles": 6773408531,
-  "effective_cycles": 7414958383,
+  "raw_cycles": 6773409369,
+  "effective_cycles": 7414959221,
   "features": {
    "counts": {
-    "rich_addressing_op": 5175301,
+    "arith_cheap_op": 4273399,
+    "arith_shift_op": 474007,
+    "arith_mul_op": 60279,
+    "arith_div_op": 41244,
+    "arith_ptr_op": 326372,
     "average_op": 432177,
     "storage_read": 26726,
     "storage_write": 10352,
@@ -1825,11 +2029,15 @@
  },
  {
   "batch_number": 513649,
-  "raw_cycles": 6129471465,
-  "effective_cycles": 6733447689,
+  "raw_cycles": 6129472326,
+  "effective_cycles": 6733448550,
   "features": {
    "counts": {
-    "rich_addressing_op": 4656645,
+    "arith_cheap_op": 3857791,
+    "arith_shift_op": 420813,
+    "arith_mul_op": 47271,
+    "arith_div_op": 32760,
+    "arith_ptr_op": 298010,
     "average_op": 442787,
     "storage_read": 23369,
     "storage_write": 9783,
@@ -1861,11 +2069,15 @@
  },
  {
   "batch_number": 900065,
-  "raw_cycles": 20632543771,
-  "effective_cycles": 26600598671,
+  "raw_cycles": 20632565225,
+  "effective_cycles": 26600620125,
   "features": {
    "counts": {
-    "rich_addressing_op": 583686,
+    "arith_cheap_op": 580309,
+    "arith_shift_op": 1938,
+    "arith_mul_op": 137,
+    "arith_div_op": 139,
+    "arith_ptr_op": 1163,
     "average_op": 4007,
     "storage_read": 140128,
     "storage_write": 83,

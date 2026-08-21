@@ -1,0 +1,191 @@
+[
+ {
+  "batch_number": 900103,
+  "label": "add_flood",
+  "family": "add",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900143,
+  "label": "bitwise_flood",
+  "family": "bitwise",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900121,
+  "label": "context_flood",
+  "family": "context",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900168,
+  "label": "div_fast_flood",
+  "family": "div_fast",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900176,
+  "label": "div_worst2_flood",
+  "family": "div_worst2",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900132,
+  "label": "evt_flood",
+  "family": "evt",
+  "tier": "ctrl",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900125,
+  "label": "farcall_flood",
+  "family": "farcall",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900172,
+  "label": "jump_flood",
+  "family": "jump",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900147,
+  "label": "mul_flood",
+  "family": "mul",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900129,
+  "label": "nearcall_flood",
+  "family": "nearcall",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900160,
+  "label": "rotate_flood",
+  "family": "rotate",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900152,
+  "label": "shift_flood",
+  "family": "shift",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900156,
+  "label": "shift_m_flood",
+  "family": "shift_m",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900107,
+  "label": "sub_flood",
+  "family": "sub",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900117,
+  "label": "tread_flood",
+  "family": "tread",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900113,
+  "label": "twrite_flood",
+  "family": "twrite",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900135,
+  "label": "umaread_flood",
+  "family": "umaread",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900139,
+  "label": "umawrite_flood",
+  "family": "umawrite",
+  "tier": "t3",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1078,
+  "label": "mod_exp_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1080,
+  "label": "ec_add_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1082,
+  "label": "ec_mul_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1084,
+  "label": "ec_pairing_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1086,
+  "label": "secp256r1_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1094,
+  "label": "ec_recover_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1092,
+  "label": "sha256_flood",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 1061,
+  "label": "div_flood_orig",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ },
+ {
+  "batch_number": 900065,
+  "label": "storage_reads_140k",
+  "family": "crypto/slot",
+  "tier": "max",
+  "adversarial": true
+ }
+]

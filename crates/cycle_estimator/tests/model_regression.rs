@@ -35,10 +35,27 @@ use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/measured_corpus.json");
 
-// MAPE here is 10.37% / max 12.55%, entirely OVER-prediction (min +0.02%), and
-// dominated by the cost floors rather than fit error — the unfloored fit scores
-// 7.55%, and the two batch-level floors added on 2026-08-21 (transaction_count,
-// state_diff_count) account for the difference.
+// MAPE here is 3.04% / max 8.19%, entirely OVER-prediction (min +0.40%) — down from
+// 10.90% on the pre-split, pre-pinning table. Two changes did that, and neither was
+// a tuning tweak:
+//
+//   * the arithmetic bucket was SPLIT, so one coefficient no longer has to serve a
+//     67x cost spread (`jump` 102 to `div` 9,188 cyc/op); and
+//   * twelve axes are now PINNED at rates measured on the isolation corpus rather
+//     than fitted, which takes the raw fit to MAPE 1.06%.
+//
+// What is left is not fit error. It is `SAFETY_BASE_BUMP`: pinning removed the
+// deliberate conservative bias along with the inaccuracy, so ~18 of 149 measured
+// batches landed fractionally under (worst -1.37%), and raising the expectile does
+// not fix that — even tau=0.999 leaves 10 under, because the residual is noise
+// rather than bias. So the conservatism is now an explicit constant on the base,
+// sized at 1.25x the worst measured shortfall, which restores strict over-prediction
+// across all 149 batches at a cost of 1.06% -> 3.04%.
+//
+// The distinction matters for what this test can tell you: the margin between
+// prediction and actual is no longer inflated per-op coefficients, so the per-axis
+// RATES are honest and the model extrapolates to shapes it has never seen. A 9%
+// systematic over-prediction on organic batches told you nothing about a div flood.
 //
 // So the absolute bound has to be loose, which makes it useless as a safety
 // check: a 10%-UNDER table would pass it. MAX_UNDER_PCT is the one that matters,
@@ -57,8 +74,8 @@ const FIXTURE: &str = include_str!("fixtures/measured_corpus.json");
 // ~1.28e9-cycle workload measured three times, not three data points, and 900065
 // is synthetic. Widen the fixture when a real v31 corpus exists
 // (docs/generating-batches.md).
-const MAX_MAPE_PCT: f64 = 11.5;
-const MAX_SINGLE_ERR_PCT: f64 = 14.0;
+const MAX_MAPE_PCT: f64 = 4.0;
+const MAX_SINGLE_ERR_PCT: f64 = 10.0;
 const MAX_UNDER_PCT: f64 = 0.0;
 
 #[derive(Deserialize)]
