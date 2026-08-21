@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::estimator::CycleEstimate;
-use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES};
+use crate::features::{FeatureId, FeatureVector, SAFETY_CRITICAL_FEATURES, VM_TRACE_FEATURES};
 
 /// The committed cost table, embedded at compile time. Public so external
 /// consumers (e.g. zksync-era's in-tree cycle-estimator tracer) can source the
@@ -47,32 +47,152 @@ impl LinearModel {
 }
 
 /// Calibration envelope emitted by the fit, used by the extrapolation guard.
+///
+/// `deny_unknown_fields` is load-bearing, not tidiness: every field here defaults
+/// to a value that DISABLES its guard, so a typo or a rename in the emitted table
+/// (`feature_value_maxx`) would parse cleanly and silently unfence everything. An
+/// unknown key must fail the build instead — the same reasoning that makes an
+/// unknown `FeatureId` a hard parse error.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Calibration {
-    /// Largest share of the TOTAL prediction that `rich_addressing_op` contributed
-    /// in any organic training batch. `rich_addressing_op` is intentionally
-    /// under-priced (see [`SAFETY_CRITICAL_FEATURES`] docs and the fit script's
-    /// OPCODE_FLOORS note), so a batch whose arithmetic drives the estimate beyond
-    /// this envelope is compute-dominated and must fail safe.
+    /// Largest share of the TOTAL prediction that `rich_addressing_op` reached in
+    /// any organic training batch. It is intentionally under-priced (see the fit
+    /// script's OPCODE_FLOORS note), so a batch whose arithmetic drives the
+    /// estimate past this envelope is compute-dominated and must fail safe.
+    ///
+    /// **Do not retire this guard** until the frame-churn / pooled-stack-clear
+    /// vector has a cost feature of its own. It is the only thing rejecting that
+    /// attack today (36.5× under-predicted per iteration on vm2 v0.6.0, 46.1×
+    /// under vm2 #124), and it does so *incidentally* — via the cheap arithmetic
+    /// the attack must run, not via anything modelled. `feature_value_max` does
+    /// not cover it: stack-clear cost is a function of host-cache history, not of
+    /// any counter in the schema.
     #[serde(default)]
     pub rich_addressing_share_max: f64,
+    /// Largest raw value each fenced feature reached in the calibration corpus. A
+    /// linear model says nothing about a batch far outside it, and the shapes that
+    /// get there are adversarial by construction. Values above
+    /// `value × VOLUME_EXTRAPOLATION_FACTOR` are flagged by
+    /// [`CostModel::extrapolated_features`], which declines to certify rather than
+    /// prices.
+    ///
+    /// Against the committed 176-batch fence: a fresh decommit flood sits 8.2×
+    /// beyond the `decommit_cycles` max, a repeat-decode thrash 3.6×. A bare
+    /// far-call flood is fenced only at batch scale — one 80M-gas tx reaches
+    /// ~437k calls, under the 859,529 trip; two exceed it, and a full batch sits
+    /// ~23× over. The unfenced single-tx case needs no fence: the `far_call` floor
+    /// over-prices it 2.4–4.0× against the measured per-call anchors. Two more
+    /// gaps to preserve when re-deriving:
+    /// - The `decommit_cycles` fence covers the thrash only while the program
+    ///   cache is unbounded, or capped well above organic decommit volume
+    ///   (~19.4 MB). A small cache cap would let a thrash hide inside it.
+    /// - Repeat `World::decommit_code` queries move no counter at all (see the
+    ///   crate-level premises).
+    #[serde(default)]
+    pub feature_value_max: BTreeMap<FeatureId, u64>,
+    /// Which corpus `feature_value_max` came from — the envelope is only as wide
+    /// as its sample. A narrow one fails *closed* (batches seal early), but
+    /// expensively: fences derived from the 49-row fixture flagged 52/176 = 29.5%
+    /// of ordinary training batches.
+    #[serde(default)]
+    pub feature_value_max_source: Option<String>,
 }
 
-/// Multiplier applied to the calibration envelope before flagging extrapolation —
-/// headroom so ordinary organic variance never trips the guard.
+/// Identity of the guest/verifier the table was calibrated against.
 ///
-/// ⚠️ The 2026-08-19 delegation refit WIDENED this envelope 2.73×:
-/// `rich_addressing_share_max` went 0.0423 → 0.1154, moving the trip point from
-/// ~7.6% to ~20.8%. The previous note here ("organic max ~4.5%, trip point ~8%,
-/// every measured compute-attack batch is 11–56%") no longer holds — a batch in
-/// the 11–20.8% band now passes the guard where it used to trip. Observed effect:
-/// the `mem_high` adversarial fixture batch flipped `in_cal=false` → `in_cal=true`
-/// (it stays covered, so no invariant breaks, but the margin is gone). The
-/// widening is a genuine property of the 176-batch corpus, not a bug — organic
-/// arithmetic share really is higher on the delegation guest, because delegating
-/// blake2/keccak shrinks the non-arithmetic denominator. Revisit whether 1.8 is
-/// still the right factor against the wider envelope.
-const EXTRAPOLATION_FACTOR: f64 = 1.8;
+/// Without it a stale table is invisible: the table models one specific guest
+/// binary, and every guest optimisation raises its real error while the in-repo
+/// regression test — frozen table vs frozen fixture — stays green. That is how
+/// the pre-delegation table reached 2.05× over-prediction undetected. The stamp
+/// is what lets a drift job separate "the model changed" from "the thing being
+/// modelled changed".
+///
+/// Ship only a table that is either fully stamped ([`Self::is_stamped`]) or
+/// explicitly [`stale`](Self::stale_reason) — enforced by
+/// `model::tests::embedded_table_declares_its_calibration_identity`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Provenance {
+    /// sha256 of the Airbender guest `app.bin` the ground truth was measured on.
+    #[serde(default)]
+    pub guest_sha256: Option<String>,
+    /// Verifier commit the guest + measurement tooling were built from.
+    #[serde(default)]
+    pub verifier_commit: Option<String>,
+    /// `zksync_vm2` revision the features were traced with.
+    #[serde(default)]
+    pub vm2_rev: Option<String>,
+    /// Protocol version of the corpus batches.
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+    /// ISO date the fit was produced.
+    #[serde(default)]
+    pub fit_date: Option<String>,
+    /// Corpus description (batch ranges, counts) the fit consumed.
+    #[serde(default)]
+    pub dataset: Option<String>,
+    /// Set when the table is KNOWN to be mis-calibrated for the current guest.
+    /// Present ⇒ the table must not be trusted for a live seal gate; the string
+    /// says why and what has to happen before it can be.
+    #[serde(default)]
+    pub stale_reason: Option<String>,
+}
+
+impl Provenance {
+    /// True when every identity field needed to reproduce/compare the fit is set.
+    /// Blank and whitespace-only values do NOT count: `""` satisfies `is_some()`
+    /// while identifying nothing, which would let a table pass the stamp test
+    /// while remaining a model of an unknown guest.
+    pub fn is_stamped(&self) -> bool {
+        [
+            &self.guest_sha256,
+            &self.verifier_commit,
+            &self.vm2_rev,
+            &self.protocol_version,
+            &self.fit_date,
+        ]
+        .iter()
+        .all(|f| f.as_deref().is_some_and(|v| !v.trim().is_empty()))
+    }
+}
+
+/// Multiplier on the organic arithmetic-SHARE envelope
+/// ([`Calibration::rich_addressing_share_max`]) before flagging extrapolation.
+///
+/// Deliberately lower than [`VOLUME_EXTRAPOLATION_FACTOR`]: the two guards are
+/// not comparable. A share is a ratio whose organic maximum the corpus pins
+/// exactly, so **any factor ≥ 1.0 admits every training batch by construction**
+/// (measured: 0/176 flagged at 1.0, 1.2, 1.5 and 1.8 alike). A volume max is a
+/// sample of an open-ended count and needs slack for unseen-but-legitimate
+/// batches. Sharing one constant meant the share guard carried volume-sized
+/// headroom for no reason.
+///
+/// 1.2 was chosen against the 176-batch corpus. It bounds the worst
+/// under-prediction of a *trusted* compute-heavy batch at ~23% (vs ~35% at 1.8),
+/// and it restores the rejection margin on the frame-churn / pooled-stack-clear
+/// vector from 1.18× to 1.76×. Cost: the `mem_high` adversarial row moves from
+/// trusted to untrusted, so the fixture asserts coverage on 4 rows instead of 5.
+///
+/// The bound is `1 + s(k−1)` for share `s` and arithmetic under-priced `k×`.
+/// `k ≈ 2.7` here, DERIVED not measured: attributing the compute-dominated
+/// fixture's whole residual to arithmetic implies ~315 cyc/op against the fitted
+/// 117.26. It is table-dependent — re-derive after any refit, and note that
+/// ~23% still exceeds the 1.05 seal margin's 4.76%, so this narrows the exposure
+/// rather than closing it. Closing it needs finer featurization of the compute
+/// vector: flooring `rich_addressing_op` instead costs +10pp organic MAPE and
+/// makes this margin *worse*, because the cap is derived from the same
+/// coefficient the guard watches.
+///
+/// Do not raise it back without re-deriving both of those numbers. Lowering it
+/// further to 1.0 gains margin (2.12×) but leaves no slack for a legitimately
+/// more arithmetic-heavy batch than any of the 176 observed.
+pub const SHARE_EXTRAPOLATION_FACTOR: f64 = 1.2;
+
+/// Multiplier on the per-feature volume envelope
+/// ([`Calibration::feature_value_max`]) before flagging extrapolation — headroom
+/// so ordinary organic variance never trips the fence. Unchanged at 1.8, where
+/// every fenced counter trips 0/176 organic batches.
+pub const VOLUME_EXTRAPOLATION_FACTOR: f64 = 1.8;
 
 /// The full fitted cost model: an aggregate `total` predictor over effective cycles
 /// plus a per-phase predictor for each verify() phase.
@@ -87,6 +207,9 @@ pub struct CostModel {
     /// for backward compat with tables that predate it).
     #[serde(default)]
     pub calibration: Calibration,
+    /// What guest/verifier this table was calibrated against (see [`Provenance`]).
+    #[serde(default)]
+    pub provenance: Provenance,
 }
 
 impl CostModel {
@@ -113,10 +236,38 @@ impl CostModel {
     pub fn estimate(&self, fv: &FeatureVector) -> CycleEstimate {
         CycleEstimate {
             total: self.predict_total(fv),
-            phases: self.predict_phases(fv),
+            phases_insight: self.predict_phases(fv),
             unpriced: self.unpriced_used(fv),
             extrapolated: self.extrapolated_features(fv),
+            trace_missing: Self::trace_missing(fv),
         }
+    }
+
+    /// True when the batch claims work yet its VM trace is empty — **no tracer
+    /// ran**, so the prediction degenerates to `base` plus whatever batch scalars
+    /// the caller passed.
+    ///
+    /// Impossible for a real execution (see [`VM_TRACE_FEATURES`]) but
+    /// indistinguishable from a tiny batch to every other signal: no crypto counts
+    /// ⇒ nothing unpriced, zero arithmetic ⇒ inside the envelope. So a consumer
+    /// that forgets to wire a tracer gets a small *trustworthy-looking* estimate
+    /// and an unconditionally-passing gate. Folded into
+    /// [`CycleEstimate::is_reliable`], not just [`CycleEstimate::fits`], because
+    /// consumers test the trust signals directly.
+    pub fn trace_missing(fv: &FeatureVector) -> bool {
+        // pubdata and state diffs count as claimed work: they come from the
+        // FINISHED batch, independently of the tracer, so 200 KB of pubdata with
+        // an empty opcode trace is the same unwired-tracer shape.
+        let claims_work = [
+            FeatureId::TransactionCount,
+            FeatureId::MerkleLeafCount,
+            FeatureId::PubdataBytes,
+            FeatureId::StateDiffCount,
+        ]
+        .iter()
+        .any(|id| fv.get(*id) > 0);
+        let traced: u64 = VM_TRACE_FEATURES.iter().map(|id| fv.get(*id)).sum();
+        claims_work && traced == 0
     }
 
     /// Aggregate prediction of **effective (native-computational) cycles** — the
@@ -129,7 +280,20 @@ impl CostModel {
     }
 
     /// Per-phase predictions (setup / vm_execution / merkle_verification /
-    /// commitment), for insight into where the cycles go.
+    /// commitment) — **diagnostic only, never a gate input**. Only `total` is
+    /// validated and only `total` carries the safety machinery (opcode floors,
+    /// envelope guard, asymmetric loss).
+    ///
+    /// The reason a phase number must not be compared to a limit is train/serve
+    /// skew, not a weak fit. The committed `setup` predictor fits *offline* very
+    /// well (R² = 0.9999995, MAPE 0.02% over the 176-batch corpus) precisely
+    /// because it prices `used_bytecode_bytes` / `used_bytecode_count` /
+    /// `storage_key_count` — and all three are
+    /// [`OFFLINE_ONLY_FEATURES`](crate::features::OFFLINE_ONLY_FEATURES) with no
+    /// online producer. On the deployed path they are structurally 0, so `setup`
+    /// collapses to `base + 2110·merkle_leaf_count`: not a weak estimate of setup
+    /// cost, not an estimate of it at all. The offline accuracy makes this worse,
+    /// not better — it is what makes the online number look credible.
     pub fn predict_phases(&self, fv: &FeatureVector) -> BTreeMap<String, u64> {
         self.phases
             .iter()
@@ -161,46 +325,59 @@ impl CostModel {
 
     /// Features whose contribution pushes the batch OUTSIDE the model's calibration
     /// envelope, so the (linear) prediction cannot be trusted and the caller must
-    /// fail safe. Currently guards the compute vector: `rich_addressing_op` is
-    /// under-priced by ~2× — `total.rich_addressing_op` is ~117 after the
-    /// 2026-08-19 refit (was ~71) against a true per-op cost of ~236. NB the
-    /// figure that matters here is the one in `total`, which is what this guard
-    /// and every seal decision read; `phases.vm_execution.rich_addressing_op` is
-    /// a different number (~163, up from ~2.30, since delegating blake2/keccak
-    /// freed that fit from crypto collinearity) and appears EARLIER in
-    /// cost_table.json, so it is easy to misread as this one. Being under-priced
-    /// is harmless organically, where arithmetic
-    /// rides alongside priced storage, but a batch dominated by pure arithmetic is
-    /// under-estimated ~2×. Flagged when arithmetic's share of the prediction
-    /// exceeds the organic envelope × [`EXTRAPOLATION_FACTOR`]. Returns empty when
-    /// the table carries no calibration data (guard disabled).
+    /// fail safe. Two independent checks, both data-derived by the fit:
     ///
-    /// This guard is here to stay (a dispatch-decomposition refit that would have
+    /// 1. **Arithmetic share** (`rich_addressing_op`), against
+    ///    [`SHARE_EXTRAPOLATION_FACTOR`] — left under-priced because flooring it
+    ///    wrecks organic accuracy: `total.rich_addressing_op` is ~117 after the
+    ///    2026-08-19 refit (was ~71) against a true ~236/op, so ~2×. Harmless
+    ///    organically, where arithmetic rides alongside priced storage; a batch
+    ///    *dominated* by it is under-estimated ~2×. NB use the `total` figure —
+    ///    `phases.vm_execution.rich_addressing_op` is a different number (~163)
+    ///    that appears earlier in cost_table.json and is easy to misread.
+    /// 2. **Volume envelope** ([`Calibration::feature_value_max`]), against
+    ///    [`VOLUME_EXTRAPOLATION_FACTOR`] — a raw count
+    ///    far outside the corpus is pure extrapolation. Fences the
+    ///    bytecode/decommit floods, which the share guard cannot see (their
+    ///    arithmetic share is ~0). A bare far-call flood is fenced at batch scale
+    ///    but not per-transaction (~437k calls/tx vs a 859,529 trip); there the
+    ///    `far_call` floor over-prices it 2.4–4.0×.
+    ///
+    /// Returns empty when the table carries no calibration data (guard disabled).
+    ///
+    /// Neither check *prices* an attack — they refuse to certify one. The share
+    /// guard is here to stay (a dispatch-decomposition refit that would have
     /// priced arithmetic uniformly was evaluated and REJECTED — it shifts cost off
     /// the storage coefficients and creates a new under-estimation vector; see the
     /// `OPCODE_FLOORS` notes in `scripts/cycle_model/fit_cost_model.py`). Retiring
-    /// it takes finer featurization of the compute vector, not re-attribution.
+    /// it takes finer featurization of the compute vector, not re-attribution —
+    /// and see [`Calibration::rich_addressing_share_max`] for the frame-churn
+    /// vector that currently depends on it.
     pub fn extrapolated_features(&self, fv: &FeatureVector) -> Vec<FeatureId> {
+        let mut out = Vec::new();
         let cap = self.calibration.rich_addressing_share_max;
-        if cap <= 0.0 {
-            return Vec::new(); // no envelope in this table → guard disabled
-        }
         let total = self.predict_total(fv);
-        if total == 0 {
-            return Vec::new();
+        if cap > 0.0 && total > 0 {
+            let coeff = self
+                .total
+                .features
+                .get(&FeatureId::RichAddressingOp)
+                .copied()
+                .unwrap_or(0.0);
+            let share = coeff * fv.get(FeatureId::RichAddressingOp) as f64 / total as f64;
+            if share > cap * SHARE_EXTRAPOLATION_FACTOR {
+                out.push(FeatureId::RichAddressingOp);
+            }
         }
-        let coeff = self
-            .total
-            .features
-            .get(&FeatureId::RichAddressingOp)
-            .copied()
-            .unwrap_or(0.0);
-        let share = coeff * fv.get(FeatureId::RichAddressingOp) as f64 / total as f64;
-        if share > cap * EXTRAPOLATION_FACTOR {
-            vec![FeatureId::RichAddressingOp]
-        } else {
-            Vec::new()
+        for (id, max_seen) in &self.calibration.feature_value_max {
+            if *max_seen > 0
+                && fv.get(*id) as f64 > (*max_seen as f64) * VOLUME_EXTRAPOLATION_FACTOR
+                && !out.contains(id)
+            {
+                out.push(*id);
+            }
         }
+        out
     }
 }
 
@@ -241,5 +418,122 @@ mod tests {
         // from_json already enforces this (FeatureId keys); this documents intent
         // and fails loudly if the committed table drifts from the enum.
         let _ = CostModel::embedded();
+    }
+
+    #[test]
+    fn total_prices_no_offline_only_feature() {
+        // Train/serve skew tripwire: `total` may only price features an online
+        // producer supplies. A non-zero coefficient here means the deployed
+        // estimator feeds 0 for real work and under-predicts. The fix is never to
+        // relax this — extend BatchContext + a producer, or keep the cost on the
+        // online proxy (`decommit_cycles` for bytecode, `merkle_leaf_count` for
+        // storage keys).
+        let m = CostModel::embedded();
+        for id in crate::features::OFFLINE_ONLY_FEATURES {
+            let coeff = m.total.features.get(id).copied().unwrap_or(0.0);
+            assert_eq!(
+                coeff, 0.0,
+                "`total` prices offline-only feature {id:?} at {coeff} — no online \
+                 producer supplies it, so the deployed gate would feed 0 and \
+                 under-predict. Extend BatchContext + a producer first, or keep \
+                 the cost on an online feature (see TOTAL_EXCLUDE in fit_cost_model.py)."
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_table_declares_its_calibration_identity() {
+        // Staleness is invisible without a stamp: the frozen-fixture regression
+        // test cannot see it, because the fixture ages with the table. So a
+        // shipped table is either fully stamped or declared stale — anything else
+        // is an unlabelled model of an unknown guest.
+        let p = &CostModel::embedded().provenance;
+        assert!(
+            p.is_stamped() || p.stale_reason.is_some(),
+            "the committed cost_table.json carries neither a complete provenance \
+             stamp (guest_sha256 / verifier_commit / vm2_rev / protocol_version / \
+             fit_date) nor an explicit `stale_reason` — refit with \
+             fit_cost_model.py --provenance, or declare the staleness"
+        );
+    }
+
+    #[test]
+    fn value_envelope_flags_a_flood_and_passes_an_organic_shape() {
+        let m = CostModel::embedded();
+        let max_decommit = m
+            .calibration
+            .feature_value_max
+            .get(&FeatureId::DecommitCycles)
+            .copied()
+            .expect("shipped table must fence decommit_cycles");
+
+        // A fresh-decommit flood: same shape as an organic batch except for a
+        // bytecode volume no organic batch comes near. The arithmetic-share
+        // guard cannot see it (its arithmetic share is ~0) — only the volume
+        // envelope can.
+        let mut flood = FeatureVector::default();
+        flood.add(FeatureId::DecommitCycles, max_decommit * 15);
+        flood.add(FeatureId::FarCall, 304);
+        flood.add(FeatureId::TransactionCount, 1);
+        assert!(
+            m.extrapolated_features(&flood)
+                .contains(&FeatureId::DecommitCycles),
+            "a bytecode-volume flood must be refused by the calibration envelope"
+        );
+
+        // Just inside the envelope: not flagged (the guard fences extrapolation,
+        // it does not second-guess the corpus itself).
+        let mut organic = FeatureVector::default();
+        organic.add(FeatureId::DecommitCycles, max_decommit);
+        organic.add(FeatureId::TransactionCount, 1);
+        assert!(!m
+            .extrapolated_features(&organic)
+            .contains(&FeatureId::DecommitCycles));
+    }
+
+    #[test]
+    fn embedded_table_keeps_both_envelope_halves_armed() {
+        // Both guards are disable-able BY DATA, no code change, nothing else
+        // failing: a zero/absent share cap reads as "guard disabled" (backward
+        // compat for pre-envelope tables) and an empty `feature_value_max` fences
+        // nothing. An ordinary refit can do it — a corpus that prices
+        // `rich_addressing_op` at 0 emits `rich_addressing_share_max = 0.0`
+        // (reproduced on a 2-batch candidate), retiring the only thing that
+        // rejects the frame-churn vector. Allowed once that vector has a cost
+        // feature of its own; never as a side effect.
+        let cal = &CostModel::embedded().calibration;
+        assert!(
+            cal.rich_addressing_share_max > 0.0,
+            "rich_addressing_share_max is 0 — the arithmetic-share guard is DISABLED in \
+             this table. A refit must not retire it as a side effect; see \
+             Calibration::rich_addressing_share_max."
+        );
+        assert!(
+            !cal.feature_value_max.is_empty() && cal.feature_value_max.values().any(|&v| v > 0),
+            "feature_value_max is empty/zeroed — the volume fence is DISABLED, so a \
+             bytecode or far-call flood reads as within calibration"
+        );
+        assert!(
+            cal.feature_value_max
+                .get(&FeatureId::DecommitCycles)
+                .is_some_and(|&v| v > 0),
+            "decommit_cycles is unfenced — it is the counter every measured \
+             bytecode-volume attack has to move (a fresh flood sits 8.2x beyond \
+             organic, a repeat-decode thrash 3.6x), so dropping it from \
+             ENVELOPE_FEATURES silently uncovers that whole class"
+        );
+    }
+
+    #[test]
+    fn trace_missing_needs_both_claimed_work_and_an_empty_trace() {
+        let mut claims_work_untraced = FeatureVector::default();
+        claims_work_untraced.add(FeatureId::TransactionCount, 1);
+        assert!(CostModel::trace_missing(&claims_work_untraced));
+
+        let mut claims_work_traced = claims_work_untraced.clone();
+        claims_work_traced.add(FeatureId::FarCall, 1);
+        assert!(!CostModel::trace_missing(&claims_work_traced));
+
+        assert!(!CostModel::trace_missing(&FeatureVector::default()));
     }
 }

@@ -108,8 +108,16 @@ isolated ecpairing_300 ecpairing 1 'ecPairing(uint256,bytes)' 300 "0x$PAIR1"  # 
 isolated ecpairing_500 ecpairing 2 'ecPairing(uint256,bytes)' 250 "0x$PAIR1"  # ~500
 isolated ecpairing_900 ecpairing 3 'ecPairing(uint256,bytes)' 300 "0x$PAIR1"  # ~900 (near ceiling)
 ECADD=$(hexfile ecadd_fixed); ECMUL=$(hexfile ecmul_fixed); P256=$(hexfile secp256r1_fixed)
+ECREC=$(hexfile ecrecover_fixed)
 isolated ecadd_s ecadd 3 'ecAdd(uint256,bytes)' 4000 "0x$ECADD"
 isolated ecadd_l ecadd 8 'ecAdd(uint256,bytes)' 8000 "0x$ECADD"
+# ecrecover: organic batches carry ~one recover per tx (a near-constant column the
+# organic fit cannot identify — see PrecompileHammer.ecRecover), so sweep it here
+# over ~3 orders of magnitude. `ec_recover_cycles` is in PRECOMPILE_FEATURES and
+# the fit ABORTS while this family is missing from the synthetic set.
+isolated ecrecover_s ecrecover 1 'ecRecover(uint256,bytes)'  500 "0x$ECREC"   # ~500
+isolated ecrecover_m ecrecover 3 'ecRecover(uint256,bytes)' 2000 "0x$ECREC"   # ~6k
+isolated ecrecover_l ecrecover 8 'ecRecover(uint256,bytes)' 8000 "0x$ECREC"   # ~64k
 isolated ecmul_s ecmul 3 'ecMul(uint256,bytes)' 4000 "0x$ECMUL"
 isolated ecmul_l ecmul 8 'ecMul(uint256,bytes)' 8000 "0x$ECMUL"
 # secp256r1 goes through the generic hammer(address,...) with the 0x100 precompile addr
@@ -127,6 +135,7 @@ combined() {  # label
   snd 'ecPairing(uint256,bytes)'  400 "0x$PAIR1"
   snd 'ecAdd(uint256,bytes)'     6000 "0x$ECADD"
   snd 'ecMul(uint256,bytes)'     6000 "0x$ECMUL"
+  snd 'ecRecover(uint256,bytes)' 6000 "0x$ECREC"
   snd 'hammer(address,uint256,bytes)' "$P256_ADDR" 6000 "0x$P256"
   export_new "$b0" "$1" combined mixed
 }

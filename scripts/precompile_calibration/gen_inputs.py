@@ -69,6 +69,39 @@ def ec_pairing(k):  # k * 192 bytes: k copies of (G1, G2); valid points, result 
     return (pair * k).hex()
 
 
+# --- ecrecover (0x01): 128 bytes hash|v|r|s -----------------------------------
+# secp256k1 order, for the low-s normalization below.
+SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+
+def ec_recover_vector():
+    """A VALID secp256k1 signature over a fixed hash, as ecrecover input.
+
+    ecrecover does not have to recover any particular address — it just has to do
+    the work — but the signature must be well-formed or the precompile fails and
+    costs nothing (which would calibrate a coefficient of ~0). So: sign a real
+    hash, normalize `s` into the lower half of the order (accepted by both strict
+    and lax implementations), and use v = 27; for a genuine (r, s) both parities
+    recover a point on the curve, so the recovery id does not need to be known.
+    """
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import (
+            Prehashed,
+            decode_dss_signature,
+        )
+    except Exception:
+        return None
+    key = ec.generate_private_key(ec.SECP256K1())
+    msg_hash = bytes((i * 7 + 3) & 0xFF for i in range(32))
+    sig = key.sign(msg_hash, ec.ECDSA(Prehashed(hashes.SHA256())))
+    r, s = decode_dss_signature(sig)
+    if s > SECP256K1_N // 2:
+        s = SECP256K1_N - s
+    return (u256(int.from_bytes(msg_hash, "big")) + u256(27) + u256(r) + u256(s)).hex()
+
+
 # --- secp256r1 (RIP-7212, addr 0x100): 160 bytes hash|r|s|x|y ------------------
 def secp256r1_vector():
     try:
@@ -111,6 +144,16 @@ def main():
     # ecadd / ecmul: fixed cost/call — one input, driver sweeps count
     add("ecadd_fixed", ec_add(), "verify on-curve on live node")
     add("ecmul_fixed", ec_mul(7), "verify on-curve on live node")
+
+    # ecrecover: fixed cost/call — one input, driver sweeps count. Required to
+    # identify `ec_recover_cycles`, which the organic corpus cannot (near-constant
+    # column; see PrecompileHammer.ecRecover).
+    recover = ec_recover_vector()
+    if recover:
+        add("ecrecover_fixed", recover, "cast call 0x01 -> must return a nonzero address")
+    else:
+        print("ecrecover_fixed: SKIPPED — python `cryptography` unavailable; generate a "
+              "valid secp256k1 hash|v|r|s (128B) vector before use")
 
     # secp256r1: fixed cost/call — needs a valid P-256 signature
     p256 = secp256r1_vector()
