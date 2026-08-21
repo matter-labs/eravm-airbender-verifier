@@ -159,13 +159,13 @@ PRECOMPILE_FEATURES = [
 
 # Volume features fenced by the estimator's calibration envelope: the fit emits the
 # max organic value of each, and `CostModel::extrapolated_features` refuses to
-# certify a batch beyond `max * EXTRAPOLATION_FACTOR`. These are the counters the
-# known attack shapes must move — against the 176-batch fence a fresh-decommit
-# flood sits 8.2x beyond the organic `decommit_cycles` max and a repeat-decode
-# thrash 3.6x, and a linear model has nothing to say that far outside its corpus.
-# NB a bare far-call flood only trips the `far_call` entry at batch scale (~437k
-# calls per 80M-gas tx vs a 859,529 trip); below that its floor over-prices it
-# 2.4-4.0x. The fence does not price an attack; it declines to
+# certify a batch beyond `max * VOLUME_EXTRAPOLATION_FACTOR`. These are the
+# counters the known attack shapes must move — against the 176-batch fence a
+# fresh-decommit flood sits 8.2x beyond the organic `decommit_cycles` max and a
+# repeat-decode thrash 3.6x, and a linear model has nothing to say that far
+# outside its corpus. NB a bare far-call flood only trips the `far_call` entry at
+# batch scale (~437k calls per 80M-gas tx vs a 859,529 trip); below that its
+# floor over-prices it 2.4-4.0x. The fence does not price an attack; it declines to
 # certify one, so the seal gate falls back to sealing conservatively.
 #
 # Keep this list SHORT and volume-oriented: every entry is also a false-positive

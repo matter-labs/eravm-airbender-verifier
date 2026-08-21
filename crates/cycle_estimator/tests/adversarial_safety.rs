@@ -13,7 +13,7 @@
 //! ⚠️ SCOPE. This shows the estimator never *silently* under-prices — not that
 //! an over-budget batch cannot ship. Declining to certify only helps if the
 //! consumer refuses, and era's `CyclesCriterion` answers distrust with
-//! `IncludeAndSeal` (see `CycleEstimate::fits`). The four rows exempted below
+//! `IncludeAndSeal` (see `CycleEstimate::fits`). The five rows exempted below
 //! are therefore the shapes production keeps rather than refuses.
 //!
 //! ⚠️ MIXED VINTAGES — read before adding or re-tuning a row. Each row carries an
@@ -100,11 +100,17 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
         // the gate distrusts (extrapolated / unpriced) is allowed to under-predict
         // here, because `fits()` would refuse it.
         //
-        // That exemption covers 4 of the 9 rows (worst: `pure_compute`, 2.19x
+        // That exemption covers 5 of the 9 rows (worst: `pure_compute`, 2.19x
         // under) and is NOT a claim that they are handled safely downstream — the
         // deployed consumer does not take the `fits()` path. This asserts that the
         // ESTIMATOR does not lie, not that the sequencer is protected; tightening
         // it needs the consumer to refuse a distrusted tx-level estimate.
+        //
+        // `mem_high` joined the exempt set when SHARE_EXTRAPOLATION_FACTOR moved
+        // 1.8 -> 1.2: its arithmetic share is 0.181, above the 0.1385 trip point.
+        // It is over-predicted 1.32x, so nothing under-priced is hidden — the
+        // assertion simply no longer applies to it. Recovering that row means a
+        // fixture built below the new trip point, not a looser factor.
         assert!(
             !trustworthy || covered,
             "{}: gate trusts it yet conservative(margin)={} < actual={} — live under-estimation vector",

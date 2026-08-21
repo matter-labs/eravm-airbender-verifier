@@ -25,9 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fit_cost_model import feature_counts, predict_row
 
 # Keep in lockstep with the Rust gate constants:
-# EXTRAPOLATION_FACTOR in crates/cycle_estimator/src/model.rs, and the
-# GATE_MARGIN the adversarial_safety test holds the model to.
-EXTRAPOLATION_FACTOR = 1.8
+# SHARE_EXTRAPOLATION_FACTOR / VOLUME_EXTRAPOLATION_FACTOR in
+# crates/cycle_estimator/src/model.rs, and the GATE_MARGIN the
+# adversarial_safety test holds the model to. The two factors differ on purpose:
+# the share cap is the organic maximum (any factor >= 1.0 admits all organic
+# traffic), a volume max is a sample and needs slack.
+SHARE_EXTRAPOLATION_FACTOR = 1.2
+VOLUME_EXTRAPOLATION_FACTOR = 1.8
 GATE_MARGIN = 1.05
 
 FIXTURE = Path(__file__).resolve().parents[2] / \
@@ -63,9 +67,10 @@ def main() -> int:
         # not be able to disagree about which tables are safe.
         over_volume = [
             f for f, mx in value_max.items()
-            if mx > 0 and feats.get(f, 0) > mx * EXTRAPOLATION_FACTOR
+            if mx > 0 and feats.get(f, 0) > mx * VOLUME_EXTRAPOLATION_FACTOR
         ]
-        extrapolated = (cap > 0.0 and share > cap * EXTRAPOLATION_FACTOR) or over_volume
+        extrapolated = (cap > 0.0 and share > cap * SHARE_EXTRAPOLATION_FACTOR) \
+            or over_volume
         trusted = not extrapolated
         covered = pred * args.margin >= r["effective_cycles"]
         if trusted and not covered:

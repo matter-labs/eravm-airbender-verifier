@@ -73,7 +73,7 @@ pub struct Calibration {
     /// Largest raw value each fenced feature reached in the calibration corpus. A
     /// linear model says nothing about a batch far outside it, and the shapes that
     /// get there are adversarial by construction. Values above
-    /// `value × EXTRAPOLATION_FACTOR` are flagged by
+    /// `value × VOLUME_EXTRAPOLATION_FACTOR` are flagged by
     /// [`CostModel::extrapolated_features`], which declines to certify rather than
     /// prices.
     ///
@@ -156,21 +156,43 @@ impl Provenance {
     }
 }
 
-/// Multiplier applied to the calibration envelope before flagging extrapolation —
-/// headroom so ordinary organic variance never trips the guard.
+/// Multiplier on the organic arithmetic-SHARE envelope
+/// ([`Calibration::rich_addressing_share_max`]) before flagging extrapolation.
 ///
-/// ⚠️ The 2026-08-19 delegation refit WIDENED this envelope 2.73×:
-/// `rich_addressing_share_max` went 0.0423 → 0.1154, moving the trip point from
-/// ~7.6% to ~20.8%. The previous note here ("organic max ~4.5%, trip point ~8%,
-/// every measured compute-attack batch is 11–56%") no longer holds — a batch in
-/// the 11–20.8% band now passes the guard where it used to trip. Observed effect:
-/// the `mem_high` adversarial fixture batch flipped `in_cal=false` → `in_cal=true`
-/// (it stays covered, so no invariant breaks, but the margin is gone). The
-/// widening is a genuine property of the 176-batch corpus, not a bug — organic
-/// arithmetic share really is higher on the delegation guest, because delegating
-/// blake2/keccak shrinks the non-arithmetic denominator. Revisit whether 1.8 is
-/// still the right factor against the wider envelope.
-const EXTRAPOLATION_FACTOR: f64 = 1.8;
+/// Deliberately lower than [`VOLUME_EXTRAPOLATION_FACTOR`]: the two guards are
+/// not comparable. A share is a ratio whose organic maximum the corpus pins
+/// exactly, so **any factor ≥ 1.0 admits every training batch by construction**
+/// (measured: 0/176 flagged at 1.0, 1.2, 1.5 and 1.8 alike). A volume max is a
+/// sample of an open-ended count and needs slack for unseen-but-legitimate
+/// batches. Sharing one constant meant the share guard carried volume-sized
+/// headroom for no reason.
+///
+/// 1.2 was chosen against the 176-batch corpus. It bounds the worst
+/// under-prediction of a *trusted* compute-heavy batch at ~23% (vs ~35% at 1.8),
+/// and it restores the rejection margin on the frame-churn / pooled-stack-clear
+/// vector from 1.18× to 1.76×. Cost: the `mem_high` adversarial row moves from
+/// trusted to untrusted, so the fixture asserts coverage on 4 rows instead of 5.
+///
+/// The bound is `1 + s(k−1)` for share `s` and arithmetic under-priced `k×`.
+/// `k ≈ 2.7` here, DERIVED not measured: attributing the compute-dominated
+/// fixture's whole residual to arithmetic implies ~315 cyc/op against the fitted
+/// 117.26. It is table-dependent — re-derive after any refit, and note that
+/// ~23% still exceeds the 1.05 seal margin's 4.76%, so this narrows the exposure
+/// rather than closing it. Closing it needs finer featurization of the compute
+/// vector: flooring `rich_addressing_op` instead costs +10pp organic MAPE and
+/// makes this margin *worse*, because the cap is derived from the same
+/// coefficient the guard watches.
+///
+/// Do not raise it back without re-deriving both of those numbers. Lowering it
+/// further to 1.0 gains margin (2.12×) but leaves no slack for a legitimately
+/// more arithmetic-heavy batch than any of the 176 observed.
+pub const SHARE_EXTRAPOLATION_FACTOR: f64 = 1.2;
+
+/// Multiplier on the per-feature volume envelope
+/// ([`Calibration::feature_value_max`]) before flagging extrapolation — headroom
+/// so ordinary organic variance never trips the fence. Unchanged at 1.8, where
+/// every fenced counter trips 0/176 organic batches.
+pub const VOLUME_EXTRAPOLATION_FACTOR: f64 = 1.8;
 
 /// The full fitted cost model: an aggregate `total` predictor over effective cycles
 /// plus a per-phase predictor for each verify() phase.
@@ -305,14 +327,16 @@ impl CostModel {
     /// envelope, so the (linear) prediction cannot be trusted and the caller must
     /// fail safe. Two independent checks, both data-derived by the fit:
     ///
-    /// 1. **Arithmetic share** (`rich_addressing_op`) — left under-priced because
-    ///    flooring it wrecks organic accuracy: `total.rich_addressing_op` is ~117
-    ///    after the 2026-08-19 refit (was ~71) against a true ~236/op, so ~2×.
-    ///    Harmless organically, where arithmetic rides alongside priced storage;
-    ///    a batch *dominated* by it is under-estimated ~2×. NB use the `total`
-    ///    figure — `phases.vm_execution.rich_addressing_op` is a different number
-    ///    (~163) that appears earlier in cost_table.json and is easy to misread.
-    /// 2. **Volume envelope** ([`Calibration::feature_value_max`]) — a raw count
+    /// 1. **Arithmetic share** (`rich_addressing_op`), against
+    ///    [`SHARE_EXTRAPOLATION_FACTOR`] — left under-priced because flooring it
+    ///    wrecks organic accuracy: `total.rich_addressing_op` is ~117 after the
+    ///    2026-08-19 refit (was ~71) against a true ~236/op, so ~2×. Harmless
+    ///    organically, where arithmetic rides alongside priced storage; a batch
+    ///    *dominated* by it is under-estimated ~2×. NB use the `total` figure —
+    ///    `phases.vm_execution.rich_addressing_op` is a different number (~163)
+    ///    that appears earlier in cost_table.json and is easy to misread.
+    /// 2. **Volume envelope** ([`Calibration::feature_value_max`]), against
+    ///    [`VOLUME_EXTRAPOLATION_FACTOR`] — a raw count
     ///    far outside the corpus is pure extrapolation. Fences the
     ///    bytecode/decommit floods, which the share guard cannot see (their
     ///    arithmetic share is ~0). A bare far-call flood is fenced at batch scale
@@ -341,13 +365,13 @@ impl CostModel {
                 .copied()
                 .unwrap_or(0.0);
             let share = coeff * fv.get(FeatureId::RichAddressingOp) as f64 / total as f64;
-            if share > cap * EXTRAPOLATION_FACTOR {
+            if share > cap * SHARE_EXTRAPOLATION_FACTOR {
                 out.push(FeatureId::RichAddressingOp);
             }
         }
         for (id, max_seen) in &self.calibration.feature_value_max {
             if *max_seen > 0
-                && fv.get(*id) as f64 > (*max_seen as f64) * EXTRAPOLATION_FACTOR
+                && fv.get(*id) as f64 > (*max_seen as f64) * VOLUME_EXTRAPOLATION_FACTOR
                 && !out.contains(id)
             {
                 out.push(*id);

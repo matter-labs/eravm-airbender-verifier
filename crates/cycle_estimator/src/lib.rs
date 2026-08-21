@@ -57,4 +57,7 @@ pub use estimator::{assemble_feature_vector, estimate_from_features, BatchContex
 pub use features::{
     FeatureId, FeatureVector, OFFLINE_ONLY_FEATURES, SAFETY_CRITICAL_FEATURES, VM_TRACE_FEATURES,
 };
-pub use model::{Calibration, CostModel, LinearModel, Provenance, EMBEDDED_COST_TABLE};
+pub use model::{
+    Calibration, CostModel, LinearModel, Provenance, EMBEDDED_COST_TABLE,
+    SHARE_EXTRAPOLATION_FACTOR, VOLUME_EXTRAPOLATION_FACTOR,
+};

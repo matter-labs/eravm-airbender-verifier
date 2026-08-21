@@ -117,9 +117,10 @@ cargo test -p zksync-era-airbender-cycles-estimator   # re-parses + regression-c
 A malformed table or a feature name not in the `FeatureId` enum fails the build /
 tests (the JSON deserializes into typed `FeatureId` keys — a drift guard).
 
-`eval_adversarial.py` mirrors the Rust gate exactly (both halves of the envelope,
-same `EXTRAPOLATION_FACTOR` and margin) — keep them in lockstep, or the
-pre-commit and post-commit gates can disagree about which tables are safe.
+`eval_adversarial.py` mirrors the Rust gate exactly — both halves of the
+envelope, the same `SHARE_EXTRAPOLATION_FACTOR` (1.2) and
+`VOLUME_EXTRAPOLATION_FACTOR` (1.8), and the same margin. Keep them in lockstep,
+or the pre-commit and post-commit gates can disagree about which tables are safe.
 
 **Fixture vintage — the trap when the guest has moved.** `adversarial.json`'s
 `effective_cycles` are measured on whatever guest was current when they were
