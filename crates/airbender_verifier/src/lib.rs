@@ -141,6 +141,22 @@ impl VmExecutionState {
     }
 }
 
+/// The protocol version whose semantics this verifier models.
+///
+/// Every version-gated decision below is taken at this value: the VM subversion
+/// (`FastVmVersion`), the bootloader heap layout, the pubdata builder, the blob
+/// count, the L2-block rules and the commitment shape. The operator-supplied
+/// label in the input never reaches any of them — `execute` checks it against
+/// this constant and then overwrites it (see the normalization there).
+///
+/// This is deliberately a repo-local constant rather than
+/// `ProtocolVersionId::latest()`: a `zksync_basic_types` bump must not silently
+/// change which semantics the guest models.
+/// `pinned_version_matches_vendored_latest` fails when the two diverge, forcing
+/// an explicit decision about whether the new minor changes anything modelled
+/// here.
+pub const PINNED_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version31;
+
 /// Canonical account-validation gas limit for the Airbender proving path. The
 /// producer hardcodes `u32::MAX` (unlimited) for every batch — see
 /// zksync-era `airbender_request_processor.rs` (`validation_computational_gas_limit
@@ -178,27 +194,68 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
     // unvalidated path.
     input.merkle_paths.normalize_stored_paths()?;
 
-    // Pin the protocol version to the single one this verifier is built for.
-    // `protocol_version` is operator-supplied and only *gates* commitment fields
-    // (e.g. the EVM-emulator slot) and VM semantics — it is never itself hashed into
-    // the commitment (see `L1BatchMetaParameters::to_bytes`), so without this pin a
-    // malicious witness could substitute a behavior-compatible version undetectably.
-    // The verifier ships one guest binary + VK set tied to `latest()`.
+    // The label is operator-supplied and never itself hashed into the commitment
+    // (see `L1BatchMetaParameters::to_bytes`), so it carries no authority. Check
+    // it against the one version whose semantics this build models.
     //
-    // The offline cycle-cost calibration build (`cycle-markers`) relaxes this pin
-    // so it can measure older-but-still-FastVM-supported batches (e.g. the v29
-    // corpus in the v31 wire format). This NEVER ships in a proved guest — the
-    // `cycle-markers` feature is off for every real build — and the
-    // `is_supported_by_fast_vm` guard below still holds. Production stays strict.
+    // The offline cycle-cost calibration build (`cycle-markers`) drops this gate
+    // *and* the normalization below, so it can measure older-but-still-FastVM-
+    // supported batches (e.g. the v29 corpus in the v31 wire format) under their
+    // own semantics — normalizing them to the pinned version would defeat the
+    // measurement. It NEVER ships in a proved guest: the feature is off for every
+    // real build, and the `is_supported_by_fast_vm` guard below still holds.
+    // Production stays strict.
     #[cfg(not(feature = "cycle-markers"))]
     anyhow::ensure!(
-        input.system_env.version == ProtocolVersionId::latest(),
-        "unsupported protocol version {:?}; this verifier supports only {:?}",
+        input.system_env.version == PINNED_PROTOCOL_VERSION,
+        "unsupported protocol version {:?}; this verifier models {:?}",
         input.system_env.version,
-        ProtocolVersionId::latest(),
+        PINNED_PROTOCOL_VERSION,
     );
-    // Redundant with the version pin (`latest()` is always FastVM-supported), kept as
-    // an explicit guard so the FastVM requirement is asserted at the boundary.
+    // Bind the redundant copy in `vm_run_data` before the label is discarded, so a
+    // witness cannot disagree with itself about which protocol it claims. (Its
+    // sibling binds — `l1_batch_number` and the rest — are grouped further down;
+    // this one has to run before the normalization.)
+    //
+    // Limit worth knowing if the gate is ever widened: the wire codec saturates
+    // any minor above `MAX_KNOWN_PROTOCOL_VERSION` to that ceiling, so two
+    // *distinct* unnameable labels (say raw 33 and raw 60000) compare equal here.
+    // Inert under the equality gate above — a saturated label never reaches this
+    // point — but the bind is blind in that range.
+    anyhow::ensure!(
+        input.vm_run_data.protocol_version == input.system_env.version,
+        "vm_run_data.protocol_version {:?} does not match system_env.version {:?}",
+        input.vm_run_data.protocol_version,
+        input.system_env.version,
+    );
+    // From here the operator-supplied label is dead. Overwrite it so nothing
+    // downstream — multivm's `FastVmVersion` mapping, any `is_pre_*` gate, the
+    // commitment shape — can read a value the operator chose.
+    //
+    // Under the equality gate above these two writes are no-ops: the gate has
+    // established that `system_env.version == PINNED_PROTOCOL_VERSION` and the
+    // bind that the copy agrees. They are here so the invariant — semantics are a
+    // build-time constant, not witness data — holds by construction rather than
+    // by inference from the gate, and so relaxing the gate later cannot silently
+    // hand semantics selection back to the operator.
+    //
+    // Only the `system_env` write is load-bearing: that is the copy the VM and
+    // every version-gated helper read. The `vm_run_data` write is a dead store
+    // today (nothing reads that field after the bind above) — kept so the two
+    // copies cannot drift apart if a later change does read it.
+    //
+    // Compiled out by the calibration build, in lockstep with the gate above: a
+    // measured batch must execute under its own semantics, not the pinned ones.
+    #[cfg(not(feature = "cycle-markers"))]
+    {
+        input.system_env.version = PINNED_PROTOCOL_VERSION;
+        input.vm_run_data.protocol_version = PINNED_PROTOCOL_VERSION;
+    }
+
+    // A tautology in a shipped build (`PINNED_PROTOCOL_VERSION` is FastVM-supported,
+    // pinned by `pinned_version_is_supported_by_fast_vm`), kept as an explicit
+    // statement of the FastVM requirement at the boundary — and the real, load-bearing
+    // guard in the calibration build, where nothing above has constrained the version.
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "protocol version {:?} is not supported by the FastVM verifier",
@@ -225,16 +282,12 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
     // `vm_run_data` carries operator-supplied copies of values the verifier also
     // derives from the canonical batch/system env. Bind the redundant copies that
     // have an authoritative counterpart so a malicious witness cannot disagree with
-    // the environment the VM actually executes against.
+    // the environment the VM actually executes against. (`protocol_version` is the
+    // one exception: it is bound at the top, before the normalization.)
     anyhow::ensure!(
         input.vm_run_data.l1_batch_number == batch_number,
         "vm_run_data.l1_batch_number {:?} does not match l1_batch_env.number {batch_number:?}",
         input.vm_run_data.l1_batch_number,
-    );
-    anyhow::ensure!(
-        input.vm_run_data.protocol_version == protocol_version,
-        "vm_run_data.protocol_version {:?} does not match system_env.version {protocol_version:?}",
-        input.vm_run_data.protocol_version,
     );
     // Bootloader memory encoding reads the validator back by shape —
     // `l2_da_validator().expect(...)` pre-medium-interop,
@@ -1128,7 +1181,7 @@ mod tests {
             vec![],
             vm,
             PubdataParams::genesis(),
-            ProtocolVersionId::latest(),
+            PINNED_PROTOCOL_VERSION,
         )
         .unwrap_err();
         assert!(
@@ -1406,17 +1459,86 @@ mod tests {
     #[cfg(not(feature = "cycle-markers"))]
     #[test]
     fn execute_rejects_non_target_protocol_version() {
+        // Both directions are pinned: the gate is an equality, so a newer label is
+        // rejected as firmly as an older one. `Version32` is the speculative next
+        // minor, which maps to the *same* `FastVmVersion` as the pinned version —
+        // so nothing but this gate would notice it.
+        for version in [ProtocolVersionId::Version27, ProtocolVersionId::Version32] {
+            let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+            // A non-target version must be rejected by the version gate, which is the
+            // first thing `execute` does — so the otherwise-minimal input is never run.
+            input.system_env.version = version;
+            // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+            let err = match execute(input) {
+                Ok(_) => panic!("expected the version gate to reject {version:?}"),
+                Err(err) => err,
+            };
+            assert!(
+                err.to_string().contains("unsupported protocol version"),
+                "unexpected error for {version:?}: {err}"
+            );
+        }
+    }
+
+    /// Change detector for the decoupling from the vendored crate: while
+    /// `PINNED_PROTOCOL_VERSION` and `ProtocolVersionId::latest()` agree, this
+    /// build accepts exactly what it accepted before the constant was
+    /// introduced. A `zksync_basic_types` bump that moves `latest()` fails here,
+    /// forcing an explicit decision about whether the new minor changes anything
+    /// this verifier models — instead of silently changing the semantics the
+    /// guest is built for.
+    #[test]
+    fn pinned_version_matches_vendored_latest() {
+        assert_eq!(
+            PINNED_PROTOCOL_VERSION,
+            ProtocolVersionId::latest(),
+            "the vendored protocol version moved; decide whether the new minor \
+             changes anything this verifier models, then update \
+             PINNED_PROTOCOL_VERSION (and this assertion) deliberately"
+        );
+    }
+
+    /// Backs the "tautology" claim on the FastVM guard in `execute`: after
+    /// normalization the guard only ever sees this constant.
+    #[test]
+    fn pinned_version_is_supported_by_fast_vm() {
+        assert!(is_supported_by_fast_vm(PINNED_PROTOCOL_VERSION));
+    }
+
+    /// The wire codec saturates an unnameable-newer minor to
+    /// `MAX_KNOWN_PROTOCOL_VERSION`. As long as the pinned version is strictly
+    /// below that ceiling, a saturated label can never satisfy the equality gate,
+    /// so an arbitrary garbage minor is always rejected with the version error
+    /// rather than silently accepted.
+    ///
+    /// If `PINNED_PROTOCOL_VERSION` were ever raised to the ceiling, every label
+    /// above it would saturate *onto* the pinned value and pass the gate. That is
+    /// output-inert (the label is normalized away, so the semantics are the pinned
+    /// ones either way), but it would silently retire the gate's role as a
+    /// wire-validity check. Raise the ceiling first.
+    #[test]
+    fn pinned_version_below_max_known_wire_version() {
+        assert!(
+            PINNED_PROTOCOL_VERSION < zksync_types::protocol_version::MAX_KNOWN_PROTOCOL_VERSION,
+            "PINNED_PROTOCOL_VERSION ({PINNED_PROTOCOL_VERSION:?}) must stay below the wire \
+             codec's saturation ceiling, or saturated garbage labels pass the version gate"
+        );
+    }
+
+    /// The two labels in the input must agree before either is discarded. The
+    /// gate above passes (`system_env.version` is the pinned one), so this
+    /// exercises the cross-bind rather than the version check.
+    #[test]
+    fn execute_rejects_mismatched_protocol_version_copies() {
         let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
-        // A non-target version must be rejected by the version pin, which is the
-        // first thing `execute` does — so the otherwise-minimal input is never run.
-        input.system_env.version = ProtocolVersionId::Version27;
-        // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+        input.vm_run_data.protocol_version = ProtocolVersionId::Version32;
         let err = match execute(input) {
-            Ok(_) => panic!("expected the version pin to reject Version27"),
+            Ok(_) => panic!("expected the vm_run_data cross-bind to reject a disagreeing label"),
             Err(err) => err,
         };
         assert!(
-            err.to_string().contains("unsupported protocol version"),
+            err.to_string()
+                .contains("vm_run_data.protocol_version Version32 does not match"),
             "unexpected error: {err}"
         );
     }
@@ -1427,9 +1549,15 @@ mod tests {
         // Version23 maps to `Vm1_5_0SmallBootloaderMemory`, which the FastVM does not
         // implement. Unlike the version pin above, this guard is unconditional — the
         // calibration build relaxes only *which* FastVM-supported version is accepted,
-        // never whether the FastVM supports it at all. Both fire before any of the
-        // `vm_run_data` cross-checks, so the otherwise-minimal input is never run.
+        // never whether the FastVM supports it at all. Either way the input is
+        // rejected before the VM runs.
+        //
+        // Both copies must move together: the `vm_run_data` cross-bind now runs before
+        // this guard, so relabelling only `system_env` would trip the cross-bind first
+        // and the calibration build — where the version pin is compiled out — would
+        // never reach the FastVM guard this test is about.
         input.system_env.version = ProtocolVersionId::Version23;
+        input.vm_run_data.protocol_version = ProtocolVersionId::Version23;
         // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
         let err = match execute(input) {
             Ok(_) => panic!("expected the FastVM guard to reject Version23"),
@@ -1471,7 +1599,7 @@ mod tests {
     }
 
     // A pre-medium-interop version paired with a `CommitmentScheme` validator is now
-    // caught earlier by the protocol-version pin (`execute_rejects_non_target_protocol_version`),
+    // caught earlier by the version gate (`execute_rejects_non_target_protocol_version`),
     // so the pre-medium branch of the pubdata-validator guard is unreachable via
     // `execute`. Only the post-medium direction below remains reachable.
 
@@ -1502,7 +1630,7 @@ mod tests {
     /// is kept consistent so the pubdata-validator guard passes.
     fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> AirbenderVerifierInput {
         let mut input = sample_payload(
-            ProtocolVersionId::latest(),
+            PINNED_PROTOCOL_VERSION,
             L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
         );
         input.system_env.execution_mode = mode;
