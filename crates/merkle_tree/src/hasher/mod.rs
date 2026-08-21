@@ -462,7 +462,7 @@ mod fused_fold_tests {
     /// function indexes `EMPTY_TREE_HASHES` out of bounds and this test panics.
     /// The index-vs-depth offset is pinned elsewhere (by
     /// `trimming_the_empty_prefix_does_not_change_the_fold` and
-    /// `witness::tests::trim_empty_prefixes_normalises_…`); the `checked_sub`
+    /// `witness::tests::normalize_reclaims_the_legacy_padding_…`); the `checked_sub`
     /// early return means *this* test cannot discriminate it.
     #[test]
     fn empty_prefix_len_trims_nothing_from_an_over_long_path() {

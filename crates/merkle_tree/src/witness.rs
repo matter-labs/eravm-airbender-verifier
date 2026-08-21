@@ -71,12 +71,9 @@ impl StorageLogMetadata {
 /// so one leaf planted next to entry 0's key inflated the whole witness. The
 /// per-path form has no cross-entry coupling and is never larger.
 ///
-/// `into_merkle_paths` decodes both forms: for distinct keys the old encoder's
-/// stripped prefix *was* this constant run, since at index
-/// `TREE_DEPTH - max(depth(first), depth(i))` exactly one side is a real subtree
-/// hash. The exception is an entry stored as an *empty* vec (path byte-identical to
-/// entry 0's), which here means depth 0 instead; the verifier resolves that at fold
-/// time — see `merkle_witness::stored_path_for`.
+/// The two forms are not interchangeable, and the legacy one is self-describing only
+/// through entry 0's stored length ([`Self::is_legacy_delta_form()`]). Convert it
+/// with [`Self::normalize_stored_paths()`] before folding.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WitnessInputMerklePaths {
@@ -118,31 +115,81 @@ impl WitnessInputMerklePaths {
         self.merkle_paths.push(path);
     }
 
-    /// Drops the redundant leading empty-subtree hashes from every stored path;
-    /// returns the number of hashes reclaimed.
+    /// True iff entry 0 is stored at exactly [`TREE_DEPTH`]: the legacy encoder had
+    /// nothing to delta it against and stored it padded, whereas reaching
+    /// `TREE_DEPTH` in the per-path form needs entry 0's nearest neighbour to share
+    /// 255 hashed-key bits with it.
     ///
-    /// Fold-invariant (see [`empty_subtree_prefix_len`]), so it cannot change any
-    /// accept/reject decision — a pure memory reclaim. This is what normalises a
-    /// witness received in the legacy `max(first_depth, own_depth)` form, whose
-    /// surplus prefix is exactly such a run. Idempotent.
-    pub fn trim_empty_prefixes(&mut self) -> usize {
-        let mut reclaimed = 0;
+    /// `==`, not `>=`: an over-long entry 0 is malformed, not legacy, and the
+    /// consumer's `len <= TREE_DEPTH` bound owns that case.
+    pub fn is_legacy_delta_form(&self) -> bool {
+        self.merkle_paths
+            .first()
+            .is_some_and(|first| first.merkle_paths.len() == TREE_DEPTH)
+    }
+
+    /// Rewrites every stored path to its own populated depth, decoding the legacy
+    /// delta form first if that is what arrived. Returns `(reclaimed, restored)`:
+    /// hashes dropped as empty-subtree padding, hashes spliced back from entry 0.
+    /// Idempotent; the only place either wire form is interpreted.
+    ///
+    /// # Why a trim is not enough
+    ///
+    /// The legacy encoder stored `padded_i[fui..]` with `fui` = the **common-prefix**
+    /// length of `padded_i` and `padded_0`. That prefix is pure padding — trimmable,
+    /// and foldable as-is — only while entries 0 and `i` sit at *different* sibling
+    /// positions at index `fui`. If `k_0` and `k_i` share `>= depth(i)` leading bits,
+    /// their ancestors coincide over the whole populated region, so
+    /// `depth(0) == depth(i)` and the padded paths are equal element-wise; the first
+    /// difference then comes from an intervening *write* mutating one shared sibling
+    /// near the root, putting `fui` ABOVE `TREE_DEPTH - depth(i)`. The stripped
+    /// prefix is real sibling hashes, which a trim cannot see and a fold would
+    /// replace with `empty_subtree_hash`, missing the root.
+    ///
+    /// Hence the splice, from entry 0's *populated* part only. Every entry ends at
+    /// `depth(i)` in both forms, so the memory win is unaffected: an entry inherits
+    /// entry 0's depth only where the two are equal anyway.
+    pub fn normalize_stored_paths(&mut self) -> (usize, usize) {
+        let (mut reclaimed, mut restored) = (0, 0);
+
+        if self.is_legacy_delta_form() {
+            // Prefix source for every later entry, so read it before mutating
+            // anything: one ~8 KiB clone, not one per entry.
+            let prefix = self.merkle_paths[0].merkle_paths.clone();
+            let populated_from = empty_subtree_prefix_len(&prefix);
+            for log in &mut self.merkle_paths[1..] {
+                // `fui` follows from the stored length: the encoder cut `padded_i`,
+                // always `TREE_DEPTH` long, at `fui`.
+                let fui = TREE_DEPTH.saturating_sub(log.merkle_paths.len());
+                if fui > populated_from {
+                    log.merkle_paths
+                        .splice(0..0, prefix[populated_from..fui].iter().copied());
+                    restored += fui - populated_from;
+                }
+            }
+        }
+
         for log in &mut self.merkle_paths {
             let empty_prefix = empty_subtree_prefix_len(&log.merkle_paths);
             if empty_prefix > 0 {
                 log.merkle_paths.drain(..empty_prefix);
-                log.merkle_paths.shrink_to_fit();
                 reclaimed += empty_prefix;
             }
+            // `drain` alone keeps the original allocation; the point is to hand the
+            // memory back before the VM runs. Unconditional — the splice above may
+            // have over-allocated too.
+            log.merkle_paths.shrink_to_fit();
         }
-        reclaimed
+
+        (reclaimed, restored)
     }
 
     /// Expands every stored path to its full [`TREE_DEPTH`] form.
     ///
     /// Prefixes each with the canonical empty-subtree hashes for the levels it
-    /// omits — the constants a fold would substitute — which also decodes the
-    /// legacy delta form (see the type docs). Over-long paths pass through
+    /// omits — the constants a fold would substitute. Expects the per-path form and
+    /// does NOT decode the legacy delta form; run
+    /// [`Self::normalize_stored_paths()`] first. Over-long paths pass through
     /// unchanged for the caller's length check to reject.
     pub fn into_merkle_paths(self) -> impl ExactSizeIterator<Item = StorageLogMetadata> {
         self.merkle_paths.into_iter().map(|mut log| {
@@ -245,30 +292,90 @@ mod tests {
         assert_eq!(restored, paths);
     }
 
-    /// The load-bearing compatibility property: a witness serialised in the
-    /// legacy delta-compacted form decodes to exactly the same full paths, so a
-    /// reader can be upgraded before (or without) the producer.
-    #[test]
-    fn into_merkle_paths_decodes_the_legacy_delta_form() {
-        let paths = padded_paths();
-        // Rebuild what the old `push_merkle_path` would have stored: entry 0 full,
-        // entry i>0 truncated to its shared-prefix boundary with entry 0, which is
-        // always `max(depth_0, depth_i)` hashes.
+    /// The deleted encoder, verbatim: entry 0 uncompacted, every later entry cut at
+    /// its **common-prefix boundary** with entry 0 (`Iterator::position`) — not at
+    /// `max(depth_0, depth_i)`, which is only where that boundary lands for unrelated
+    /// keys.
+    fn legacy_form(paths: &[Vec<[u8; HASH_LEN]>]) -> WitnessInputMerklePaths {
         let mut legacy = WitnessInputMerklePaths::new(1);
         legacy.merkle_paths.push(meta(paths[0].clone()));
-        for (path, &depth) in paths.iter().zip(&DEPTHS).skip(1) {
-            let stored_len = depth.max(DEPTHS[0]);
-            legacy
-                .merkle_paths
-                .push(meta(path[TREE_DEPTH - stored_len..].to_vec()));
+        for path in &paths[1..] {
+            let fui = path
+                .iter()
+                .zip(&paths[0])
+                .position(|(h, h0)| h != h0)
+                .unwrap_or(TREE_DEPTH);
+            legacy.merkle_paths.push(meta(path[fui..].to_vec()));
         }
+        legacy
+    }
+
+    /// The load-bearing compatibility property: a witness serialised in the legacy
+    /// delta form normalises to exactly the per-path form, hence expands to exactly
+    /// the same full paths — so one reader serves both wire forms.
+    #[test]
+    fn normalize_decodes_the_legacy_delta_form() {
+        let paths = padded_paths();
+        let mut legacy = legacy_form(&paths);
+        assert!(legacy.is_legacy_delta_form());
+        legacy.normalize_stored_paths();
 
         let restored: Vec<_> = legacy.into_merkle_paths().map(|m| m.merkle_paths).collect();
         assert_eq!(restored, paths);
     }
 
+    /// The shape a trim cannot decode: entry `i` shares a **populated** prefix with
+    /// entry 0, so the delta boundary lands inside real sibling hashes. Reachable
+    /// whenever two hashed keys agree on `>= depth` leading bits — the tree then gives
+    /// them equal depths and identical siblings, and only an intervening write
+    /// separates the paths.
+    ///
+    /// Entries 0 and 1 here share every populated hash but the topmost, so
+    /// `fui = TREE_DEPTH - 1` against a true depth of `DEPTH`: the delta strips
+    /// `DEPTH - 1` real hashes, and a trim would leave the path 1 hash long.
     #[test]
-    fn trim_empty_prefixes_normalises_the_legacy_form_and_is_idempotent() {
+    fn normalize_restores_real_hashes_the_delta_stripped() {
+        const DEPTH: usize = 12;
+        let shared = padded(DEPTH, 200);
+        // Same populated depth, differing only in the hash at the top level — what a
+        // write to some third leaf near the root does to an otherwise identical path.
+        let mut mutated = shared.clone();
+        mutated[TREE_DEPTH - 1] = [0xC3; HASH_LEN];
+        let paths = vec![shared, mutated];
+
+        let mut legacy = legacy_form(&paths);
+        assert_eq!(
+            legacy.merkle_paths[1].merkle_paths.len(),
+            1,
+            "the delta must have stripped into the populated region for this to bite"
+        );
+        assert_eq!(
+            empty_subtree_prefix_len(&legacy.merkle_paths[1].merkle_paths),
+            0,
+            "a trim cannot see the stripped hashes — they are not empty constants"
+        );
+
+        assert_eq!(
+            legacy.normalize_stored_paths(),
+            (TREE_DEPTH - DEPTH, DEPTH - 1)
+        );
+        let stored: Vec<usize> = legacy
+            .merkle_paths
+            .iter()
+            .map(|m| m.merkle_paths.len())
+            .collect();
+        assert_eq!(stored, [DEPTH, DEPTH], "both entries keep their own depth");
+        assert_eq!(
+            legacy
+                .into_merkle_paths()
+                .map(|m| m.merkle_paths)
+                .collect::<Vec<_>>(),
+            paths
+        );
+    }
+
+    #[test]
+    fn normalize_reclaims_the_legacy_padding_and_is_idempotent() {
         let paths = padded_paths();
         // The real legacy shape: entry 0 padded to TREE_DEPTH, every later entry
         // cut to `max(depth_0, depth_i)` — i.e. *partially* stripped, so the
@@ -284,17 +391,19 @@ mod tests {
                 .push(meta(path[TREE_DEPTH - stored_len..].to_vec()));
         }
 
-        let reclaimed = legacy.trim_empty_prefixes();
-        assert_eq!(reclaimed, surplus);
-        // The point of the trim is to give the memory BACK, not just to shorten
-        // `len`: `drain` alone leaves the original allocation intact. Assert the
-        // capacity actually shrank, or a dropped `shrink_to_fit` would silently
-        // turn this into a no-op with every test still green.
+        assert!(legacy.is_legacy_delta_form());
+        // These depths are all distinct, so every entry is delta'd strictly inside
+        // entry 0's empty run: nothing to splice back, pure reclaim.
+        assert_eq!(legacy.normalize_stored_paths(), (surplus, 0));
+        // The point is to give the memory BACK, not just to shorten `len`: `drain`
+        // alone leaves the original allocation intact. Assert the capacity actually
+        // shrank, or a dropped `shrink_to_fit` would silently turn this into a no-op
+        // with every test still green.
         for log in &legacy.merkle_paths {
             assert_eq!(
                 log.merkle_paths.capacity(),
                 log.merkle_paths.len(),
-                "trim must release the surplus allocation, not just shorten len"
+                "normalising must release the surplus allocation, not just shorten len"
             );
         }
         let stored: Vec<_> = legacy
@@ -305,7 +414,7 @@ mod tests {
         assert_eq!(stored, DEPTHS);
         // Idempotent, and it did not lose information: the full form still comes back.
         let mut again = legacy.clone();
-        assert_eq!(again.trim_empty_prefixes(), 0);
+        assert_eq!(again.normalize_stored_paths(), (0, 0));
         assert_eq!(
             legacy
                 .into_merkle_paths()

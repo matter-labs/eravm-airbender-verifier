@@ -147,13 +147,16 @@ const VALIDATION_COMPUTATIONAL_GAS_LIMIT: u32 = u32::MAX;
 /// not performed here — `input.commitment_input` is ignored. `Verify::verify`
 /// runs this and then `verify_commitment` to complete the pipeline.
 pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionState> {
-    // Reclaim the witness's redundant empty-subtree prefixes before the VM runs:
-    // the witness stays resident until the Merkle fold at the end, so it is additive
-    // with every execution-time memory sink. Fold-invariant, so no accept/reject
-    // decision moves. Load-bearing against a legacy-format witness, whose surplus
-    // per entry is `depth(entry 0) - depth(entry i)` — and entry 0 is the smallest
-    // `(address, key)` touched, so one slot ground next to it inflates every entry.
-    input.merkle_paths.trim_empty_prefixes();
+    // Must be the FIRST statement: the legacy delta form is self-describing only
+    // through entry 0's stored length, which this call overwrites.
+    //
+    // Reclaiming here rather than at fold time is what bounds the memory: the
+    // witness stays resident until the Merkle fold at the end, so it is additive
+    // with every execution-time sink. The legacy surplus per entry is
+    // `depth(entry 0) - depth(entry i)`, and entry 0 is the smallest
+    // `(address, key)` touched — so one slot ground next to it would otherwise
+    // inflate every entry.
+    input.merkle_paths.normalize_stored_paths();
 
     // Pin the protocol version to the single one this verifier is built for.
     // `protocol_version` is operator-supplied and only *gates* commitment fields

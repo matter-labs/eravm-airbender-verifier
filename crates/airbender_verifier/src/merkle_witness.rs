@@ -169,40 +169,14 @@ pub(crate) fn get_bowp(
 
 /// Copy one entry's stored path into `out` (cleared first) as `ValueHash`es.
 ///
-/// No reconstruction, deliberately: the fold already prepends
-/// `empty_subtree_hash(d)` for every level a short path omits, which is exactly
-/// what the stored form leaves out. Splicing a prefix in first was redundant — and
-/// when it came from *another entry* (the old delta format's first path) it made
-/// every entry's size depend on entry 0's depth. Entry 0 is now just another entry.
-/// The caller-owned buffer keeps Pass 2 at one live path, no per-entry alloc.
+/// No reconstruction: the fold prepends `empty_subtree_hash(d)` for every level a
+/// short path omits, which is exactly what the per-path form leaves out, and any
+/// cross-entry reconstruction happened in
+/// `WitnessInputMerklePaths::normalize_stored_paths`. The caller-owned buffer keeps
+/// Pass 2 at one live path, no per-entry alloc.
 fn load_path_into(stored: &[[u8; HASH_LEN]], out: &mut Vec<ValueHash>) {
     out.clear();
     out.extend(stored.iter().map(|h| ValueHash::from(*h)));
-}
-
-/// The stored path to fold for entry `i`, resolving the one legacy shape the
-/// per-path form reads differently.
-///
-/// The old encoder stored an entry whose padded path *equalled* entry 0's as an
-/// empty vec, and its reader spliced entry 0's prefix back; folding empty as-is
-/// instead asserts all `TREE_DEPTH` levels are empty and would reject a valid
-/// batch. Reachable: a far-call to address `0x00` makes entry 0 the missing-key
-/// read `(0x8002, 0x00)`, after which a second missing key ground into the same
-/// empty subtree has a byte-identical path.
-///
-/// Resolved by borrowing, not by materialising entry 0's path into each empty
-/// entry — the latter lets a near-empty witness of N such entries expand to
-/// `N × depth(entry 0)` retained hashes. Sound either way: the chosen path still
-/// has to fold to the committed root.
-fn stored_path_for(metas: &[StorageLogMetadata], i: usize) -> &[[u8; HASH_LEN]] {
-    let own = &metas[i].merkle_paths;
-    if i > 0 && own.is_empty() {
-        // An empty path is also legal in the per-path form (populated depth 0), but
-        // only on a tree with no other leaf on the path — and then entry 0's path
-        // is empty too, so this is a no-op in that case.
-        return &metas[0].merkle_paths;
-    }
-    own
 }
 
 /// Verifies the committed `merkle_paths` witness against `old_root_hash` and
@@ -251,6 +225,20 @@ pub(crate) fn verify_paths_and_new_root(
         !metas.is_empty(),
         "root_hash unavailable after verify_proofs",
     );
+    // Pass 2 folds each stored path as-is, correct only for the per-path form. An
+    // un-normalised legacy witness would be silently mis-folded on the shape where
+    // its stripped prefix holds real sibling hashes (see
+    // `WitnessInputMerklePaths::normalize_stored_paths`), so reject instead of
+    // documenting the ordering. `execute` normalises as its first statement; this
+    // fires only if that call is removed or reordered.
+    //
+    // `==`, not `>=`: an over-long entry 0 is malformed, not legacy, and the
+    // per-entry bound below owns that case and its message.
+    anyhow::ensure!(
+        metas[0].merkle_paths.len() != TREE_DEPTH,
+        "merkle_paths is in the legacy delta-compacted form (entry 0 stored at the \
+         full TREE_DEPTH); `normalize_stored_paths` must run before any fold",
+    );
     // Pass 1: classify, key-bind, and map every entry to a `TreeInstruction`
     // before any fold, so a shape/binding error can't be preempted by a fold
     // error. Only the small per-entry `(TreeLogEntry, TreeInstruction)` is kept
@@ -288,8 +276,8 @@ pub(crate) fn verify_paths_and_new_root(
     // per-entry allocation.
     let mut root_hash = old_root_hash;
     let mut full = Vec::with_capacity(TREE_DEPTH);
-    for (i, (meta, (base, instruction))) in metas.iter().zip(instructions.into_iter()).enumerate() {
-        load_path_into(stored_path_for(&metas, i), &mut full);
+    for (meta, (base, instruction)) in metas.iter().zip(instructions.into_iter()) {
+        load_path_into(&meta.merkle_paths, &mut full);
         let op_root = ValueHash::from(meta.root_hash);
         if matches!(instruction, TreeInstruction::Read(_)) {
             anyhow::ensure!(
@@ -453,6 +441,63 @@ mod streaming_tests {
         let mut witness = WitnessInputMerklePaths::new(0);
         witness.merkle_paths = metas;
         witness
+    }
+
+    /// A key agreeing with `target` on the top `c` bits, so `target`'s populated
+    /// depth becomes `c + 1` once it is inserted — equivalently, the returned key
+    /// lands in `target`'s sibling subtree at fold index `255 - c`.
+    fn neighbour_sharing_top_bits(target: U256, c: usize) -> U256 {
+        let mut out = U256([0x5157_9CE9_1F0B_A3D1; 4]); // arbitrary low bits
+        let diverge = TREE_DEPTH - 1 - c;
+        for bit in diverge..TREE_DEPTH {
+            let (limb, mask) = (bit / 64, 1u64 << (bit % 64));
+            let set = if bit == diverge {
+                !target.bit(bit)
+            } else {
+                target.bit(bit)
+            };
+            if set {
+                out.0[limb] |= mask;
+            } else {
+                out.0[limb] &= !mask;
+            }
+        }
+        out
+    }
+
+    /// Leading (MSB-first) bits on which `a` and `b` agree. Two keys agreeing on the
+    /// top `p` bits share every ancestor at fold index `> 255 - p`.
+    fn shared_top_bits(a: U256, b: U256) -> usize {
+        (0..TREE_DEPTH)
+            .take_while(|i| a.bit(TREE_DEPTH - 1 - i) == b.bit(TREE_DEPTH - 1 - i))
+            .count()
+    }
+
+    /// `(hashed_key, read StorageLog)` for a fully specified `(address, slot)`.
+    /// `read_pair`'s `repeat_byte` addressing is too coarse to search the slot space.
+    fn read_pair_at(addr: H160, slot: H256, value: H256) -> (U256, StorageLog) {
+        let key = StorageKey::new(AccountTreeId::new(addr), slot);
+        (key.hashed_key_u256(), StorageLog::new_read_log(key, value))
+    }
+
+    /// First slot of `addr` whose hashed key shares an `accept`-able number of leading
+    /// bits with `target`.
+    ///
+    /// Test-scale stand-in for the attacker's offline grind: they own the contract, so
+    /// the 32-byte slot is free and `hashed_key = blake2s(pad12(address) ‖ slot)` needs
+    /// no chain state. Single-digit bit counts here, so a few hundred hashes against
+    /// the 2^28-2^31 a mainnet-depth tree would need.
+    fn grind_slot(addr: H160, target: U256, accept: impl Fn(usize) -> bool) -> (U256, H256) {
+        for n in 0u32..1 << 20 {
+            let mut bytes = [0u8; 32];
+            bytes[28..].copy_from_slice(&n.to_be_bytes());
+            let slot = H256(bytes);
+            let (hashed, _) = read_pair_at(addr, slot, H256::zero());
+            if accept(shared_top_bits(hashed, target)) {
+                return (hashed, slot);
+            }
+        }
+        panic!("no slot found in the search space");
     }
 
     // --- Real ACCEPT case: single missing-key read on the empty tree. --------
@@ -642,14 +687,24 @@ mod streaming_tests {
         assert_equivalent(witness_of(vec![meta]), vec![log], empty_root(), 0);
     }
 
-    /// The legacy encoder stored an entry whose padded path equalled entry 0's as
-    /// an EMPTY vec. Folding that as-is asserts every level is an empty subtree and
-    /// would reject a valid batch, so the fold resolves it to entry 0's path — by
-    /// borrow, so a witness of N empty entries costs O(1) memory, not N paths.
+    /// The legacy encoder stored an entry whose padded path equalled entry 0's as an
+    /// EMPTY vec — the degenerate `fui == TREE_DEPTH` case, so the splice restores
+    /// entry 0's populated path. Folding it as-is would instead assert every level is
+    /// an empty subtree and reject a valid batch.
+    ///
+    /// The fold knows none of this: after normalisation an empty stored path means
+    /// populated depth 0 and nothing else.
     #[test]
-    fn legacy_wholly_compacted_entry_folds_against_entry_0() {
-        let first = vec![[7u8; HASH_LEN], [8; HASH_LEN], [9; HASH_LEN]];
-        let metas = vec![
+    fn legacy_wholly_compacted_entry_normalises_to_entry_0s_path() {
+        // Entry 0 padded to TREE_DEPTH — the legacy discriminator — with a populated
+        // tail of three real hashes.
+        let tail = [[7u8; HASH_LEN], [8; HASH_LEN], [9; HASH_LEN]];
+        let mut first: Vec<[u8; HASH_LEN]> = (0..TREE_DEPTH - tail.len())
+            .map(|d| Blake2Hasher.empty_subtree_hash(d).0)
+            .collect();
+        first.extend(tail);
+
+        let mut witness = witness_of(vec![
             entry(
                 false,
                 false,
@@ -657,8 +712,9 @@ mod streaming_tests {
                 U256::zero(),
                 empty_root(),
                 H256::zero(),
-                first.clone(),
+                first,
             ),
+            // Wholly compacted: byte-identical to entry 0's padded path.
             entry(
                 false,
                 false,
@@ -668,6 +724,10 @@ mod streaming_tests {
                 H256::zero(),
                 vec![],
             ),
+            // An entry whose delta boundary lands exactly on entry 0's populated
+            // start: it already holds its whole populated path, so it is left alone.
+            // (A *shorter* stored path here would mean it shares entry 0's real
+            // siblings, and the splice would correctly restore them.)
             entry(
                 false,
                 false,
@@ -675,31 +735,41 @@ mod streaming_tests {
                 U256::from(2),
                 empty_root(),
                 H256::zero(),
-                vec![[1u8; HASH_LEN]],
+                vec![[1u8; HASH_LEN], [2; HASH_LEN], [3; HASH_LEN]],
             ),
-        ];
+        ]);
+        assert!(witness.is_legacy_delta_form());
+        let (reclaimed, restored) = witness.normalize_stored_paths();
+
+        let stored: Vec<&[[u8; HASH_LEN]]> = witness
+            .merkle_paths
+            .iter()
+            .map(|m| m.merkle_paths.as_slice())
+            .collect();
+        assert_eq!(stored[0], tail, "entry 0 keeps only its populated depth");
         assert_eq!(
-            stored_path_for(&metas, 0),
-            first.as_slice(),
-            "entry 0 is itself"
+            stored[1], tail,
+            "a wholly-compacted entry must be restored to entry 0's path, not left all-empty"
         );
         assert_eq!(
-            stored_path_for(&metas, 1),
-            first.as_slice(),
-            "a wholly-compacted entry must fold against entry 0's path, not all-empty"
+            stored[2],
+            [[1u8; HASH_LEN], [2; HASH_LEN], [3; HASH_LEN]],
+            "an entry that already holds its populated path needs neither splice nor trim"
         );
+        assert_eq!((reclaimed, restored), (TREE_DEPTH - tail.len(), tail.len()));
         assert_eq!(
-            stored_path_for(&metas, 2),
-            [[1u8; HASH_LEN]].as_slice(),
-            "a non-empty entry is untouched"
+            witness.normalize_stored_paths(),
+            (0, 0),
+            "normalisation is idempotent"
         );
     }
 
-    /// When entry 0 is itself empty (legal in the per-path form on a ~empty tree),
-    /// the fallback is a no-op — both are the same empty slice.
+    /// A per-path witness whose entry 0 is empty (legal on a ~empty tree) is not the
+    /// legacy form, so nothing is spliced and an empty entry stays empty — populated
+    /// depth 0 now means exactly that.
     #[test]
-    fn empty_entry_0_makes_the_fallback_a_no_op() {
-        let metas = vec![
+    fn empty_entry_0_is_not_mistaken_for_the_legacy_form() {
+        let mut witness = witness_of(vec![
             entry(
                 false,
                 false,
@@ -718,8 +788,28 @@ mod streaming_tests {
                 H256::zero(),
                 vec![],
             ),
-        ];
-        assert!(stored_path_for(&metas, 1).is_empty());
+        ]);
+        assert!(!witness.is_legacy_delta_form());
+        assert_eq!(witness.normalize_stored_paths(), (0, 0));
+        assert!(witness.merkle_paths[1].merkle_paths.is_empty());
+    }
+
+    /// The ordering guard: a legacy witness that reaches the fold un-normalised must
+    /// be rejected outright, not silently mis-folded.
+    #[test]
+    fn fold_rejects_an_un_normalised_legacy_witness() {
+        let (key, log) = read_pair(0x11, 0x22, H256::zero());
+        let full: Vec<[u8; HASH_LEN]> = (0..TREE_DEPTH)
+            .map(|d| Blake2Hasher.empty_subtree_hash(d).0)
+            .collect();
+        let meta = entry(false, false, 0, key, empty_root(), H256::zero(), full);
+
+        let err = verify_paths_and_new_root(witness_of(vec![meta]), vec![log], empty_root(), 5)
+            .expect_err("entry 0 stored at the full TREE_DEPTH is the legacy form");
+        assert!(
+            err.to_string().contains("legacy delta-compacted form"),
+            "unexpected error: {err}"
+        );
     }
 
     // --- Over-long path: rejected before any fold. ---------------------------
@@ -793,28 +883,7 @@ mod streaming_tests {
     /// and both must still verify to the same root.
     #[test]
     fn legacy_and_truncated_witnesses_verify_identically() {
-        use zksync_merkle_tree::{MerkleTree, PatchSet, TreeInstruction as TI, TREE_DEPTH};
-
-        /// A key agreeing with `target` on the top `c` bits, so `target`'s
-        /// populated depth becomes `c + 1` once it is inserted.
-        fn neighbour_sharing_top_bits(target: U256, c: usize) -> U256 {
-            let mut out = U256([0x5157_9CE9_1F0B_A3D1; 4]); // arbitrary low bits
-            let diverge = 255 - c;
-            for bit in diverge..TREE_DEPTH {
-                let (limb, mask) = (bit / 64, 1u64 << (bit % 64));
-                let set = if bit == diverge {
-                    !target.bit(bit)
-                } else {
-                    target.bit(bit)
-                };
-                if set {
-                    out.0[limb] |= mask;
-                } else {
-                    out.0[limb] &= !mask;
-                }
-            }
-            out
-        }
+        use zksync_merkle_tree::{MerkleTree, PatchSet, TreeInstruction as TI};
 
         // Missing-key reads: the shape a far-call protective read produces. Reads
         // leave the root unchanged, so `old_root == op.root_hash == root`.
@@ -896,8 +965,12 @@ mod streaming_tests {
             .expect("per-path-truncated witness must verify against the real root");
         assert_eq!(truncated, (root, 7));
 
-        let legacy = verify_paths_and_new_root(build(false), vm_logs.clone(), root, 7)
-            .expect("legacy delta-compacted witness must still verify");
+        // The legacy form must reach the fold through the normaliser — as it does in
+        // `execute` — and then agree with the per-path form exactly.
+        let mut legacy_witness = build(false);
+        let (reclaimed, restored) = legacy_witness.normalize_stored_paths();
+        let legacy = verify_paths_and_new_root(legacy_witness, vm_logs, root, 7)
+            .expect("legacy delta-compacted witness must still verify once normalised");
         assert_eq!(legacy, truncated, "the two encodings must agree");
 
         // The regression itself: under the plant the legacy encoding charges every
@@ -917,23 +990,241 @@ mod streaming_tests {
             stored(&build(true)),
         );
 
-        // And the legacy form normalises to exactly the truncated form, reclaiming
-        // the surplus, without changing the verdict.
+        // On this shape (all reads, so every entry is delta'd strictly inside entry
+        // 0's empty run) normalising is a pure reclaim: nothing to splice back, and
+        // the result is byte-identical to the per-path form.
         let mut normalised = build(false);
-        let reclaimed = normalised.trim_empty_prefixes();
         assert_eq!(
-            reclaimed,
-            stored(&build(false)) - stored(&build(true)),
-            "trimming must reclaim exactly the plant's surplus"
+            normalised.normalize_stored_paths(),
+            (stored(&build(false)) - stored(&build(true)), 0),
+            "normalising must reclaim exactly the plant's surplus and splice nothing"
+        );
+        assert_eq!(
+            (reclaimed, restored),
+            (stored(&build(false)) - stored(&build(true)), 0),
+            "the witness folded above went through the same normalisation"
+        );
+        assert_eq!(
+            normalised.normalize_stored_paths(),
+            (0, 0),
+            "normalisation is idempotent"
         );
         assert_eq!(
             normalised.merkle_paths,
             build(true).merkle_paths,
-            "trimming the legacy form must yield the per-path form"
+            "normalising the legacy form must yield the per-path form"
         );
+    }
+
+    /// Regression against a real tree for the shape where the legacy delta form needs
+    /// a decode rather than a trim, i.e. where `fui > TREE_DEPTH - d_i` and the
+    /// stripped prefix holds real sibling hashes. Reached by
+    /// `shared_top_bits(k_0, k_i) >= d_i` plus an intervening write; see
+    /// `WitnessInputMerklePaths::normalize_stored_paths` for why that happens.
+    ///
+    /// `legacy_and_truncated_witnesses_verify_identically` cannot reach it: reads-only
+    /// (an unmutated tree keeps `fui` inside the empty run), it plants a neighbour
+    /// forcing `d_0 != d_i`, and its legacy arm comes from the `max(d_0, d_i)`
+    /// formula rather than the real `position`-based encoder.
+    #[test]
+    fn legacy_delta_form_survives_an_intervening_write() {
+        use zksync_merkle_tree::{MerkleTree, PatchSet, TreeInstruction as TI};
+
+        // Fold index `j` is the sibling combined at `key.bit(j)`: j=255 is a child of
+        // the root, j=0 is leaf-adjacent, and a path of depth `d` occupies
+        // `j in [TREE_DEPTH - d, 255]`.
+        //
+        // Layout, picked so every quantity below is exact rather than probabilistic:
+        //   neighbours planted at shared-top-bits {0,1,2,4} => k_i's siblings at
+        //     j = 255,254,253,251 are non-empty and j=252 is EMPTY, so d_0 == d_i == 5.
+        //   shared_top_bits(k_0, k_i) == 8 >= d_i => ancestors coincide for j >= 248,
+        //     so the siblings match across the whole populated region.
+        //   shared_top_bits(k_w, k_i) == 3 => the write lands in the j=252 hole.
+        // => fui == 252 > TREE_DEPTH - d_i == 251: 4 stored hashes against a true
+        //    depth of 5, the dropped one being the planted neighbour's real hash.
+        const PLANT_BITS: usize = 4;
+        const SHARED_BITS: usize = 8;
+        const WRITE_BITS: usize = 3;
+
+        // Entry 0 is the batch's smallest raw `(address, key)` — on Era the
+        // AccountCodeStorage far-call read — then a system-contract write, then the
+        // attacker's contract, whose ~random 160-bit address sorts last. Witness order
+        // is raw `(shard_id, address, key)` per `sort_storage_access_queries`, so
+        // ordering by address is faithful and independent of the ground slot values.
+        let (addr0, addr_w, addr_i) = (
+            H160::from_low_u64_be(0x8002),
+            H160::from_low_u64_be(0x8003),
+            H160::from_low_u64_be(0xdead_beef),
+        );
+        let (k0, log0) = read_pair_at(addr0, H256::zero(), H256::zero());
+        // The attacker grinds their own slot against entry 0's fixed hashed key.
+        let (ki, slot_i) = grind_slot(addr_i, k0, |n| n == SHARED_BITS);
+        let (kw, slot_w) = grind_slot(addr_w, ki, |n| n == WRITE_BITS);
+        assert_eq!(shared_top_bits(k0, ki), SHARED_BITS);
+        assert_eq!(shared_top_bits(kw, ki), WRITE_BITS);
+
+        // A ladder of planted neighbours, deliberately skipping `WRITE_BITS` so the
+        // write has an empty sibling to create.
+        let mut tree = MerkleTree::new(PatchSet::default()).expect("tree");
+        let planted: Vec<usize> = (0..=PLANT_BITS).filter(|c| *c != WRITE_BITS).collect();
+        let leaves: Vec<TreeEntry> = planted
+            .iter()
+            .enumerate()
+            .map(|(n, &c)| {
+                TreeEntry::new(
+                    neighbour_sharing_top_bits(ki, c),
+                    n as u64 + 1,
+                    H256::repeat_byte(0x11),
+                )
+            })
+            .collect();
+        let next_index = leaves.len() as u64 + 1;
+        tree.extend(leaves).expect("extend");
+        let old_root = tree.latest_root_hash();
+
+        // Entry 0: missing-key read. Entry 1: the intervening insert. Entry 2: the
+        // attacker's missing-key read, ground next to entry 0.
+        let (_, log_i) = read_pair_at(addr_i, slot_i, H256::zero());
+        let written = H256::repeat_byte(0x77);
+        let log_w =
+            StorageLog::new_write_log(StorageKey::new(AccountTreeId::new(addr_w), slot_w), written);
+        let out = tree
+            .extend_with_proofs(vec![
+                TI::Read(k0),
+                TI::Write(TreeEntry::new(kw, next_index, written)),
+                TI::Read(ki),
+            ])
+            .expect("extend_with_proofs");
+
+        // The layout landed as designed: equal populated depths, and the write did
+        // not move entry 2's depth (its shared prefix is shorter than the plant's).
+        let depths: Vec<usize> = out.logs.iter().map(|l| l.merkle_path.len()).collect();
         assert_eq!(
-            verify_paths_and_new_root(normalised, vm_logs, root, 7).unwrap(),
-            truncated
+            (depths[0], depths[2]),
+            (PLANT_BITS + 1, PLANT_BITS + 1),
+            "depths: {depths:?}"
         );
+
+        // `padded_x[j]` is the sibling the fold uses at index `j`.
+        let pad = |own: &[ValueHash]| -> Vec<[u8; HASH_LEN]> {
+            let mut padded: Vec<[u8; HASH_LEN]> = (0..TREE_DEPTH - own.len())
+                .map(|d| Blake2Hasher.empty_subtree_hash(d).0)
+                .collect();
+            padded.extend(own.iter().map(|h| h.0));
+            padded
+        };
+        let padded: Vec<Vec<[u8; HASH_LEN]>> =
+            out.logs.iter().map(|l| pad(&l.merkle_path)).collect();
+
+        // The real deleted encoder: entry 0 uncompacted, every later entry cut at
+        // its common-prefix boundary with entry 0. No `max(d_0, d_i)` shortcut.
+        let legacy_stored = |i: usize| -> Vec<[u8; HASH_LEN]> {
+            if i == 0 {
+                return padded[0].clone();
+            }
+            let fui = padded[i]
+                .iter()
+                .zip(&padded[0])
+                .position(|(h, h0)| h != h0)
+                .unwrap_or(TREE_DEPTH);
+            padded[i][fui..].to_vec()
+        };
+
+        // The defect, stated as arithmetic: the common prefix reaches PAST entry 2's
+        // own empty run, so the stripped bytes are not all empty-subtree constants.
+        let fui = TREE_DEPTH - legacy_stored(2).len();
+        assert!(
+            fui > TREE_DEPTH - depths[2],
+            "the shape under test needs fui ({fui}) > TREE_DEPTH - d_i ({}); \
+             depths: {depths:?}",
+            TREE_DEPTH - depths[2],
+        );
+        assert_ne!(
+            legacy_stored(2)[0],
+            Blake2Hasher.empty_subtree_hash(fui).0,
+            "the stored path must begin with a REAL sibling, or the splice is not \
+             being exercised and a plain trim would have sufficed"
+        );
+
+        let build = |truncated: bool| {
+            let metas: Vec<StorageLogMetadata> = out
+                .logs
+                .iter()
+                .enumerate()
+                .map(|(i, log)| {
+                    let paths = if truncated {
+                        log.merkle_path.iter().map(|h| h.0).collect()
+                    } else {
+                        legacy_stored(i)
+                    };
+                    let (key, is_write) = [(k0, false), (kw, true), (ki, false)][i];
+                    entry(
+                        is_write,
+                        is_write,
+                        0,
+                        key,
+                        log.root_hash,
+                        H256::zero(),
+                        paths,
+                    )
+                })
+                .collect();
+            witness_of(metas)
+        };
+        let vm_logs = vec![log0, log_w, log_i];
+        let new_root = out.logs[2].root_hash;
+
+        // Decode layer: normalising — what `execute` does first — must reproduce the
+        // true padded paths. No fold involved, so a failure localises the defect.
+        // Index-by-index, because `assert_eq!` on the nested `Vec` dumps three
+        // 256-element hash arrays (~150 KB) without saying where it diverged.
+        let mut normalised = build(false);
+        assert!(normalised.is_legacy_delta_form());
+        let (_, restored) = normalised.normalize_stored_paths();
+        assert_eq!(
+            restored,
+            fui - (TREE_DEPTH - depths[0]),
+            "the splice must restore exactly the real siblings the delta stripped"
+        );
+        let decoded: Vec<Vec<[u8; HASH_LEN]>> = normalised
+            .clone()
+            .into_merkle_paths()
+            .map(|m| m.merkle_paths)
+            .collect();
+        for (i, (got, want)) in decoded.iter().zip(&padded).enumerate() {
+            assert_eq!(
+                got.len(),
+                want.len(),
+                "entry {i}: decoded to a wrong length"
+            );
+            let diff = got.iter().zip(want).position(|(a, b)| a != b);
+            assert!(
+                diff.is_none(),
+                "entry {i}: the legacy delta form decoded to the wrong sibling at fold \
+                 index {} — stored {} hashes against a populated depth of {}, so the \
+                 stripped prefix was NOT all empty-subtree constants and the fold \
+                 would substitute `empty_subtree_hash` for a real sibling",
+                diff.unwrap(),
+                legacy_stored(i).len(),
+                depths[i],
+            );
+        }
+        // Normalisation is the identity on the per-path form, so the two arms end up
+        // byte-identical — the property that lets one reader serve both wire forms.
+        assert_eq!(
+            normalised.merkle_paths,
+            build(true).merkle_paths,
+            "the normalised legacy form must equal the per-path form"
+        );
+
+        // Fold layer: both encodings must verify, and to the same result.
+        let truncated =
+            verify_paths_and_new_root(build(true), vm_logs.clone(), old_root, next_index)
+                .expect("per-path-truncated witness must verify against the real root");
+        assert_eq!(truncated, (new_root, next_index + 1));
+
+        let legacy = verify_paths_and_new_root(normalised, vm_logs, old_root, next_index)
+            .expect("legacy delta-compacted witness must verify once normalised");
+        assert_eq!(legacy, truncated, "the two encodings must agree");
     }
 }
