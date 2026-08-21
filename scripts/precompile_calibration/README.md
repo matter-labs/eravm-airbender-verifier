@@ -3,7 +3,24 @@
 Generate **synthetic, precompile-dominated batches** from a local zksync-era node
 to calibrate the cycle-cost model's precompile features. Targets the 5 unpriced
 features (`modexp`, `ec_pairing`, `ec_add`, `ec_mul`, `secp256r1_verify`) plus
-`sha256` (currently coeff 0.00). See the top-level cycle-model docs for the fit.
+`sha256` (currently coeff 0.00) and `ec_recover` (see below). See the top-level
+cycle-model docs for the fit.
+
+> **`ec_recover` needs this set too — and the committed one does not have it.**
+> Organic batches are full of ecrecovers, but at a near-CONSTANT volume (~one
+> signature per tx, 293–760 per batch), and a near-constant column is collinear
+> with the intercept: NNLS cannot identify a per-recover cost from it. Measured
+> consequence — the committed table says 11.47M cyc/recover, a refit on the same
+> corpus says 119k, and both predict organic batches equally well; an
+> ecrecover-flood batch is priced by whichever value the fit happened to park.
+> So `ec_recover_cycles` is in `PRECOMPILE_FEATURES` (residual-fit from *this*
+> set), the hammer has an `ecRecover` family, and `gen_inputs.py` emits
+> `ecrecover_fixed.hex`. The committed `synthetic_dataset.json` predates all
+> three (`ec_recover_cycles` ranges 1–8 there), so **`fit_cost_model.py` aborts
+> against it** with an identifiability error rather than replacing a real
+> coefficient with residual noise (~0 — which would be worse than the artifact).
+> Regenerating this set on a node is what clears it; see
+> `scripts/cycle_model/REFIT-RUNBOOK.md`.
 
 ## Adversarial hardening
 
@@ -33,7 +50,8 @@ its own batch. Tiers sweep the feature ~2–3 orders of magnitude:
 
 - input-dependent (`sha256`, `ecpairing`): tier by **input size** (light/medium/heavy)
 - fixed-cost (`modexp` — the circuit only takes ≤32B operands — `ecadd`, `ecmul`,
-  `secp256r1`): tier by **call count** (one input, driver sweeps `count`)
+  `secp256r1`, `ecrecover`): tier by **call count** (one input, driver sweeps
+  `count`)
 
 ## Pieces
 
@@ -75,6 +93,7 @@ precompile a well-conditioned coefficient.
 Curve/sig vectors are valid by construction but **verify before mass runs** — a
 bad point makes the precompile fail and cost nothing:
 ```sh
+cast call 0x0000000000000000000000000000000000000001 0x$(cat ecrecover_fixed.hex) # ecrecover → nonzero addr
 cast call 0x0000000000000000000000000000000000000006 0x$(cat ecadd_fixed.hex)   # ecadd → ok, 64B
 cast call 0x0000000000000000000000000000000000000008 0x$(cat ecpairing_light.hex) # ecpairing → ok, 32B
 # secp256r1 address is chain-specific (0x100 on RIP-7212); confirm era's address + that it returns 1

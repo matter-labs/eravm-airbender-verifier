@@ -92,6 +92,22 @@
     "r2": 0.9998214230451604
   },
   "calibration": {
-    "rich_addressing_share_max": 0.1154144709730982
+    "rich_addressing_share_max": 0.1154144709730982,
+    "feature_value_max": {
+      "decommit_cycles": 302653,
+      "far_call": 477516,
+      "decommit": 586,
+      "storage_write": 148339,
+      "uma_write": 3435559
+    },
+    "feature_value_max_source": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
+  },
+  "provenance": {
+    "guest_sha256": "9228b6e21c4d29795ac7f7be8225995a1678d5a7bc8df8544f8259f91751bb76",
+    "verifier_commit": "5644a923217e91914491915c4163f0caed90e26b (+ uncommitted PR#103 dep overlay: vm2 v0.6.3, zksync-protocol v0.153.14)",
+    "vm2_rev": "0.6.3 (git+https://github.com/matter-labs/vm2?tag=v0.6.3#be1e50b59b3ba1a5e4eda2ca7e01f33cf373d779)",
+    "protocol_version": "Version29",
+    "fit_date": "2026-08-20",
+    "dataset": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
   }
 }

@@ -44,7 +44,9 @@ def main() -> int:
     model = json.loads(Path(args.cost_table).read_text())
     rows = json.loads(Path(args.fixture).read_text())
     tot = model["total"]
-    cap = model.get("calibration", {}).get("rich_addressing_share_max", 0.0)
+    calibration = model.get("calibration", {})
+    cap = calibration.get("rich_addressing_share_max", 0.0)
+    value_max = calibration.get("feature_value_max", {})
     rich_coef = tot["features"].get("rich_addressing_op", 0.0)
 
     violations = []
@@ -53,15 +55,25 @@ def main() -> int:
         feats = feature_counts(r)
         pred = predict_row(tot["base"], tot["features"], feats)
         share = rich_coef * feats.get("rich_addressing_op", 0) / pred if pred > 0 else 0.0
-        # mirrors CycleEstimate: trusted = within the calibration envelope (the
-        # fixture uses no unpriced precompile, so is_reliable is not exercised)
-        trusted = cap <= 0.0 or share <= cap * EXTRAPOLATION_FACTOR
+        # mirrors CostModel::extrapolated_features — BOTH halves of the envelope:
+        # the arithmetic share and the per-feature volume fence. (The fixture uses
+        # no unpriced precompile and always has a real trace, so is_reliable is not
+        # exercised here.) Keep this in lockstep with the Rust guard: this script
+        # is the pre-commit gate, the Rust test the post-commit one, and they must
+        # not be able to disagree about which tables are safe.
+        over_volume = [
+            f for f, mx in value_max.items()
+            if mx > 0 and feats.get(f, 0) > mx * EXTRAPOLATION_FACTOR
+        ]
+        extrapolated = (cap > 0.0 and share > cap * EXTRAPOLATION_FACTOR) or over_volume
+        trusted = not extrapolated
         covered = pred * args.margin >= r["effective_cycles"]
         if trusted and not covered:
             verdict = "VIOLATION (trusted + under-predicted)"
             violations.append(r["label"])
         elif not trusted:
-            verdict = "rejected by envelope guard (safe)"
+            why = f"volume {over_volume}" if over_volume else "arithmetic share"
+            verdict = f"rejected by envelope guard, {why} (safe)"
         else:
             verdict = "covered"
         print(f"{r['label']:>24}  {r['effective_cycles']:>14,}  {pred:>14,.0f}"

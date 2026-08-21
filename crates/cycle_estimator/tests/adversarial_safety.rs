@@ -16,60 +16,49 @@
 //! `IncludeAndSeal` (see `CycleEstimate::fits`). The four rows exempted below
 //! are therefore the shapes production keeps rather than refuses.
 //!
-//! ⚠️ MIXED MEASUREMENT VINTAGES — read before adding or re-tuning a row. Each
-//! row carries a `guest` field (ignored by the deserializer, informational). Eight
-//! rows were measured on the PRE-DELEGATION guest (2026-07-09, cd46640); only
-//! `storage_reads_140k` was measured on the guest the committed table is fit
-//! against. An actual measured on a slower guest is INFLATED, which makes
-//! `covered` harder to satisfy — so a stale row is conservative (over-strict) for
-//! work the delegation guest made cheaper, and would be lenient only for work it
-//! made dearer, which is not the observed direction. The arithmetic and
-//! transient-storage rows are approximately guest-invariant (plain VM
-//! interpretation, no delegated crypto); a merkle-dominated row is NOT.
+//! ⚠️ MIXED VINTAGES — read before adding or re-tuning a row. Each row carries an
+//! informational `guest` field. Eight were measured on the PRE-DELEGATION guest
+//! (2026-07-09, cd46640); only `storage_reads_140k` is on the guest the committed
+//! table is fit against. A stale actual is INFLATED, which makes `covered` harder
+//! to satisfy — over-strict for work the delegation guest made cheaper, lenient
+//! only for work it made dearer, which is not the observed direction. Arithmetic
+//! and transient-storage rows are ~guest-invariant; a merkle-dominated row is not.
 //!
-//! That distinction retired one row. `storage_reads_80k` — 80,065 merkle leaves /
-//! 80,085 storage_application, 27,606,969,375 effective cycles = 344,807 cyc/leaf
-//! on the pre-delegation guest — became uncoverable by ANY correct current-guest
-//! table: the delegation guest does that same work at 189,924 cyc/leaf (1.816×)
-//! while the slot-axis coefficients fell only 1.776×, and coverage needs 1.632×.
-//! It is replaced by batch 900065 (`testdata/era_mainnet_batches/binary/`, declared
-//! synthetic in that directory's README): the same cold-slot-flood shape
-//! (storage_application/leaf 1.0001) at 1.75× the volume, measured on the fit
-//! guest, and held OUT of the 176-batch fit. The row's job — a tripwire against a
-//! re-attribution refit draining the storage/merkle coefficients (see the
-//! OPCODE_FLOORS notes in scripts/cycle_model/fit_cost_model.py) — is preserved
-//! and now rests on a measurement: 95.5% of this row's prediction is the slot
-//! axis, and against the CURRENTLY COMMITTED table it trips on a ≥7.53% drain of
-//! those three coefficients. That percentage is arithmetic on today's
-//! coefficients, not a durable property of the fixture — recompute it after any
-//! refit. It is also coarse: it catches a gross re-attribution, not drift (the
-//! 2026-08-19 reweight itself moved coefficients by >40%). The retired row's
-//! equivalent sensitivity cannot be stated at all, because it needs a
-//! current-guest actual that was never measured — two reconstructions of it
-//! disagree (7.5% vs 15.5%), which is precisely why a measured row is worth more
-//! than a derived one.
+//! That retired one row. `storage_reads_80k` (80,065 leaves, 344,807 cyc/leaf
+//! pre-delegation) became uncoverable by any correct current-guest table: the
+//! delegation guest does that work at 189,924 cyc/leaf (1.816×) while the
+//! slot-axis coefficients fell 1.776×, and coverage needs 1.632×. Replaced by
+//! batch 900065 — same cold-slot-flood shape at 1.75× the volume, measured on the
+//! fit guest. Its job is a tripwire against a refit draining the storage/merkle
+//! coefficients: 95.5% of its prediction is the slot axis, and it trips on a
+//! ≥7.53% drain of those three. That figure is arithmetic on today's
+//! coefficients — recompute after any refit — and it catches gross
+//! re-attribution, not drift (the 2026-08-19 reweight moved coefficients >40%).
 //!
-//! DELEGATION-WEIGHT EXPOSURE, checked. `effective_cycles` is
-//! `raw + 16·blake2 + 4·bigint + 4·keccak`, and those weights have no
-//! authoritative in-tree source (see DELEGATION_WEIGHTS in fit_cost_model.py;
-//! native_cost_conversion.md suggests a delegation may be ~2.5× heavier). This
-//! row is the most weight-exposed batch available — blake2 is 22.25% of its
-//! effective cycles versus a 1.90–6.70% range across the 176-batch corpus — so
-//! its verdict was tested against that uncertainty rather than assumed. Refitting
-//! with w(blake2) ∈ {8, 16, 24, 40} leaves it COVERED at every value, with the
-//! margin moving only 1.2048 → 1.1531 (safe direction as w falls). The reason is
-//! structural, not luck: blake2 is bound to slot count (r = 0.9977 against
-//! merkle_leaf_count; blake2 ≈ 10.55e6 + 3,287·leaves + 0.029·bytecode_bytes,
-//! R² = 0.9954), so a heavier weight lands on the very coefficient this row
-//! saturates — and at ~2,566 blake2/leaf marginal it sits BELOW the corpus's
-//! 3,287, so the refit over-charges it. Keep this row if the weights are revised;
-//! what a revision does move is absolute headroom against the fixed 2^36 budget
-//! (this batch spans 23.6e9 at w=8 to 35.5e9 at w=40), which is a question about
-//! the seal threshold, not about this assertion.
+//! DELEGATION WEIGHTS, checked not assumed. `effective_cycles = raw + 16·blake2 +
+//! 4·bigint + 4·keccak`, and those weights have no authoritative in-tree source.
+//! This row is the most exposed available (blake2 = 22.25% of its effective
+//! cycles vs 1.90–6.70% across the corpus), yet refitting at w(blake2) ∈
+//! {8,16,24,40} leaves it COVERED at every value, margin 1.2048 → 1.1531. That is
+//! structural: blake2 tracks slot count (r = 0.9977), so heavier weight lands on
+//! the coefficient this row saturates, and at ~2,566 blake2/leaf it sits below the
+//! corpus's 3,287 — the refit over-charges it. What a revision does move is
+//! absolute headroom against 2^36 (23.6e9 at w=8 to 35.5e9 at w=40), which is a
+//! question about the seal threshold, not this assertion.
 //!
-//! Re-measure the remaining eight when an era node is available; until then, do
-//! NOT "fix" a failure here by moving a coefficient or fencing a feature without
-//! first checking whether the row's actual predates the table's guest.
+//! Re-measure the other eight when an era node is available. Until then do NOT
+//! "fix" a failure here by moving a coefficient or fencing a feature without first
+//! checking whether the row's actual predates the table's guest.
+//!
+//! **Coverage gap.** All 9 rows sit in one neighbourhood — `decommit_cycles` ∈
+//! [4.7k, 5.3k], `far_call` ∈ [245, 461] — so the invariant is scoped to
+//! transient-storage / compute / memory / context / storage-read shapes. Two axes
+//! are untested and NOT equally guarded: the volume envelope fences the decommit
+//! shapes (fresh flood 8.2× beyond the organic max, thrash 3.6×), while a bare
+//! far-call flood is fenced only at batch scale (~437k calls/tx vs a 859,529
+//! trip) and rests on the `far_call` floor below that. `model.rs` unit-tests the
+//! mechanisms; no fixture pins them end-to-end. See
+//! `scripts/cycle_model/REFIT-RUNBOOK.md`.
 
 use serde::Deserialize;
 use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};

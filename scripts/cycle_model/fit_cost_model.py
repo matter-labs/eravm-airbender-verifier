@@ -32,8 +32,26 @@ per-phase cycles are ground-truth measurements, never model inputs.
 
 Reads `dataset.json` (has features + phase_cycles + raw_cycles). Outputs under
 --out: `cost_table.json` and `report.md`.
+
+The emitted table carries three things beyond the coefficients, each of which the
+estimator or CI enforces:
+
+  * `calibration` — the extrapolation envelope: the max organic arithmetic SHARE
+    plus the max organic VALUE of each fenced volume feature (ENVELOPE_FEATURES).
+    `CostModel::extrapolated_features` refuses to certify a batch beyond them.
+  * `provenance` — what guest/corpus the table describes. The fit REFUSES to emit
+    an unstamped table (pass --provenance/--guest-sha256/... or an explicit
+    --stale-reason), because a table with no identity cannot be checked for drift.
+  * only features an ONLINE producer can supply (TOTAL_EXCLUDE), enforced again on
+    the Rust side by `total_prices_no_offline_only_feature`.
+
+Two fail-loud guards protect the fit itself: a dataset missing a declared cost
+driver aborts instead of silently shrinking the model (REQUIRED_DATASET_FEATURES),
+and a precompile the synthetic set cannot identify aborts instead of replacing a
+real coefficient with residual noise (see residual_precompile_fit).
 """
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
@@ -107,10 +125,83 @@ TOTAL_EXCLUDE = {
 # rich_addressing_op / precompile_call, which scale with precompile calls) absorb
 # their cost and wreck organic accuracy (513xxx hold-out 0.45% -> 37%). Instead they
 # are fit on the RESIDUAL with the organic model frozen — see residual_precompile_fit.
+#
+# `ec_recover_cycles` belongs here even though it DOES appear organically: its
+# organic volume is near-constant (293-2,504 across the 176-batch corpus — every tx
+# does about one signature ecrecover, and secp256k1 is not delegated), and a
+# near-constant column is collinear with the intercept, so NNLS cannot identify its
+# per-unit cost. It lands wherever the base term leaves room: the pre-delegation
+# table carried 11.47M while an unfloored refit on the current corpus gives 230,993
+# — a ~50x swing, with both predicting organic batches equally well. Organic
+# accuracy is unaffected either way, but an ecrecover-flood batch is priced by
+# whichever value the fit happened to park, and `unpriced_used()` does not catch it
+# (it flags ABSENT safety-critical features, not present-but-meaningless ones).
+#
+# NOTE this makes the fit REFUSE to run against the current synthetic dataset: it
+# has no ecrecover family (`ec_recover_cycles` ranges 1-8 there, incidental tx
+# signature checks), so the coefficient is unidentifiable from it too. See the
+# identifiability guard in residual_precompile_fit; the real fix is an ecrecover
+# family in scripts/precompile_calibration/ (PrecompileHammer.ecRecover +
+# gen_inputs) measured on an era node.
+#
+# What that guard protects, now that OPCODE_FLOORS exists. The residual fit
+# REPLACES the organic coefficient, so an unidentifiable column used to mean
+# "priced at ~0 on a flood". Unreachable now for the six floored crypto
+# precompiles — apply_opcode_floors runs AFTER the residual update, raising a ~0
+# residual back to the floor. But `sha256_cycles` is in PRECOMPILE_FEATURES with
+# NO floor, and the residual fit really does move it (10,311 -> 1,620 on the
+# committed synthetic set). Do not downgrade the abort to a warning because "the
+# floors cover it" — they do not cover sha256.
 PRECOMPILE_FEATURES = [
     "mod_exp_cycles", "sha256_cycles", "ec_add_cycles", "ec_mul_cycles",
-    "ec_pairing_cycles", "secp256r1_verify_cycles",
+    "ec_pairing_cycles", "secp256r1_verify_cycles", "ec_recover_cycles",
 ]
+
+# Volume features fenced by the estimator's calibration envelope: the fit emits the
+# max organic value of each, and `CostModel::extrapolated_features` refuses to
+# certify a batch beyond `max * EXTRAPOLATION_FACTOR`. These are the counters the
+# known attack shapes must move — against the 176-batch fence a fresh-decommit
+# flood sits 8.2x beyond the organic `decommit_cycles` max and a repeat-decode
+# thrash 3.6x, and a linear model has nothing to say that far outside its corpus.
+# NB a bare far-call flood only trips the `far_call` entry at batch scale (~437k
+# calls per 80M-gas tx vs a 859,529 trip); below that its floor over-prices it
+# 2.4-4.0x. The fence does not price an attack; it declines to
+# certify one, so the seal gate falls back to sealing conservatively.
+#
+# Keep this list SHORT and volume-oriented: every entry is also a false-positive
+# risk on an unusually busy organic batch (the failure is a smaller batch, not a
+# wrong one, but it costs throughput). Widening the corpus widens the fence.
+ENVELOPE_FEATURES = [
+    "decommit_cycles", "far_call", "decommit", "storage_write", "uma_write",
+]
+
+# Features whose ABSENCE from the dataset must abort the fit instead of silently
+# shrinking the model. Both `_fit_block` and the total fit intersect their declared
+# feature list with `df.columns`, so a dataset that is missing a column simply
+# produces a model without it — and NNLS then parks that cost on whatever collinear
+# feature remains. That is not hypothetical: the committed table lost its three
+# setup drivers (used_bytecode_bytes 62.88 cyc/B, used_bytecode_count,
+# storage_key_count) and its `total` per-byte bytecode term in a single "regenerate"
+# commit, which is exactly the shape of a dataset measured without those columns.
+# The cost moved onto the collinear `decommit_cycles`, which happens to be online
+# and so happens to be safe — luck, not design.
+#
+# Precompile features are deliberately NOT required: they are legitimately ~0 (and
+# often absent) in an organic corpus, which is the entire reason for the residual
+# fit against the synthetic set.
+#
+# That exemption cannot be blanket, though: two are exercised by every ordinary
+# transaction, so their absence is a broken dataset, not a quiet corpus. Over the
+# 176-batch corpus `ec_recover_cycles` runs 293-2,504/batch and `sha256_cycles`
+# 6-5,942 — non-zero in 176/176. Dropping ec_recover_cycles drains
+# `transaction_count` to 0.00 and inflates `storage_read` 5.7x, no guard firing,
+# because NNLS re-parks the per-tx cost on whatever correlates.
+ALWAYS_PRESENT_PRECOMPILES = ["ec_recover_cycles", "sha256_cycles"]
+
+REQUIRED_DATASET_FEATURES = sorted(
+    ({f for feats in PHASE_FEATURES.values() for f in feats} - set(PRECOMPILE_FEATURES))
+    | set(ALWAYS_PRESENT_PRECOMPILES)
+)
 
 # Minimum guest cost per opcode-count feature, in effective cycles. The NNLS fit
 # prices these buckets from mainnet batches where they co-occur with (and get
@@ -349,8 +440,32 @@ def fit_asymmetric(X: np.ndarray, y: np.ndarray, tau: float, iters: int = 50):
     return coeffs, base, 1.0 - ss_res / ss_tot
 
 
+# Identifiability thresholds for a residual-fit precompile coefficient. A column
+# that barely varies, or that carries only a handful of incidental units, cannot
+# determine a per-unit cost — NNLS will return whatever the residual noise implies,
+# typically ~0, and the caller REPLACES the organic coefficient with it. Since these
+# are SAFETY_CRITICAL features, a spurious ~0 is an under-pricing hole precisely on
+# the flood vector the coefficient exists to price. The synthetic set is supposed to
+# sweep each target precompile over 2-3 orders of magnitude (see
+# scripts/precompile_calibration/README.md), so a column that fails these is a
+# missing hammer family, not a tight threshold.
+MIN_RESIDUAL_TIERS = 3        # distinct values, including the 0 of other families
+MIN_RESIDUAL_VOLUME = 100     # units in the most precompile-dominated batch
+
+
+def unidentifiable_precompiles(pdf: pd.DataFrame, cols) -> list:
+    """Residual-fit columns the synthetic set cannot determine a coefficient for."""
+    bad = []
+    for c in cols:
+        col = pdf[c]
+        if col.nunique() < MIN_RESIDUAL_TIERS or float(col.max()) < MIN_RESIDUAL_VOLUME:
+            bad.append((c, int(col.nunique()), float(col.max())))
+    return bad
+
+
 def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
-                            frozen_base: float, target_col: str) -> dict:
+                            frozen_base: float, target_col: str,
+                            allow_unidentified: bool = False) -> dict:
     """Freeze an organic (base + non-precompile) model and NNLS-fit the precompile
     coefficients on the residual `target - organic_prediction` over the
     precompile-dominated batches. No intercept: the base is frozen. Returns a
@@ -359,6 +474,27 @@ def residual_precompile_fit(pdf: pd.DataFrame, frozen_features: dict,
     used = [c for c in PRECOMPILE_FEATURES if c in pdf.columns]
     if not used or target_col not in pdf.columns:
         return {}
+    # Drop (or reject) columns the synthetic set cannot identify, BEFORE they are
+    # used: a skipped feature keeps its organic coefficient, because `used` is also
+    # the exclusion list for the frozen prediction below.
+    bad = unidentifiable_precompiles(pdf, used)
+    if bad:
+        detail = "; ".join(f"{c}: {n} distinct values, max {m:,.0f}" for c, n, m in bad)
+        if not allow_unidentified:
+            raise ValueError(
+                f"precompile dataset cannot identify a coefficient for: {detail}. "
+                f"The residual fit REPLACES the organic coefficient, so shipping this "
+                f"would price those precompiles at ~0 on a flood. Add a hammer family "
+                f"that sweeps each one (scripts/precompile_calibration/: "
+                f"PrecompileHammer.sol + gen_inputs.py + run_calibration.sh) and "
+                f"re-measure on an era node. Pass --allow-unidentified-precompiles to "
+                f"keep the organic coefficient instead (reference runs only)."
+            )
+        print(f"WARNING: keeping organic coefficients (unidentifiable here) for {detail}",
+              file=sys.stderr)
+        used = [c for c in used if c not in {b[0] for b in bad}]
+        if not used:
+            return {}
     # The residual coefficients REPLACE (table.update) any organic coefficient the
     # frozen model has for a feature in `used`, so the frozen prediction must
     # EXCLUDE those features' organic terms — otherwise their cost is counted in
@@ -439,6 +575,70 @@ def _confidence(df, col):
     return "ok" if std > 0 else "UNIDENTIFIED (no corpus variance)"
 
 
+def require_dataset_features(df: pd.DataFrame, allow_missing: bool) -> None:
+    """Abort when the dataset lacks a feature the model declares it prices.
+
+    See REQUIRED_DATASET_FEATURES: a missing column does not fail, it silently
+    shrinks the model and re-parks that cost on a collinear survivor.
+    """
+    missing = [f for f in REQUIRED_DATASET_FEATURES if f not in df.columns]
+    if not missing:
+        return
+    msg = (
+        f"dataset is missing declared cost drivers: {missing}. The fit would "
+        f"silently drop them and re-attribute their cost to whatever collinear "
+        f"feature survives (this is how the committed table lost its per-byte "
+        f"bytecode term). Re-measure with a current `cycle_bench` so every "
+        f"feature in PHASE_FEATURES is present, or pass --allow-missing-features "
+        f"if you deliberately want a reduced model."
+    )
+    if not allow_missing:
+        raise SystemExit(f"ERROR: {msg}")
+    print(f"WARNING: {msg}", file=sys.stderr)
+
+
+def build_provenance(args) -> dict:
+    """Identity of the guest/corpus this table describes (see the Provenance
+    struct in crates/cycle_estimator/src/model.rs).
+
+    An unstamped table is a model of an unknown guest: nothing downstream can
+    tell whether it still describes the binary it gates. So refuse to emit one
+    unless the caller either supplies the identity or says out loud why it is
+    unknown.
+    """
+    prov = {}
+    if args.provenance:
+        prov.update(json.loads(Path(args.provenance).read_text()))
+    for field in ("guest_sha256", "verifier_commit", "vm2_rev", "protocol_version",
+                  "fit_date"):
+        val = getattr(args, field, None)
+        if val:
+            prov[field] = val
+    if args.dataset_desc:
+        prov["dataset"] = args.dataset_desc
+    prov.setdefault("dataset", f"{args.dataset} (tau={args.tau})")
+    # The fit date is the one identity field this process always knows, and
+    # cycle_bench's manifest cannot carry it (it is written at MEASUREMENT time,
+    # possibly days earlier). Defaulting it here keeps the "unstamped" refusal
+    # pointed at the fields that are genuinely unknowable from inside the fit.
+    prov.setdefault("fit_date", datetime.date.today().isoformat())
+    if args.stale_reason:
+        prov["stale_reason"] = args.stale_reason
+    identity = ("guest_sha256", "verifier_commit", "vm2_rev", "protocol_version", "fit_date")
+    unknown = [f for f in identity if not prov.get(f)]
+    if unknown and not args.stale_reason:
+        raise SystemExit(
+            f"ERROR: refusing to emit an unstamped cost table — missing {unknown}. "
+            f"Pass --provenance <manifest.json> (cycle_bench writes one next to "
+            f"dataset.json) or the individual flags; or pass --stale-reason '<why "
+            f"this table is knowingly not a description of the current guest>' to "
+            f"ship it declared-stale."
+        )
+    for f in identity:
+        prov.setdefault(f, None)
+    return prov
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="artifacts/cycle_model/dataset.json")
@@ -449,9 +649,36 @@ def main():
     ap.add_argument("--tau", type=float, default=0.5,
                     help="expectile for the TOTAL fit; >0.5 penalizes UNDER-prediction "
                          "(safer seal gate). 0.5 = ordinary NNLS (default).")
+    ap.add_argument("--allow-missing-features", action="store_true",
+                    help="downgrade a dataset missing declared cost drivers from an "
+                         "error to a warning (reduced model; reference runs only)")
+    ap.add_argument("--allow-unidentified-precompiles", action="store_true",
+                    help="keep the organic coefficient for a precompile the synthetic "
+                         "set cannot identify, instead of aborting (reference runs only)")
+    ap.add_argument("--provenance", default=None,
+                    help="JSON manifest of the measurement identity (guest_sha256, "
+                         "verifier_commit, vm2_rev, protocol_version, fit_date); "
+                         "cycle_bench writes one next to dataset.json")
+    ap.add_argument("--guest-sha256", default=None,
+                    help="provenance: sha256 of the guest app.bin the truth was measured on")
+    ap.add_argument("--verifier-commit", default=None,
+                    help="provenance: verifier commit the guest + tooling were built from")
+    ap.add_argument("--vm2-rev", default=None,
+                    help="provenance: zksync_vm2 revision the features were traced with")
+    ap.add_argument("--protocol-version", default=None,
+                    help="provenance: protocol version of the corpus batches")
+    ap.add_argument("--fit-date", default=None, help="provenance: ISO date of this fit")
+    ap.add_argument("--dataset-desc", default=None,
+                    help="provenance: human description of the corpus (batch ranges, counts)")
+    ap.add_argument("--stale-reason", default=None,
+                    help="declare the emitted table knowingly stale (why, and what "
+                         "must happen before it can be trusted). Required when the "
+                         "identity fields are not supplied.")
     args = ap.parse_args()
 
+    provenance = build_provenance(args)
     df = load_dataset(Path(args.dataset))
+    require_dataset_features(df, args.allow_missing_features)
     pdf = load_dataset(Path(args.precompile_dataset)) if args.precompile_dataset else None
     feature_cols = [
         c for c in df.columns
@@ -478,7 +705,8 @@ def main():
         # Precompiles run during execution: residual-fit their coeffs into the
         # vm_execution phase (raw phase cycles) with the organic phase model frozen.
         if pdf is not None and phase == "vm_execution":
-            table.update(residual_precompile_fit(pdf, table, base, col))
+            table.update(residual_precompile_fit(
+                pdf, table, base, col, args.allow_unidentified_precompiles))
         if phase == "vm_execution":
             apply_opcode_floors(table)  # same safety floors as the total (gate uses total)
         result["phases"][phase] = {"features": table, "base": base, "r2": r2}
@@ -499,7 +727,8 @@ def main():
     # Add precompile coeffs via residual fit (organic total frozen) so their cost is
     # attributed to the precompile features, not to collinear generic opcodes.
     if pdf is not None:
-        pc = residual_precompile_fit(pdf, total_table, base, "effective_cycles")
+        pc = residual_precompile_fit(pdf, total_table, base, "effective_cycles",
+                                     args.allow_unidentified_precompiles)
         total_table.update(pc)
         report.append(f"\n## precompile residual fit ({len(pdf)} synthetic batches)")
         report.append("| feature | cost (cycles) |")
@@ -530,9 +759,24 @@ def main():
         for _, row in df.iterrows()
         if predict_row(base, total_table, row) > 0
     ]
+    # Second half of the envelope: the max organic VALUE of each fenced volume
+    # feature (see ENVELOPE_FEATURES). The share guard above cannot see a flood —
+    # a bytecode/decommit or far-call flood carries almost no arithmetic — so
+    # without these the estimator reports "within calibration" for a batch sitting
+    # 6-15x outside every counter the corpus ever showed.
     result["calibration"] = {
         "rich_addressing_share_max": max(rich_shares) if rich_shares else 0.0,
+        "feature_value_max": {
+            f: int(df[f].max()) for f in ENVELOPE_FEATURES if f in df.columns
+        },
+        "feature_value_max_source": args.dataset_desc or str(args.dataset),
     }
+    result["provenance"] = provenance
+    missing_envelope = [f for f in ENVELOPE_FEATURES if f not in df.columns]
+    if missing_envelope:
+        print(f"WARNING: no calibration envelope emitted for {missing_envelope} "
+              f"(absent from the dataset) — those features are unfenced",
+              file=sys.stderr)
     report.append(f"\n## total  (R^2 = {r2:.4f}, base = {base:,.0f})")
     report.append("| feature | cost (cycles) | confidence |")
     report.append("|---|---:|---|")
@@ -551,4 +795,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ValueError as e:
+        # The fit's own safety guards (identifiability, delegation weights) raise
+        # ValueError; a traceback adds nothing to a message that already says what
+        # to do about it.
+        sys.exit(f"ERROR: {e}")

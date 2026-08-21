@@ -18,13 +18,16 @@
 //!     --all-batches --app-bin-dir guest/dist/app --jobs 16 --out artifacts/cycle_model
 //! ```
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use rayon::prelude::*;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
-use zksync_cycle_model::{extract_features, run_guest, write_dataset, DatasetRow};
+use zksync_cycle_model::{
+    extract_features, run_guest, write_dataset, DatasetProvenance, DatasetRow,
+};
 use zksync_types::ProtocolVersionId;
 
 #[derive(Parser)]
@@ -55,10 +58,15 @@ struct Args {
 }
 
 /// Full measurement for one batch: native features + guest cycle measurement.
-fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<DatasetRow> {
+/// Returns the batch's OWN protocol version alongside the row — the provenance
+/// stamp must report what was measured, and a calibration guest is built with
+/// `--features cycle-markers`, which relaxes the version pin precisely so that
+/// batches older than `ProtocolVersionId::latest()` decode.
+fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<(DatasetRow, String)> {
     // v31 is a single canonical `AirbenderVerifierInput` (no version envelope):
     // the same decoded input feeds both the guest run and native feature extraction.
     let input = load_batch(bf).with_context(|| format!("loading batch {}", bf.number))?;
+    let version = format!("{:?}", input.system_env.version);
 
     let features = extract_features(&input)
         .with_context(|| format!("extracting features for batch {}", bf.number))?;
@@ -66,13 +74,43 @@ fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<DatasetRow> 
         .with_context(|| format!("running guest for batch {}", bf.number))?;
 
     tracing::info!(batch = bf.number, raw_cycles = guest.raw_cycles, "measured");
-    Ok(DatasetRow {
-        batch_number: bf.number,
-        features,
-        raw_cycles: guest.raw_cycles,
-        phase_cycles: guest.phase_cycles,
-        delegations: guest.delegations,
-    })
+    Ok((
+        DatasetRow {
+            batch_number: bf.number,
+            features,
+            raw_cycles: guest.raw_cycles,
+            phase_cycles: guest.phase_cycles,
+            delegations: guest.delegations,
+        },
+        version,
+    ))
+}
+
+/// The protocol version(s) actually observed across the measured batches. A
+/// corpus that spans versions says so — a single label would be a false stamp,
+/// and this is not theoretical: the committed table's corpus is entirely
+/// `Version29` while `latest()` is `Version31`.
+fn describe_versions(versions: &BTreeSet<String>) -> String {
+    match versions.len() {
+        0 => "unknown (no batch measured)".to_string(),
+        1 => versions.iter().next().cloned().unwrap_or_default(),
+        _ => format!(
+            "MIXED: {}",
+            versions.iter().cloned().collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+/// Compact description of the measured corpus for the provenance manifest, e.g.
+/// "49 batches 513601-513649".
+fn describe_corpus(inputs: &[BatchInputFile]) -> String {
+    match (
+        inputs.iter().map(|b| b.number).min(),
+        inputs.iter().map(|b| b.number).max(),
+    ) {
+        (Some(lo), Some(hi)) => format!("{} batches {lo}-{hi}", inputs.len()),
+        _ => format!("{} batches", inputs.len()),
+    }
 }
 
 fn main() -> Result<()> {
@@ -109,7 +147,7 @@ fn main() -> Result<()> {
     // in catch_unwind: the transpiler `panic!`s (e.g. "illegal instruction") on
     // some inputs, and an uncaught panic in a worker would abort the whole run
     // and lose every measurement. Catching turns it into a per-batch failure.
-    let results: Vec<Result<DatasetRow>> = pool.install(|| {
+    let results: Vec<Result<(DatasetRow, String)>> = pool.install(|| {
         inputs
             .par_iter()
             .map(|bf| {
@@ -126,10 +164,14 @@ fn main() -> Result<()> {
     });
 
     let mut rows = Vec::with_capacity(results.len());
+    let mut versions = BTreeSet::new();
     let mut failures = 0usize;
     for (bf, res) in inputs.iter().zip(results) {
         match res {
-            Ok(row) => rows.push(row),
+            Ok((row, version)) => {
+                rows.push(row);
+                versions.insert(version);
+            }
             Err(e) => {
                 failures += 1;
                 tracing::error!(batch = bf.number, "failed: {e:#}");
@@ -138,11 +180,22 @@ fn main() -> Result<()> {
     }
 
     write_dataset(&rows, &args.out)?;
+    // Stamp WHAT was measured alongside the numbers: the fit refuses to emit an
+    // unstamped cost table, and without this the operator would have to
+    // reconstruct the guest/vm2 identity by hand (which is how the committed
+    // table ended up unattributable).
+    let provenance = DatasetProvenance::collect(
+        Some(&app_bin_dir),
+        describe_versions(&versions),
+        describe_corpus(&inputs),
+    );
+    provenance.write(&args.out)?;
     tracing::info!(
         measured = rows.len(),
         failures,
         out = ?args.out,
-        "dataset written"
+        guest_sha256 = ?provenance.guest_sha256,
+        "dataset + provenance written"
     );
     if failures > 0 {
         anyhow::bail!("{failures} batch(es) failed; see errors above");

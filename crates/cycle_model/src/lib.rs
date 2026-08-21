@@ -7,9 +7,11 @@
 //! in [`zksync_era_airbender_cycles_tracer`] (both of which the sequencer uses);
 //! this crate builds the labelled dataset on top of them.
 pub mod dataset;
+pub mod provenance;
 pub mod runner;
 
 pub use dataset::{extract_features, write_dataset, DatasetRow};
+pub use provenance::DatasetProvenance;
 pub use runner::{run_guest, GuestMeasurement};
 
 // Re-export the shared schema/model + vm2 tracer so existing

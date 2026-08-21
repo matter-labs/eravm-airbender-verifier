@@ -18,6 +18,25 @@ Two halves, sharing one feature schema:
 
 The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
 
+> ### Status: refit for the delegation guest; three scope limits
+>
+> Reweighted 2026-08-19 against the current delegation-enabled guest
+> (`provenance.guest_sha256` identifies it). The staleness this note used to
+> describe is fixed — the pre-delegation table over-predicted that guest **2.05×**
+> (MAPE 105%), which is why every table now carries a stamp and why the nightly
+> drift job exists.
+>
+> - **Deliberately conservative by ~15%.** It over-predicts every batch of its own
+>   176-batch corpus, +9.7% to +20.5% (MAPE 15.13%) — that is `OPCODE_FLOORS`, not
+>   error. Not headroom: it is organic-only, and far tighter on a decommit flood.
+> - **The corpus is Version29; production runs Version31.** All 176 batches are
+>   v29 re-encoded to the current wire format. The *guest* is current, so the costs
+>   are current-guest costs; what is v29 is the batch content. Against the four
+>   available v31 batches the table runs −2.56% to +2.61%.
+> - **Two gaps need a local era node:** the synthetic precompile set (six crypto
+>   coefficients are pinned literals, not measurements) and re-measuring 8 of the 9
+>   adversarial fixtures. See **[REFIT-RUNBOOK.md](REFIT-RUNBOOK.md)**.
+
 ---
 
 ## Fitting / re-fitting the model
@@ -50,7 +69,9 @@ The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
    ```sh
    python -m pip install -r scripts/cycle_model/requirements.txt
    python scripts/cycle_model/fit_cost_model.py \
-       --dataset artifacts/cycle_model/dataset.json --out artifacts/cycle_model
+       --dataset artifacts/cycle_model/dataset.json \
+       --provenance artifacts/cycle_model/provenance.json \
+       --out artifacts/cycle_model
    cat artifacts/cycle_model/report.md
    ```
 
@@ -59,6 +80,26 @@ The committed, deployed model is `crates/cycle_estimator/model/cost_table.json`.
    coefficients from synthetic precompile-heavy batches (see
    `scripts/precompile_calibration/`); `--tau` sets the asymmetric-loss expectile
    for the total fit.
+
+   The fit **refuses to produce a table it cannot vouch for**. Three guards, each
+   of which has a real failure behind it:
+
+   | guard | fires when | why it is an error, not a warning |
+   |---|---|---|
+   | provenance | no `--provenance`/identity flags and no `--stale-reason` | an unstamped table is a model of an unknown guest; nothing downstream can detect its drift |
+   | `REQUIRED_DATASET_FEATURES` | the dataset lacks a feature `PHASE_FEATURES` declares | the fit would silently drop it and re-park its cost on a collinear survivor — how the committed table lost its per-byte bytecode term |
+   | precompile identifiability | a residual-fit precompile column has <3 tiers or max <100 units | the residual coefficient REPLACES the organic one, so an unidentifiable column prices that precompile at ~0 on a flood |
+
+   Escape hatches for reference runs only: `--allow-missing-features`,
+   `--allow-unidentified-precompiles`. A table produced with either must not be
+   committed.
+
+   Two blocks the fit emits besides the coefficients, both enforced downstream:
+   `calibration` (the extrapolation envelope — arithmetic share + per-feature
+   volume maxima, checked by `CostModel::extrapolated_features`) and `provenance`
+   (checked by the estimator's `embedded_table_declares_its_calibration_identity`
+   test). `TOTAL_EXCLUDE` keeps the aggregate predictor to features an *online*
+   producer supplies; `total_prices_no_offline_only_feature` re-checks it in Rust.
 
 ## Updating the deployed model
 
@@ -75,6 +116,19 @@ cargo test -p zksync-era-airbender-cycles-estimator   # re-parses + regression-c
 
 A malformed table or a feature name not in the `FeatureId` enum fails the build /
 tests (the JSON deserializes into typed `FeatureId` keys — a drift guard).
+
+`eval_adversarial.py` mirrors the Rust gate exactly (both halves of the envelope,
+same `EXTRAPOLATION_FACTOR` and margin) — keep them in lockstep, or the
+pre-commit and post-commit gates can disagree about which tables are safe.
+
+**Fixture vintage — the trap when the guest has moved.** `adversarial.json`'s
+`effective_cycles` are measured on whatever guest was current when they were
+taken (today: the pre-delegation one). A table refit against a *faster* guest
+therefore fails the invariant **spuriously**: the actuals are stale, not the
+table. Re-measure `adversarial.json` in the same pass as the refit, and never
+reconcile the two by loosening the invariant — a table may only ship once the
+invariant passes against **current-guest** actuals. See
+[REFIT-RUNBOOK.md](REFIT-RUNBOOK.md).
 
 ## Validating on a hold-out (do NOT fit on the test set)
 
@@ -97,6 +151,22 @@ real cycle counts — refresh the fixture:
 cargo test -p zksync-era-airbender-cycles-estimator --test model_regression
 # refresh fixture (rarely): regenerate from a fresh measured dataset.json
 ```
+
+**That test cannot see guest drift, by construction.** Both sides of its
+comparison are frozen committed data, so when the guest gets faster the fixture
+ages *with* the table and the test stays green while the model's real error grows
+— the pre-delegation table reached 2.05× that way, with this test passing
+throughout. Read it as "the table did not change unexpectedly", not as "the model
+is accurate". Note also that its fixture is **in-sample** for the current table:
+all 49 of its rows are in the 176-batch training corpus, so it is a tripwire, not
+a validation.
+
+The check that separates *the model changed* from *the thing being modelled
+changed* is the nightly drift job,
+`.github/workflows/cycle-model-drift.yaml`: it re-measures with the **current**
+guest and fails on excess *signed* error — under-prediction is the safety gate,
+over-prediction the staleness gate. It is nightly, not per-PR, because it builds a
+guest and runs real batches.
 
 ## Using the estimator (Rust API)
 
@@ -134,7 +204,8 @@ let est = estimate_from_features(
 //    applies a safety margin.
 if !est.is_reliable() { /* unpriced precompile — reject/split, don't trust `total` */ }
 if !est.fits(PER_PROOF_CYCLE_LIMIT, /*margin*/ 1.10) { /* seal early / split */ }
-// est.total = predicted effective/native cycles; est.conservative(m) = margin-padded; est.phases = breakdown.
+// est.total = predicted effective/native cycles; est.conservative(m) = margin-padded;
+// est.phases_insight = diagnostic breakdown — NEVER gate on it.
 ```
 
 Notes:
@@ -143,9 +214,25 @@ Notes:
 - `CycleFeatureTracer` is a **vm2 (fast VM)** tracer. The legacy VM has a
   different tracer interface, so the legacy path needs a sibling tracer filling
   the same `FeatureVector` (the model/estimator are VM-agnostic).
+  **Forgetting to attach one is not silent**: a batch that claims transactions
+  with an all-zero VM trace sets `trace_missing`, which makes `is_reliable()`
+  false. Without that, the missing-tracer case looks exactly like a legitimately
+  tiny batch (no crypto ⇒ nothing unpriced, zero arithmetic ⇒ inside the
+  envelope) and every gate passes unconditionally.
 - `merkle_leaf_count` is the distinct-slots-touched count (the witness does not
-  exist yet at sequencing time) — an estimate of the calibrated witness
-  quantity, so validate the deployed path on real batches.
+  exist yet at sequencing time). If you feed `FeatureId::StorageApplication`
+  (`1·reads + 2·writes` over distinct slots — what both tracers accumulate), you
+  are feeding **1.74×** the calibrated `|reads ∪ writes|` (measured over the
+  49-batch corpus, range 1.64–1.81), which inflates the prediction **+3.0%**. It
+  can never under-count, so it is safe — but it means the advertised MAPE does
+  not describe the deployed path.
+- `est.phases_insight` is diagnostic only. Besides the weak `setup` fit, its
+  drivers are offline-only features, so on the deployed path they are
+  structurally 0 — the `setup` number is not a rough estimate of setup cost, it
+  is not an estimate of it at all.
+- **The estimator is not a memory control.** On every measured decommit-flood
+  shape the guest heap is exhausted at roughly a third of the gas the cycle
+  budget binds at, with `fits()` still true. Peak memory needs its own criterion.
 
 ## Staying on the safe side
 
@@ -156,19 +243,44 @@ proved), so the estimate is used conservatively:
    a `SAFETY_CRITICAL_FEATURES` precompile the model prices at ~0 (a coefficient
    the corpus never constrained, e.g. ec_pairing/modexp). A margin can't rescue a
    zero coefficient, so `fits()` reports no fit for such a batch rather than
-   trusting it.
+   trusting it. Note what it does *not* catch: a precompile that IS present with
+   a *meaningless* coefficient (see `ec_recover` above) sails through.
 
    > ⚠️ "Reports no fit" is not "is rejected" — refusing is the consumer's job,
    > and today's consumer does not. zksync-era's `CyclesCriterion` never calls
    > `fits()`, gates `ProofWillFail` on the estimate being *trusted*, and answers
    > distrust with `IncludeAndSeal`. A new consumer must implement the refusal
    > itself.
-2. **Safety margin** — `conservative(margin)` / `fits(limit, margin)` pad the
+2. **Missing-trace guard** — an all-zero VM trace on a batch that claims work
+   makes `is_reliable()` false (`trace_missing`), so an unwired tracer produces a
+   loud signal instead of a small trustworthy-looking number. On era's current
+   consumer that signal means *seal this batch now*, not *reject this tx* — see
+   the warning above.
+3. **Calibration envelope** — `is_within_calibration()` / `fits()` also decline a
+   batch outside the corpus: by arithmetic *share* (the compute vector) and by
+   raw *volume* on the fenced counters (`decommit_cycles`, `far_call`, `decommit`,
+   `storage_write`, `uma_write`). The volume half declines to certify the
+   bytecode/decommit shapes — a fresh flood sits 8.2× beyond the organic
+   `decommit_cycles` max, a repeat-decode thrash 3.6× — where a linear model has
+   nothing to say. A bare far-call flood it covers only at batch scale — ~437k
+   calls per 80M-gas tx against a 859,529 trip, so two such txs trip it and one
+   does not; below that the `far_call` floor over-prices the shape 2.4–4.0×. Do
+   **not** retire the arithmetic-share half
+   until the frame-churn / stack-clear vector has a cost feature of its own: that
+   guard is the only thing rejecting it today, and it does so incidentally.
+4. **Safety margin** — `conservative(margin)` / `fits(limit, margin)` pad the
    prediction. The model systematically under-predicts a couple of percent
    (hold-out: 43/49 batches, worst −1.83%), so ~1.05–1.10 covers ordinary
    variance; pick per risk tolerance.
-3. **Calibrate precompile costs from synthetic batches** so the priced set is
+5. **Calibrate precompile costs from synthetic batches** so the priced set is
    sound and complete — the real fix behind the coverage guard.
+
+The invariant these add up to — *no batch is both trusted and materially
+under-predicted* — is **conditional on host-side properties** of the verifier
+(bytecode decoded once per batch, stack clearing not attacker-amplifiable,
+`decommit_code` not repeat-hammered) and empirically scoped to the adversarial
+fixtures. The premises are enumerated in `crates/cycle_estimator/src/lib.rs`;
+each is a constraint on future verifier/vm2 changes, not a proven property.
 
 ### Calibrating precompile costs (synthetic batches)
 
@@ -192,13 +304,37 @@ coverage guard is what keeps it from silently producing an under-estimate.
   plus one per verify() phase (`setup`, `vm_execution`, `merkle_verification`,
   `commitment`) over raw phase cycles, each `cycles = base + Σ coeff·feature`,
   fit by non-negative least squares. The total is the number to gate on.
-- **Phase drivers**: `vm_execution` ← opcode-family + crypto counts;
-  `merkle_verification` ← merkle_leaf_count + state_diff_count (proof + tree
-  update); `setup` ← used_bytecode_bytes/count + storage_key_count (bytecode
-  hashing dominates, ~63 cyc/byte); `commitment` ← pubdata_bytes (near-constant).
-- **Hold-out accuracy** (fit on 122 batches, validated on 49 disjoint): total
-  R²=0.9991, MAPE 0.45%; setup & merkle_verification R²≈1.0000; commitment is
-  near-constant so its R² is a low-variance artifact (absolute MAPE ~0.7%).
+- **Phase drivers** *as declared* in `PHASE_FEATURES`: `vm_execution` ←
+  opcode-family + crypto counts; `merkle_verification` ← merkle_leaf_count +
+  state_diff_count (proof + tree update); `setup` ← used_bytecode_bytes/count +
+  storage_key_count (bytecode hashing dominates, ~63 cyc/byte measured);
+  `commitment` ← pubdata_bytes (near-constant).
+- **A history worth knowing before the next refit.** An earlier table's `setup`
+  block silently lost all three bytecode/storage-key columns, because the fit
+  intersected its declared feature list with the dataset's columns and continued
+  without them. The per-byte cost did not vanish, it changed **carrier**: `total`
+  priced `decommit_cycles` at 9,732 (= 152.1 cyc/byte) where it had priced
+  `used_bytecode_bytes` at 152.4. Those two are collinear over the corpus
+  (`decommit_cycles × 64 / used_bytecode_bytes ∈ [0.987, 0.996]`, corr 1.0000), so
+  NNLS was free to pick either — and it happened to pick the one an online
+  producer can supply. Luck, not design. `TOTAL_EXCLUDE` +
+  `total_prices_no_offline_only_feature` now make that outcome mandatory, and
+  `REQUIRED_DATASET_FEATURES` makes the silent drop impossible to repeat. The
+  current table carries all three drivers again.
+- **Why `phases_insight` still must never gate.** Not because `setup` fits badly —
+  offline it is near-exact (R² = 0.9999995, MAPE 0.02%) — but because it fits well
+  *on features no online producer supplies*. All three drivers are
+  `OFFLINE_ONLY_FEATURES`, so on the deployed path `setup` collapses to
+  `base + 2110·merkle_leaf_count`. The offline precision is what makes the online
+  number look credible; it is not an estimate of setup cost at all.
+- **Accuracy, and which guest each number describes.** On the 176-batch training
+  corpus (Version29 batches, current guest): total R² = 0.9998, MAPE 15.13%,
+  every batch over-predicted +9.7%..+20.5% — the `OPCODE_FLOORS` bias, not error.
+  `merkle_verification` MAPE 0.10%, `setup` 0.02%, `commitment` 0.68%. Against the
+  four available Version31 batches: −2.56% to +2.61%. The pre-floors, pre-reweight
+  figures often quoted for this model (MAPE 0.45% on a 49-batch split) describe a
+  different table *and* a different guest. The deployed path adds a further ~+3%
+  from the `merkle_leaf_count` proxy, so none of these describe it exactly.
 
 ## Tests
 
