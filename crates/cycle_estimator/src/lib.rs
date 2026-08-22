@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! Airbender guest cycle-count model.
 //!
 //! Predicts how many Airbender RISC-V guest cycles a batch will cost when
@@ -6,7 +7,7 @@
 //! per-proof cycle limit while it is being built.
 //!
 //! This crate is VM-agnostic: it defines the [`FeatureVector`] schema and the
-//! fitted [`CostModel`], and exposes the batch-level inputs ([`BatchContext`])
+//! measured [`CostTable`], and exposes the batch-level inputs
 //! and result ([`CycleEstimate`]). It does NOT observe a VM — the vm2 tracer
 //! that fills the feature vector lives in the sibling
 //! `zksync-era-airbender-cycles-tracer` crate, and zksync-era has its own
@@ -17,30 +18,26 @@
 //!
 //! # Premises of the safety invariant
 //!
-//! The goal — *no batch is both trusted by [`CycleEstimate::fits`] and
-//! materially under-predicted* — is a property of the model AND the host it
-//! models, checked against a finite fixture set. Break one of these and the
-//! invariant goes with it:
+//! The goal — *no batch is both trusted by the gate and materially under-predicted* —
+//! is a property of the model AND the host it models, checked against a finite fixture
+//! set. Break one of these and the invariant goes with it.
 //!
-//! 1. **Each bytecode byte is decoded at most once per batch.** Holds while the
-//!    program cache is unbounded. Under a cache cap, a cyclic working set larger
-//!    than the cap re-decodes per far call: 46.25M guest cycles per 2 MiB, up to
-//!    1,006× the prediction, reported as a fit. Fenced today only because such a
-//!    set also blows through the `decommit_cycles` envelope.
-//! 2. **Per-frame stack clearing is not attacker-amplifiable.** A frame-churn
-//!    loop dirtying the pooled stack costs ~730k host cycles/iteration vs ~20k
-//!    predicted (36.5×; 46.1× with an in-place-clear variant). Rejected only
-//!    *incidentally*, by [`model::Calibration::rich_addressing_share_max`].
-//! 3. **`World::decommit_code` is not repeat-hammered.** A repeat query
-//!    re-resolves the bytes O(len) while vm2 refunds the burn and emits no
-//!    `CycleStats::Decommit` — the work moves no feature and no fence sees it.
-//!    Magnitude **unmeasured**: estimates on record disagree (~4× re-resolve,
-//!    ~70× cache-hit rebuild), so the direction is established and any single
-//!    multiplier is not. Pricing it needs a hook vm2 does not expose.
-//! 4. **Precompile coefficients bound their true cost.** Enforced for *unseen*
-//!    precompiles by [`CostModel::unpriced_used`]; a present-but-underdetermined
-//!    coefficient is not (`ec_recover_cycles` barely varies organically, so its
-//!    fitted value is an artifact in whichever direction the fit landed).
+//! 1. **Each bytecode byte is decoded at most once per batch.** Holds while the program
+//!    cache is unbounded. Under a cache cap a cyclic working set larger than the cap
+//!    re-decodes per far call, which no feature would see. Re-check before adding a cap.
+//! 2. **Frame churn cannot be amplified past the calibrated domain.** Reaching the ceiling
+//!    needs ~1.68M near-call iterations; the domain check declines above ~314k. Previously
+//!    this rested on an arithmetic-share heuristic, now removed.
+//! 3. **A repeat `DECOMMIT` is priced.** It re-resolves bytes O(len) while vm2 refunds the
+//!    burn and emits no `CycleStats::Decommit`. Counted via that absence and bounded at the
+//!    largest deployable bytecode. vm2 PR #130 removes the dead work.
+//! 4. **Every precompile rate bounds its true cost over reachable inputs.** Verified by
+//!    input sweeps: `mod_exp` linear in exponent bits and `ec_mul` saturating in scalar
+//!    bits, both invisible to the tracer and so bounded at the maximum; `ec_pairing`
+//!    carries its pair count and is measured per pair. **The open case is `arith_div_op`**
+//!    — the family designed to find the worst divisor path is dead in the corpus, so its
+//!    bound is the worst *measured* regime, on the one axis that alone approaches the
+//!    ceiling.
 //!
 //! # Cycles only — not a memory control
 //!
@@ -53,11 +50,9 @@ pub mod estimator;
 pub mod features;
 pub mod model;
 
-pub use estimator::{assemble_feature_vector, estimate_from_features, BatchContext, CycleEstimate};
-pub use features::{
-    FeatureId, FeatureVector, OFFLINE_ONLY_FEATURES, SAFETY_CRITICAL_FEATURES, VM_TRACE_FEATURES,
-};
+pub use estimator::{estimate_from_features, CycleEstimate};
+pub use features::{FeatureId, FeatureVector, VM_TRACE_FEATURES};
 pub use model::{
-    Calibration, CostModel, LinearModel, Provenance, EMBEDDED_COST_TABLE,
-    SHARE_EXTRAPOLATION_FACTOR, VOLUME_EXTRAPOLATION_FACTOR,
+    Base, CostEntry, CostTable, Provenance, TableProvenance, EMBEDDED_COST_TABLE,
+    PROVING_CYCLE_CEILING,
 };

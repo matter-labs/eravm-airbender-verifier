@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs};
-use zksync_cycle_model::{extract_features, CostModel};
+use zksync_cycle_model::{extract_features, CostTable};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -28,20 +28,32 @@ fn main() -> Result<()> {
     };
     let inputs = resolve_batch_inputs(&batches_dir, sel, all).context("resolving batches")?;
 
-    let model = CostModel::embedded();
-    println!("batch_number,predicted_effective_cycles,unpriced");
+    let table = CostTable::embedded();
+    println!("batch_number,predicted_effective_cycles,untrusted,extrapolating");
     for bi in inputs {
         let input = load_batch(&bi).with_context(|| format!("loading batch {}", bi.number))?;
         let fv = extract_features(&input)
             .with_context(|| format!("extracting features for batch {}", bi.number))?;
-        let total = model.predict_total(&fv);
-        let unpriced = model.unpriced_used(&fv);
-        let unpriced_str = if unpriced.is_empty() {
-            "none".to_string()
-        } else {
-            format!("{unpriced:?}")
+        let est = table.estimate(&fv);
+        // Both trust signals are reported, not just one. A prediction is only as good
+        // as the weakest thing it rests on, and the two failure modes are different:
+        // `untrusted` means an operation's PRICE is not dependable, `extrapolating`
+        // means the price may be fine but this batch is outside the range it was
+        // measured over.
+        let fmt = |v: &[_]| {
+            if v.is_empty() {
+                "none".to_string()
+            } else {
+                format!("{v:?}")
+            }
         };
-        println!("{},{},{}", bi.number, total, unpriced_str);
+        println!(
+            "{},{},{},{}",
+            bi.number,
+            est.total,
+            fmt(&est.untrusted),
+            fmt(&est.extrapolating)
+        );
     }
     Ok(())
 }

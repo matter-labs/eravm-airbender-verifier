@@ -15,10 +15,9 @@ pub use provenance::DatasetProvenance;
 pub use runner::{run_guest, GuestMeasurement};
 
 // Re-export the shared schema/model + vm2 tracer so existing
-// `zksync_cycle_model::{FeatureId, CostModel, ...}` paths keep working and
+// `zksync_cycle_model::{FeatureId, ...}` paths keep working and
 // callers need only this crate.
 pub use zksync_era_airbender_cycles_estimator::{
-    estimate_from_features, BatchContext, CostModel, CycleEstimate, FeatureId, FeatureVector,
-    LinearModel,
+    estimate_from_features, CostTable, CycleEstimate, FeatureId, FeatureVector,
 };
 pub use zksync_era_airbender_cycles_tracer::CycleFeatureTracer;

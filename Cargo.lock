@@ -6215,6 +6215,7 @@ version = "31.1.1"
 dependencies = [
  "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]
