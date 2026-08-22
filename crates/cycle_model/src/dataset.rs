@@ -43,39 +43,16 @@ pub fn extract_features(input: &AirbenderVerifierInput) -> anyhow::Result<Featur
         features.add(FeatureId::PubdataBytes, pubdata.len() as u64);
     }
 
-    // Setup-phase drivers: `verify_bytecode_hash` over every used bytecode, plus
-    // building the storage view (read/write keys) and materializing the initial
-    // heap — all before the VM runs, so invisible to the vm2 tracer.
-    let bytecode_bytes: u64 = input
-        .vm_run_data
-        .used_bytecodes
-        .values()
-        .map(|words| (words.len() * 32) as u64)
-        .sum();
-    features.add(FeatureId::UsedBytecodeBytes, bytecode_bytes);
-    features.add(
-        FeatureId::UsedBytecodeCount,
-        input.vm_run_data.used_bytecodes.len() as u64,
-    );
-    let wbs = &input.vm_run_data.witness_block_state;
-    features.add(
-        FeatureId::StorageKeyCount,
-        (wbs.read_storage_key.len() + wbs.is_write_initial.len()) as u64,
-    );
-    features.add(
-        FeatureId::InitialHeapWords,
-        input.vm_run_data.initial_heap_content.len() as u64,
-    );
-
-    // Commitment-phase drivers: keccak over the serialized state diffs and
-    // system logs (pubdata blob hashing is captured by PubdataBytes above).
+    // The offline-only setup/commitment drivers that used to be collected here
+    // (used_bytecode_bytes/-count, storage_key_count, initial_heap_words,
+    // system_log_count) are gone from the schema. They existed to make the per-phase
+    // `setup` predictor fit well offline, and no online producer could supply them —
+    // the sequencer passed zeros while the fit had priced them, a train/serve skew
+    // that reads as an under-estimate. The per-phase predictors had no consumer, so
+    // both went together.
     if let Some(state_diffs) = finished.state_diffs.as_ref() {
         features.add(FeatureId::StateDiffCount, state_diffs.len() as u64);
     }
-    features.add(
-        FeatureId::SystemLogCount,
-        finished.final_execution_state.system_logs.len() as u64,
-    );
     Ok(features)
 }
 

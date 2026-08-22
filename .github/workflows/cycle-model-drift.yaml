@@ -104,7 +104,7 @@ jobs:
       - name: Compare the shipped table against fresh truth
         run: |
           python3 -m pip install --quiet -r scripts/cycle_model/requirements.txt
-          python3 scripts/cycle_model/eval_holdout.py \
+          python3 scripts/cycle_model/check_drift.py \
             --cost-table crates/cycle_estimator/model/cost_table.json \
             --dataset artifacts/drift/dataset.json \
             --max-under-pct "$MAX_UNDER_PCT" \

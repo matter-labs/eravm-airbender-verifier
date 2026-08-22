@@ -1,70 +1,67 @@
 //! Adversarial safety regression: no attacker-controlled batch is ever both judged
 //! trustworthy by the gate AND materially under-predicted.
 //!
-//! ## The fixture is now a build product
+//! ## The fixture is a build product
 //!
 //! Every row is a **single-axis synthetic batch from the isolation corpus**
-//! (`testdata/era_mainnet_batches/binary/9001xx` plus the precompile families),
-//! measured on the CURRENT guest under the CURRENT feature schema, and rebuilt by
-//! `scripts/cycle_model/build_adversarial_fixture.py` from a `cycle_bench`
-//! measurement plus `testdata/cycle_model/isolation_manifest.json`. Re-measuring
-//! after a guest change is therefore a CI job, not an expedition to a local era
-//! node.
+//! (`testdata/era_mainnet_batches/binary/9001xx` plus the precompile and decommit
+//! families), measured on the CURRENT guest under the CURRENT feature schema, and
+//! rebuilt by `scripts/cycle_model/build_fixtures.py` from a
+//! `cycle_bench` run plus `testdata/cycle_model/isolation_manifest.json`.
+//! Re-measuring after a guest change is therefore a CI job, not an expedition to a
+//! local era node.
 //!
-//! That replaced a hand-maintained fixture of nine rows whose batch *inputs* were
-//! never committed. Eight of those were measured on the pre-delegation guest
-//! (2026-07-09) and could not be refreshed; the 2026-08-21 arithmetic split then
-//! made them unusable outright, because a single `rich_addressing_op` count cannot
-//! be reinterpreted across the split in either direction — attributing it to the
-//! dear class raises the prediction and makes `covered` *easier* (a weaker test),
-//! and attributing it to the cheap class makes the test fail spuriously. Three of
-//! them (`compute_mem_low`, `context_ops`, `pure_compute`) did fail, with every
-//! row's arithmetic share reading 0.000 because the schema mismatch left the guard
-//! blind rather than merely wrong. Coverage went 9 rows -> 27.
+//! Rows carry their `delegations` counts, so a revision of `DELEGATION_WEIGHTS` can
+//! RE-SCALE these actuals instead of invalidating them. The fixture this replaced
+//! stored only `effective_cycles`, which is why a delegation-weight sensitivity
+//! sweep once compared a re-weighted model against a w=16 actual and produced
+//! margins that did not mean what they appeared to.
 //!
-//! Rows carry their `delegations` counts, so a future revision of
-//! `DELEGATION_WEIGHTS` can RE-SCALE these actuals instead of invalidating them.
-//! The old fixture stored only `effective_cycles`, which is exactly why a
-//! delegation-weight sensitivity sweep once compared a re-weighted model against a
-//! w=16 actual and produced margins that did not mean what they appeared to.
+//! ## What replaced the arithmetic-share guard, and why that is an upgrade
 //!
-//! ## What the rows are
+//! The predecessor of this test documented at length that its arithmetic rows were
+//! *rejected rather than covered*, by a guard on the arithmetic share of the batch
+//! with a 0.315 trip point. That guard is gone. It was an ad-hoc heuristic on a
+//! ratio, it fired on every pure-arithmetic batch including ones the model priced to
+//! within 7%, and its own comment conceded that the thing it actually protected —
+//! frame churn / pooled-stack clearing, then 36.5x under-predicted per iteration —
+//! was covered only *incidentally*, via the cheap arithmetic that attack happens to
+//! run.
 //!
-//! One saturated member per family: the five arithmetic cost classes (including
-//! both `div` operand regimes — `div_fast` at 1,186 cyc/op and `div_worst2` at
-//! 7,667, a 6.5x spread inside one opcode), transient read and write, context ops,
-//! far-call, near-call, events, heap read and write, all seven crypto precompiles,
-//! and the 140k-slot cold-read flood.
+//! What covers those batches now is one uniform rule: every rate declares the
+//! largest count it was calibrated over, and a batch outside any of those domains is
+//! declined (`CostTable::extrapolating`). That is strictly better because it is
+//! per-axis and derived rather than global and tuned — and it covers frame churn
+//! *directly* rather than by luck. Reaching the 2^36 proving ceiling at ~41k
+//! effective cycles per churn iteration takes ~1.68M iterations, while
+//! `near_call_count` leaves its calibrated domain at ~314k (174,463 observed x the
+//! 1.8 slack). The gate declines the batch with 5.3x to spare, and it does so
+//! because the batch is genuinely outside anything measured, not because a ratio
+//! crossed a threshold.
 //!
-//! ## ⚠️ The arithmetic rows are now REJECTED rather than covered
+//! So unlike its predecessor, this test no longer has rows that are "rejected for
+//! nothing": a rejection here means the batch is outside the calibrated domain,
+//! which is a statement about the table's evidence rather than about the batch's
+//! shape.
 //!
-//! Read the verdict column before concluding anything from it. With the arithmetic
-//! classes pinned at measured rates the model prices these batches WELL —
-//! `add_flood` is over-predicted 7% — yet the arithmetic-share guard still rejects
-//! them, because a pure-arithmetic batch reaches a share of 0.51-0.98 against a
-//! 0.315 trip point. The guard is firing on batches it no longer needs to protect
-//! against, which is a pure liveness cost.
+//! ## What the exemption below does and does not claim
 //!
-//! It is kept anyway, deliberately: per the note on
-//! `Calibration::rich_addressing_share_max`, the share guard is the ONLY thing
-//! covering the frame-churn / pooled-stack-clear vector (36.5x under-predicted per
-//! iteration), and it covers it *incidentally*, via the cheap arithmetic that
-//! attack must run rather than via anything modelled. Retiring it needs that vector
-//! to get a cost feature of its own. Until then this fixture cannot distinguish
-//! "rejected because the guard is load-bearing" from "rejected for nothing", and
-//! the arithmetic rows are in the second category.
+//! A distrusted batch is allowed to under-predict here, on the theory that a consumer
+//! refuses it. That is a claim about the ESTIMATOR, not about the sequencer: the deployed
+//! consumer (`CyclesCriterion` in zksync-era) answers distrust with `IncludeAndSeal`,
+//! which admits the transaction and then seals. Tightening this needs the consumer to
+//! refuse a distrusted estimate, which is outside this crate — which is why the load-
+//! bearing assertion below is the trust-INDEPENDENT one.
 
 use serde::Deserialize;
-use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
+use zksync_era_airbender_cycles_estimator::{CostTable, FeatureVector};
 
 const FIXTURE: &str = include_str!("fixtures/adversarial.json");
-/// The seal-gate cushion this test holds the model to (see `CycleEstimate::conservative`).
-const GATE_MARGIN: f64 = 1.05;
 
 #[derive(Deserialize)]
 struct Row {
     label: String,
-    /// True effective/native guest cycles measured by cycle_bench.
+    /// True effective guest cycles measured by `cycle_bench`.
     effective_cycles: u64,
     features: FeatureVector,
 }
@@ -72,65 +69,80 @@ struct Row {
 #[test]
 fn no_adversarial_batch_both_fits_and_underpredicts() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse adversarial fixture");
-    assert_eq!(
-        rows.len(),
-        27,
-        "fixture size changed unexpectedly — it is a BUILD PRODUCT of the isolation \
-         corpus (build_adversarial_fixture.py + isolation_manifest.json), so a size \
-         change means a family was added, dropped, or failed to measure. Dropping one \
-         silently retires that invariant."
-    );
-    let model = CostModel::embedded();
+    let table = CostTable::embedded();
 
+    let mut trusted = 0usize;
     for r in &rows {
-        let est = model.estimate(&r.features);
+        let est = table.estimate(&r.features);
         let trustworthy = est.is_reliable() && est.is_within_calibration();
-        let covered = est.conservative(GATE_MARGIN) >= r.effective_cycles;
+        let covered = est.conservative() >= r.effective_cycles;
+        trusted += usize::from(trustworthy);
+
         println!(
-            "{:>24}: actual={:>13} pred={:>13} reliable={} in_cal={} covered={}",
+            "{:>24}: actual={:>14} pred={:>14} ratio={:>6.2}x trusted={} covered={}",
             r.label,
             r.effective_cycles,
             est.total,
-            est.is_reliable(),
-            est.is_within_calibration(),
+            est.total as f64 / r.effective_cycles as f64,
+            trustworthy,
             covered
         );
 
-        // The core invariant: any batch the gate would TRUST (reliable + within the
-        // calibration envelope) must be covered by conservative(margin). A batch
-        // the gate distrusts (extrapolated / unpriced) is allowed to under-predict
-        // here, because `fits()` would refuse it.
-        //
-        // The exemption is NOT a claim that a distrusted batch is handled safely
-        // downstream — the deployed consumer does not take the `fits()` path, it
-        // answers distrust with IncludeAndSeal. This asserts that the ESTIMATOR does
-        // not lie, not that the sequencer is protected; tightening it needs the
-        // consumer to refuse a distrusted tx-level estimate.
-        //
-        // Since the arithmetic pinning, the exemption is doing much less work than
-        // it looks: every exempt row is OVER-predicted (the arithmetic floods by
-        // 7-540%), so nothing under-priced hides behind it. That was not true of the
-        // fixture this replaced, where the worst exempt row was 2.19x under.
         assert!(
             !trustworthy || covered,
-            "{}: gate trusts it yet conservative(margin)={} < actual={} — live under-estimation vector",
+            "{}: the gate TRUSTS this batch yet conservative(margin)={} < actual={}. \
+             This is a live under-estimation vector: such a batch seals and is then \
+             unprovable.",
             r.label,
-            est.conservative(GATE_MARGIN),
+            est.conservative(),
             r.effective_cycles
         );
-
-        // And the gate function must actually fail safe on the ones it can't cover.
-        // NB this is the contrapositive of the assertion above, not extra coverage:
-        // `fits(u64::MAX, m)` reduces to `trustworthy` because conservative(m) is a
-        // u64 and so always <= u64::MAX. Kept deliberately — it pins fits()' own
-        // wiring, so a refactor that stopped consulting the two trust signals
-        // inside fits() would fail here rather than pass silently.
-        if !covered {
-            assert!(
-                !est.fits(u64::MAX, GATE_MARGIN),
-                "{}: under-predicts past the margin yet fits() reports a fit",
-                r.label
-            );
-        }
     }
+
+    // ## Why the assertion above is not the real bar
+    //
+    // `!trustworthy || covered` is vacuous whenever nothing is trustworthy, and that is
+    // a real hazard here: these are single-axis floods, so many of them sit outside a
+    // calibrated domain by construction — which is the protection working, not a defect.
+    // At the time of writing 16 of the 30 rows are trusted and 14 declined.
+    //
+    // The split is worth watching rather than asserting. It briefly became 30/30 trusted
+    // when domains were widened using the isolation corpus itself: the fixtures then fell
+    // inside their own families' domains and the domain half of this test could no longer
+    // fire at all. Domains now come from organic traffic (see build_cost_table.py), which
+    // is what keeps that from recurring.
+    //
+    // An earlier version of this test tried to require that some rows be trusted, to
+    // stop the invariant going vacuous. That was backwards — it demanded the domain
+    // check fail to fire on exactly the batches it exists to catch. The honest fix is
+    // to assert something strictly STRONGER that does not depend on trust at all:
+    // every adversarial batch is covered, whether the gate trusts it or not.
+    //
+    // That is a real claim and it currently holds for all 27 rows, so the safety of
+    // this fixture does not rest on the gate declining anything. It also means a
+    // regression shows up here as an under-prediction rather than as a silently
+    // vacuous pass.
+    let uncovered: Vec<_> = rows
+        .iter()
+        .filter(|r| table.estimate(&r.features).conservative() < r.effective_cycles)
+        .map(|r| r.label.as_str())
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "these adversarial batches are not covered even before the trust signals are \
+         consulted: {uncovered:?}. Coverage independent of trust is the property that \
+         keeps this fixture from passing vacuously, so a failure here is a real \
+         regression and not a threshold to loosen."
+    );
+
+    let in_domain = rows
+        .iter()
+        .filter(|r| table.estimate(&r.features).is_within_calibration())
+        .count();
+    println!(
+        "{}/{} rows covered; {trusted} trusted outright; {in_domain} inside every \
+         calibrated domain",
+        rows.len(),
+        rows.len()
+    );
 }

@@ -19,11 +19,41 @@ use zksync_vm2::interface::{
 #[derive(Debug, Clone, Default)]
 pub struct CycleFeatureTracer {
     recorder: Arc<Mutex<FeatureVector>>,
+    /// Set when the instruction currently executing emitted
+    /// `CycleStats::Decommit`, which vm2 does only for a FRESH decommit. Read in
+    /// `after_instruction` to tell a fresh decommit from a repeat.
+    ///
+    /// **It must be cleared after every instruction, not just after a DECOMMIT.**
+    /// vm2 emits that stat from two sites: `WorldDiff::decommit_opcode`, behind the
+    /// DECOMMIT opcode, and `WorldDiff::pay_for_decommit`, behind *every far call*.
+    /// A far call that freshly decommits its callee therefore sets this flag too, and
+    /// clearing it only inside the DECOMMIT arm let it survive until the next DECOMMIT
+    /// opcode — which then read a far call's flag as its own and scored a repeat as
+    /// fresh. That is the unsafe direction: it silently under-counts the one feature
+    /// whose whole purpose is to price an attacker's dead work.
+    ///
+    /// This is the only state the tracer keeps, and it is per-clone rather than
+    /// shared: `on_extra_prover_cycles` and `after_instruction` for one instruction
+    /// always run on the same tracer instance, so a shared flag would let
+    /// concurrent clones clear each other's.
+    fresh_decommit_seen: bool,
 }
 
 impl CycleFeatureTracer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Consume the fresh-decommit flag for the instruction that just finished.
+    ///
+    /// Factored out only so the sequencing can be unit-tested: vm2's `DummyState` is
+    /// `pub(crate)`, and hand-rolling a `StateInterface` to drive `after_instruction`
+    /// would be far more test than subject. The property that actually matters —
+    /// that this is called for EVERY opcode rather than only for DECOMMIT — is
+    /// structural, enforced by the single unconditional call at the top of
+    /// `after_instruction`.
+    fn take_fresh_decommit(&mut self) -> bool {
+        std::mem::take(&mut self.fresh_decommit_seen)
     }
 
     /// Handle to the shared recorder, for callers that want to read counts
@@ -49,13 +79,16 @@ impl Tracer for CycleFeatureTracer {
     ) -> ShouldStop {
         // Opcode → feature-family mapping mirrors `circuits.rs`'s bucketing so
         // the offline categories line up with the sequencer's existing model.
+        // Take the flag for THIS instruction and clear it unconditionally, so a far
+        // call's fresh decommit cannot be mistaken for a later DECOMMIT's.
+        let fresh_decommit = self.take_fresh_decommit();
         let id = match OP::VALUE {
             // The arithmetic bucket is split by MEASURED cost class, not by opcode
             // taxonomy: isolated measurement put `add` at 137, `mul` at 734 and
             // `div` at 7,515 effective cycles per op, so opcodes share a feature
             // only when they cost about the same. Adding a new arithmetic opcode
             // here means deciding which class it measures into — do not default it
-            // to the cheap one. See ARITHMETIC_FEATURES.
+            // to the cheap one.
             Opcode::Nop
             | Opcode::Add
             | Opcode::Sub
@@ -101,7 +134,15 @@ impl Tracer for CycleFeatureTracer {
             Opcode::TransientStorageWrite => FeatureId::TransientStorageWrite,
             Opcode::L2ToL1Message | Opcode::Event => FeatureId::Event,
             Opcode::PrecompileCall => FeatureId::PrecompileCall,
-            Opcode::Decommit => FeatureId::Decommit,
+            Opcode::Decommit => {
+                // `on_extra_prover_cycles` runs inside the opcode handler, so by now
+                // the flag reflects this instruction: no stat means this DECOMMIT
+                // repeated a hash already decommitted in this run.
+                if !fresh_decommit {
+                    self.bump(FeatureId::DecommitRepeat, 1);
+                }
+                FeatureId::Decommit
+            }
             Opcode::FarCall(_) => FeatureId::FarCall,
             Opcode::AuxHeapWrite | Opcode::HeapWrite | Opcode::StaticMemoryWrite => {
                 FeatureId::UmaWrite
@@ -124,7 +165,10 @@ impl Tracer for CycleFeatureTracer {
             CycleStats::Sha256(c) => self.bump(FeatureId::Sha256Cycles, c as u64),
             CycleStats::EcRecover(c) => self.bump(FeatureId::EcRecoverCycles, c as u64),
             CycleStats::Secp256r1Verify(c) => self.bump(FeatureId::Secp256r1VerifyCycles, c as u64),
-            CycleStats::Decommit(c) => self.bump(FeatureId::DecommitCycles, c as u64),
+            CycleStats::Decommit(c) => {
+                self.fresh_decommit_seen = true;
+                self.bump(FeatureId::DecommitCycles, c as u64)
+            }
             CycleStats::StorageRead => self.bump(FeatureId::StorageApplication, 1),
             CycleStats::StorageWrite => self.bump(FeatureId::StorageApplication, 2),
             CycleStats::EcAdd(c) => self.bump(FeatureId::EcAddCycles, c as u64),
@@ -146,5 +190,56 @@ mod tests {
         t1.bump(FeatureId::FarCall, 2);
         t2.bump(FeatureId::FarCall, 3);
         assert_eq!(t1.snapshot().get(FeatureId::FarCall), 5);
+    }
+
+    /// A fresh decommit belongs to the instruction that caused it, and to no other.
+    ///
+    /// vm2 emits `CycleStats::Decommit` from two sites — `decommit_opcode`, behind the
+    /// DECOMMIT opcode, and `pay_for_decommit`, behind *every far call*. When this
+    /// flag was cleared only inside the DECOMMIT arm, a far call's fresh decommit
+    /// survived until the next DECOMMIT opcode, which read it as its own and scored a
+    /// repeat as fresh. That under-counts `decommit_repeat`, and under-counting is the
+    /// unsafe direction for the one feature whose purpose is to price dead work an
+    /// attacker pays nothing for.
+    ///
+    /// The empirical check on this lives in the isolation corpus rather than here:
+    /// batches 900208/900212/900216 report n or n-1 repeats out of n DECOMMITs (the
+    /// missing one being the far call that first decommitted the target), and their
+    /// per-repeat slopes reproduce vm2 PR #130's independently measured
+    /// 83,583 + 2.3435/byte to three significant figures.
+    #[test]
+    fn a_far_calls_fresh_decommit_does_not_leak_to_the_next_instruction() {
+        let mut t = CycleFeatureTracer::new();
+
+        // The far call decommits its callee for the first time.
+        t.on_extra_prover_cycles(CycleStats::Decommit(223));
+        assert!(
+            t.take_fresh_decommit(),
+            "the instruction that caused the decommit must see it as fresh"
+        );
+
+        // The DECOMMIT opcode that follows caused no decommit of its own, so it must
+        // NOT inherit the far call's. This is the assertion the bug failed.
+        assert!(
+            !t.take_fresh_decommit(),
+            "a later instruction inherited an earlier one's fresh-decommit flag, so a \
+             repeat would be scored as fresh and priced at zero"
+        );
+    }
+
+    /// And the flag survives no longer than one instruction even when nothing reads it
+    /// as fresh — two decommit stats in a row are two fresh decommits, not one.
+    #[test]
+    fn each_fresh_decommit_is_counted_once() {
+        let mut t = CycleFeatureTracer::new();
+        for _ in 0..3 {
+            t.on_extra_prover_cycles(CycleStats::Decommit(64));
+            assert!(t.take_fresh_decommit());
+        }
+        assert_eq!(
+            t.snapshot().get(FeatureId::DecommitCycles),
+            192,
+            "the per-unit fresh cost must accumulate across instructions"
+        );
     }
 }

@@ -16,7 +16,7 @@ cycle-model docs for the fit.
 > So `ec_recover_cycles` is in `PRECOMPILE_FEATURES` (residual-fit from *this*
 > set), the hammer has an `ecRecover` family, and `gen_inputs.py` emits
 > `ecrecover_fixed.hex`. The committed `synthetic_dataset.json` predates all
-> three (`ec_recover_cycles` ranges 1–8 there), so **`fit_cost_model.py` aborts
+> three (`ec_recover_cycles` ranges 1–8 there), so **`build_cost_table.py` aborts
 > against it** with an identifiability error rather than replacing a real
 > coefficient with residual noise (~0 — which would be worse than the artifact).
 > Regenerating this set on a node is what clears it; see
@@ -38,7 +38,7 @@ outputs are the measured batches, committed as
 vector (`CostModel::extrapolated_features`, which makes `CycleEstimate::fits` fail
 safe on compute-dominated batches). A dispatch-decomposition refit that would have
 superseded both was evaluated and rejected — it creates a new storage-dominated
-under-estimation vector; see the `OPCODE_FLOORS` notes in `fit_cost_model.py`.
+under-estimation vector; see the `BOUNDED` notes in `build_cost_table.py`.
 
 ## Why isolation
 
@@ -85,7 +85,7 @@ cycle_bench --batch-files N.bin.gz            (ground-truth guest cycles + featu
 ```
 
 Append the measured `(features, cycles)` rows to the training set and refit
-`scripts/cycle_model/fit_cost_model.py`; the isolated batches give each target
+`scripts/cycle_model/build_cost_table.py`; the isolated batches give each target
 precompile a well-conditioned coefficient.
 
 ## To confirm on the live node (curve inputs)
@@ -123,7 +123,7 @@ dominant unprovability vectors.
 
 Reproduce (residual mode is first-class in the fit script):
 ```sh
-python3 scripts/cycle_model/fit_cost_model.py \
+python3 scripts/cycle_model/build_cost_table.py \
     --dataset <506xxx organic corpus>/dataset.json \
     --precompile-dataset scripts/precompile_calibration/synthetic_dataset.json \
     --tau 0.9 \

@@ -133,10 +133,10 @@ data fixes that. These are designed experiments instead: one family per cost dri
 three to four volume tiers per family, so the answer is a slope and per-batch fixed
 cost cancels.
 
-Reduce them with `scripts/cycle_model/isolation_rates.py`, which reports each
+Reduce them with `scripts/cycle_model/derive_rates.py`, which reports each
 family's slope, R², cycles per erg, and — the number that actually decides whether
 an axis needs pricing at all — what the stock per-batch erg budget buys in units of
-the 2^36 proving ceiling. `scripts/cycle_model/build_adversarial_fixture.py` then
+the 2^36 proving ceiling. `scripts/cycle_model/build_fixtures.py` then
 turns the same measurement into `crates/cycle_estimator/tests/fixtures/adversarial.json`.
 
 Families: the five arithmetic cost classes (`add`, `sub`, `bitwise`, `jump` →
@@ -163,7 +163,7 @@ knowing because each would have shipped a wrong number silently:
   divide-by-zero guard then short-circuited the division forever. **The ergs looked
   perfectly healthy and scaled with `n`** — only the tracer count exposed it, which
   is why checking gas-versus-`n` is necessary but not sufficient, and why the
-  intercept-versus-baseline check in `isolation_rates.py` is a standing rule.
+  intercept-versus-baseline check in `derive_rates.py` is a standing rule.
 
 Two axes still have no family. `arith_ptr_op` needs a real fat pointer, which
 Solidity cannot isolate (calldata slicing yields 2–3 pointer ops mixed with UMA) —
@@ -172,3 +172,49 @@ deliberately skipped: it is the only family that can trip `max_pubdata_per_batch
 and crash-loop the node into a full rebuild. That one matters, because by erg
 arithmetic the `decommit` repeat path is the other axis besides `div` that can reach
 the proving ceiling, and its 285,000 floor has never been measured.
+
+## The Decommit Families (`900201`–`900221`)
+
+The last axis that could reach the proving ceiling with an unmeasured price. Its
+mechanism is unusual enough to be worth stating: on a **repeat** DECOMMIT of a hash
+already decommitted in the same VM run, vm2 calls `world.decommit_code(hash)`
+unconditionally — an O(len) `Vec<u8>` build — while `CycleStats::Decommit` fires
+only when *fresh*, and the instruction handler **refunds the ergs**. So the work is
+real, the price is not, and the only counter that moves is the opcode count.
+
+Measured here, with two independent tier deltas agreeing to under 1%:
+
+| path | cycles per repeat |
+| --- | --- |
+| cached (contract in `program_cache`, which one far-call arranges) | `83,659 + 2.340 × len` |
+| raw | `83,659 + 0.557 × len` |
+
+The 4.2× per-byte gap is exactly the code: the cached path re-encodes through
+`code_page_bytes()`, a U256 `to_big_endian` per 32-byte word, while the raw path is a
+`Vec<u8>` clone. And the price is **flat at 1,713.87 ergs per repeat** — identical
+for a 14,240 B and a 329,760 B target, i.e. 23× the byte work for the same cost.
+
+`dc_fresh` doubles as a check on the method: `decommit_cycles` came out at exactly
+`ceil(len/64)` units per fresh decommit against every one of four sizes, and the
+measured 111.3 cycles/byte confirms the existing coefficient (153.3) is 1.38× over —
+so that axis is conservatively priced, settling an earlier suspicion that it was 14%
+under.
+
+### Two bounds worth having, both measured rather than assumed
+
+**The largest bytecode that deploys is not the protocol maximum.** 329,760 B of
+runtime published 199,367 B of pubdata — 40% of the 500 KB cap. Compression *improves*
+with size for this pattern (1.23:1 at 14 KiB rising to 1.65:1 at 322 KiB), which puts
+the cap-limited bound near 800 KiB. The protocol maximum, `(2^16−1)×32 = 2,097,120` B,
+would publish ~1.27 MB and exceed the cap by 2.5× — **it is not deployable in a single
+batch on this chain.** The worst-case repeat target is therefore pubdata-limited, not
+protocol-limited.
+
+**CodeOracle is at `0x8012`, not `0x8011`.** `Constants.sol` defines it as
+`SYSTEM_CONTRACTS_OFFSET + 0x12`; era's own `system-contracts/contracts/test-contracts/CodeOracleTest.sol`
+hardcodes `REAL_CODE_ORACLE_ADDR = 0x8011`, which is the address its mocked hardhat
+environment uses. On a real chain 0x8011 holds a different contract that reverts with
+empty data. Sixteen batches were generated against the wrong address and looked
+entirely healthy — ergs scaled with call count at a plausible rate — while the
+`decommit` count was **0** in every one. Only the tracer count exposed it. Those
+batches were discarded; this is worth reporting upstream.

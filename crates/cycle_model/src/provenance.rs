@@ -7,7 +7,7 @@
 //! hand and reweighted on 2026-08-19.
 //!
 //! So `cycle_bench` writes this manifest next to `dataset.json`, and
-//! `fit_cost_model.py --provenance <manifest>` stamps it into `cost_table.json`,
+//! `build_cost_table.py` stamps it into `cost_table.json`,
 //! where a unit test refuses an unstamped table. Fields this process cannot
 //! establish stay `None` rather than guessed — a wrong stamp is worse than an
 //! absent one, because it invites trust.
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// What a dataset was measured against. Serialized as the JSON manifest
-/// `fit_cost_model.py --provenance` consumes; the key names match the
+/// `build_cost_table.py` consumes; the key names match the
 /// `Provenance` struct in the estimator crate.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DatasetProvenance {

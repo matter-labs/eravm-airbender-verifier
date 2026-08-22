@@ -6,8 +6,8 @@
 //! the VM-agnostic estimator:
 //!
 //! ```ignore
-//! use zksync_era_airbender_cycles_estimator::{estimate_from_features, BatchContext};
-//! let est = estimate_from_features(tracer.snapshot(), pubdata_bytes, state_diff_count, &ctx);
+//! use zksync_era_airbender_cycles_estimator::estimate_from_features;
+//! let est = estimate_from_features(tracer.snapshot(), pubdata, diffs, txs, leaves);
 //! ```
 //!
 //! The feature schema, fitted cost model, and result type live in the
