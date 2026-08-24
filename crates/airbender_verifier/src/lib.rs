@@ -1381,6 +1381,13 @@ mod tests {
         assert_eq!(input, decoded);
     }
 
+    // The `cycle-markers` calibration build deliberately relaxes the version pin so it
+    // can measure older-but-still-FastVM-supported batches, so this assertion only
+    // describes a production build. It is NOT gated away as a nuisance: what covers the
+    // calibration build is `execute_rejects_version_unsupported_by_fast_vm` below, which
+    // holds in both configurations and is the guard the relaxation comment on `execute`
+    // claims still stands.
+    #[cfg(not(feature = "cycle-markers"))]
     #[test]
     fn execute_rejects_non_target_protocol_version() {
         let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
@@ -1394,6 +1401,28 @@ mod tests {
         };
         assert!(
             err.to_string().contains("unsupported protocol version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn execute_rejects_version_unsupported_by_fast_vm() {
+        let mut input = fastvm_input_with_execution_mode(TxExecutionMode::VerifyExecute);
+        // Version23 maps to `Vm1_5_0SmallBootloaderMemory`, which the FastVM does not
+        // implement. Unlike the version pin above, this guard is unconditional — the
+        // calibration build relaxes only *which* FastVM-supported version is accepted,
+        // never whether the FastVM supports it at all. Both fire before any of the
+        // `vm_run_data` cross-checks, so the otherwise-minimal input is never run.
+        input.system_env.version = ProtocolVersionId::Version23;
+        // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
+        let err = match execute(input) {
+            Ok(_) => panic!("expected the FastVM guard to reject Version23"),
+            Err(err) => err,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("is not supported by the FastVM verifier")
+                || msg.contains("unsupported protocol version"),
             "unexpected error: {err}"
         );
     }
