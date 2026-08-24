@@ -1306,6 +1306,49 @@
   }
  },
  {
+  "batch_number": 900388,
+  "label": "bytecode_size_26208b",
+  "raw_cycles": 1025250868,
+  "effective_cycles": 1235720636,
+  "guest": "delegation guest, app.bin sha256 8b9436a8\u2026, vm2 be1e50b, measured 2026-08-21",
+  "delegations": {
+   "1991": 10151220,
+   "1994": 41108,
+   "1995": 11971454
+  },
+  "delegation_weights": {
+   "1991": 16,
+   "1994": 4,
+   "1995": 4
+  },
+  "features": {
+   "counts": {
+    "arith_cheap_op": 5827,
+    "arith_shift_op": 555,
+    "arith_mul_op": 35,
+    "arith_div_op": 37,
+    "arith_ptr_op": 316,
+    "average_op": 1071,
+    "storage_read": 34,
+    "storage_write": 23,
+    "event": 13,
+    "precompile_call": 27,
+    "far_call": 73,
+    "uma_write": 717,
+    "uma_read": 575,
+    "keccak256_cycles": 31,
+    "ec_recover_cycles": 1,
+    "decommit_cycles": 7981,
+    "storage_application": 69,
+    "transaction_count": 1,
+    "near_call_count": 305,
+    "pubdata_bytes": 259,
+    "merkle_leaf_count": 61,
+    "state_diff_count": 10
+   }
+  }
+ },
+ {
   "batch_number": 900395,
   "label": "div_lead3_2limb_t3",
   "raw_cycles": 21102625431,

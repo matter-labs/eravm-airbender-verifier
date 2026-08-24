@@ -105,6 +105,13 @@ MEASURED = {
     #
     # The real fix is to split the feature: the tracer can attribute the stat to the
     # instruction that produced it. Needs a tracer change and a re-measurement.
+    #
+    # Until then the dearer producer is held by an adversarial fixture rather than by the
+    # rate: `bytecode_size_26208b` (batch 900388) reaches the axis through `pay_for_decommit`
+    # only, and its point estimate is already 0.4% under with the margin covering it. So a
+    # widening spread shows up as a test failure instead of silently. `farcall_flood` does
+    # not serve that purpose -- its callees are already decommitted, so it moves the axis by
+    # 92 units.
     "decommit_cycles": 7_123,
     # Per ROUND, from sweeps that moved rounds 478x and 1,025x with the call count
     # pinned. That the round count tracks the input is what makes these measured rates

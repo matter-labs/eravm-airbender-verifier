@@ -440,5 +440,16 @@ Read these before quoting a number.
   cost is real: bounding modexp at its 256-bit worst case charges a typical 1-byte
   exponent **90x** its true cost. The fix belongs upstream, in the same shape as
   vm2#130.
+- **`decommit_cycles` has two producers and one rate.** The DECOMMIT opcode marginal is
+  7,066 and the far-call (`pay_for_decommit`) marginal is 11,124 — a 1.56x spread — and
+  the shipped 7,123 prices both at the cheaper end, because raising it lowers the base and
+  makes both populations worse. The domain does not bound this away: `decommit_cycles`
+  admits 303,627 units (168,682 observed x the 1.8 slack), and a batch whose decommit work
+  is entirely far-call driven is under-charged by up to 303,627 x (11,124 - 7,123) =
+  **1.21e9 cycles** there — 1.8% of the 2^36 ceiling, well inside the headroom, but real
+  and invisible to `is_reliable`/`is_within_calibration`, which both still say true. What
+  holds it is the adversarial fixture `bytecode_size_26208b` (batch 900388), the only row
+  whose axis count comes entirely from the far-call producer. The fix is to split the
+  feature; the tracer can attribute the stat to the instruction that produced it.
 - **Three retired rows are uncovered coverage,** not cleanup — see
   `testdata/cycle_model/RETIRED_FIXTURES.md`.

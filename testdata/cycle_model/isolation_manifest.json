@@ -375,6 +375,34 @@
   "input": "900 pairs in ONE call \u2014 near the ~951-pair gas limit. Holds total pairs nearly equal to 900378 while precompile_call differs 28 vs 907, which is what separates per-pair from per-call cost."
  },
  {
+  "batch_number": 900385,
+  "label": "bytecode_size_2656b",
+  "family": "bytecode_size",
+  "adversarial": false,
+  "input": "8 contracts x 2,656 B \u2014 bottom of the size sweep, contract count pinned"
+ },
+ {
+  "batch_number": 900386,
+  "label": "bytecode_size_5728b",
+  "family": "bytecode_size",
+  "adversarial": false,
+  "input": "8 contracts x 5,728 B"
+ },
+ {
+  "batch_number": 900387,
+  "label": "bytecode_size_13920b",
+  "family": "bytecode_size",
+  "adversarial": false,
+  "input": "8 contracts x 13,920 B"
+ },
+ {
+  "batch_number": 900388,
+  "label": "bytecode_size_26208b",
+  "family": "bytecode_size",
+  "adversarial": true,
+  "input": "8 contracts x 26,208 B \u2014 top of the size sweep, and the only fixture whose `decommit_cycles` comes ENTIRELY from the far-call producer (`pay_for_decommit`): its DECOMMIT-opcode count is zero, while the `dc_*` rows drive the axis through the opcode. The two producers differ 1.56x on the marginal and share one rate priced at the cheaper of them, so without this row nothing holds the dearer path \u2014 `farcall_flood` looks like it should, but its callees are already decommitted and it moves the axis by 92 units. The point estimate here is already 0.4% under with only the margin covering it, which is what makes it the row that notices if the spread widens."
+ },
+ {
   "batch_number": 900390,
   "label": "div_lead1_2limb_t1",
   "family": "div_shape",

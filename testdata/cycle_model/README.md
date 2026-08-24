@@ -10,7 +10,7 @@ the ones actually used).
 | file | what it is |
 |---|---|
 | `dataset.json` | 52 organic batches — 3 v31 (84730–84732), 49 v29 mainnet (513601–513649). Supplies the BASE and the domains, and is the out-of-sample accuracy check: no rate is derived from it. |
-| `isolation_dataset.json` | 172 synthetic single-axis batches (9001xx–9003xx). Every per-operation rate comes from these. |
+| `isolation_dataset.json` | 197 synthetic single-axis batches (900101–900405). Every per-operation rate comes from these. |
 | `isolation_corpus.csv` | family / tier / intended axis / axis count / ergs for the first campaign. `derive_rates.py` reads it to group tiers. |
 | `isolation_input_corpus.csv` | the same for the second campaign (input sweeps, storage, keccak/sha256, pubdata, tx count, pointer, pairing, bytecode volume). |
 | `isolation_manifest.json` | which fixtures are adversarial, i.e. land in `tests/fixtures/adversarial.json`. |

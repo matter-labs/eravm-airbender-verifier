@@ -104,7 +104,7 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
     // `!trustworthy || covered` is vacuous whenever nothing is trustworthy, and that is
     // a real hazard here: these are single-axis floods, so many of them sit outside a
     // calibrated domain by construction — which is the protection working, not a defect.
-    // At the time of writing 16 of the 30 rows are trusted and 14 declined.
+    // At the time of writing 18 of the 32 rows are trusted and 14 declined.
     //
     // The split is worth watching rather than asserting. It briefly became 30/30 trusted
     // when domains were widened using the isolation corpus itself: the fixtures then fell
@@ -118,7 +118,7 @@ fn no_adversarial_batch_both_fits_and_underpredicts() {
     // to assert something strictly STRONGER that does not depend on trust at all:
     // every adversarial batch is covered, whether the gate trusts it or not.
     //
-    // That is a real claim and it currently holds for all 27 rows, so the safety of
+    // That is a real claim and it currently holds for all 32 rows, so the safety of
     // this fixture does not rest on the gate declining anything. It also means a
     // regression shows up here as an under-prediction rather than as a silently
     // vacuous pass.
