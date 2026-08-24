@@ -143,18 +143,15 @@ impl VmExecutionState {
 
 /// The protocol version whose semantics this verifier models.
 ///
-/// Every version-gated decision below is taken at this value: the VM subversion
+/// Every version-gated decision is taken at this value: the VM subversion
 /// (`FastVmVersion`), the bootloader heap layout, the pubdata builder, the blob
-/// count, the L2-block rules and the commitment shape. The operator-supplied
-/// label in the input never reaches any of them — `execute` checks it against
-/// this constant and then overwrites it (see the normalization there).
+/// count, the L2-block rules and the commitment shape. The operator-supplied label
+/// never reaches any of them — `execute` checks it against this constant and then
+/// overwrites it.
 ///
-/// This is deliberately a repo-local constant rather than
-/// `ProtocolVersionId::latest()`: a `zksync_basic_types` bump must not silently
-/// change which semantics the guest models.
-/// `pinned_version_matches_vendored_latest` fails when the two diverge, forcing
-/// an explicit decision about whether the new minor changes anything modelled
-/// here.
+/// A repo-local constant rather than `ProtocolVersionId::latest()` so that a
+/// `zksync_basic_types` bump cannot silently change the modelled semantics;
+/// `pinned_version_matches_vendored_latest` fails when the two diverge.
 pub const PINNED_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version31;
 
 /// Canonical account-validation gas limit for the Airbender proving path. The
@@ -195,16 +192,16 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
     input.merkle_paths.normalize_stored_paths()?;
 
     // The label is operator-supplied and never itself hashed into the commitment
-    // (see `L1BatchMetaParameters::to_bytes`), so it carries no authority. Check
-    // it against the one version whose semantics this build models.
+    // (see `L1BatchMetaParameters::to_bytes`), so it carries no authority: check it
+    // against the version this build models, then bind the redundant copy in
+    // `vm_run_data` so a witness cannot disagree with itself. Both run before the
+    // normalization below; the other `vm_run_data` binds are grouped further down.
     //
-    // The offline cycle-cost calibration build (`cycle-markers`) drops this gate
-    // *and* the normalization below, so it can measure older-but-still-FastVM-
-    // supported batches (e.g. the v29 corpus in the v31 wire format) under their
-    // own semantics — normalizing them to the pinned version would defeat the
-    // measurement. It NEVER ships in a proved guest: the feature is off for every
-    // real build, and the `is_supported_by_fast_vm` guard below still holds.
-    // Production stays strict.
+    // The calibration build (`cycle-markers`) drops the gate *and* the normalization,
+    // so it can measure older-but-still-FastVM-supported batches (e.g. the v29 corpus
+    // in the v31 wire format) under their own semantics. It never ships in a proved
+    // guest, and `is_supported_by_fast_vm` below still holds. The cross-bind stays
+    // unconditional — it compares two operator copies, so it is version-agnostic.
     #[cfg(not(feature = "cycle-markers"))]
     anyhow::ensure!(
         input.system_env.version == PINNED_PROTOCOL_VERSION,
@@ -212,50 +209,28 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
         input.system_env.version,
         PINNED_PROTOCOL_VERSION,
     );
-    // Bind the redundant copy in `vm_run_data` before the label is discarded, so a
-    // witness cannot disagree with itself about which protocol it claims. (Its
-    // sibling binds — `l1_batch_number` and the rest — are grouped further down;
-    // this one has to run before the normalization.)
-    //
-    // Limit worth knowing if the gate is ever widened: the wire codec saturates
-    // any minor above `MAX_KNOWN_PROTOCOL_VERSION` to that ceiling, so two
-    // *distinct* unnameable labels (say raw 33 and raw 60000) compare equal here.
-    // Inert under the equality gate above — a saturated label never reaches this
-    // point — but the bind is blind in that range.
     anyhow::ensure!(
         input.vm_run_data.protocol_version == input.system_env.version,
         "vm_run_data.protocol_version {:?} does not match system_env.version {:?}",
         input.vm_run_data.protocol_version,
         input.system_env.version,
     );
-    // From here the operator-supplied label is dead. Overwrite it so nothing
-    // downstream — multivm's `FastVmVersion` mapping, any `is_pre_*` gate, the
-    // commitment shape — can read a value the operator chose.
-    //
-    // Under the equality gate above these two writes are no-ops: the gate has
-    // established that `system_env.version == PINNED_PROTOCOL_VERSION` and the
-    // bind that the copy agrees. They are here so the invariant — semantics are a
-    // build-time constant, not witness data — holds by construction rather than
-    // by inference from the gate, and so relaxing the gate later cannot silently
-    // hand semantics selection back to the operator.
-    //
-    // Only the `system_env` write is load-bearing: that is the copy the VM and
-    // every version-gated helper read. The `vm_run_data` write is a dead store
-    // today (nothing reads that field after the bind above) — kept so the two
-    // copies cannot drift apart if a later change does read it.
-    //
-    // Compiled out by the calibration build, in lockstep with the gate above: a
-    // measured batch must execute under its own semantics, not the pinned ones.
+    // No-ops under the equality gate above: they make the invariant — semantics are
+    // a build-time constant, not witness data — hold by construction, so widening the
+    // gate later cannot hand semantics selection back to the operator. Only the
+    // `system_env` copy is read downstream (multivm's `FastVmVersion` mapping, the
+    // `is_pre_*` gates, the commitment shape); the other is written so the two cannot
+    // drift apart. Compiled out in lockstep with the gate above.
     #[cfg(not(feature = "cycle-markers"))]
     {
         input.system_env.version = PINNED_PROTOCOL_VERSION;
         input.vm_run_data.protocol_version = PINNED_PROTOCOL_VERSION;
     }
 
-    // A tautology in a shipped build (`PINNED_PROTOCOL_VERSION` is FastVM-supported,
-    // pinned by `pinned_version_is_supported_by_fast_vm`), kept as an explicit
-    // statement of the FastVM requirement at the boundary — and the real, load-bearing
-    // guard in the calibration build, where nothing above has constrained the version.
+    // A tautology after the write above (`pinned_version_is_supported_by_fast_vm`) —
+    // and the real, load-bearing guard in the calibration build, where nothing above
+    // has constrained the version.
+
     anyhow::ensure!(
         is_supported_by_fast_vm(input.system_env.version),
         "protocol version {:?} is not supported by the FastVM verifier",
@@ -1480,13 +1455,10 @@ mod tests {
         }
     }
 
-    /// Change detector for the decoupling from the vendored crate: while
-    /// `PINNED_PROTOCOL_VERSION` and `ProtocolVersionId::latest()` agree, this
-    /// build accepts exactly what it accepted before the constant was
-    /// introduced. A `zksync_basic_types` bump that moves `latest()` fails here,
-    /// forcing an explicit decision about whether the new minor changes anything
-    /// this verifier models — instead of silently changing the semantics the
-    /// guest is built for.
+    /// Change detector for the decoupling from the vendored crate: a
+    /// `zksync_basic_types` bump that moves `latest()` fails here, forcing an
+    /// explicit decision about whether the new minor changes anything this
+    /// verifier models, instead of silently moving the modelled semantics.
     #[test]
     fn pinned_version_matches_vendored_latest() {
         assert_eq!(
@@ -1506,16 +1478,13 @@ mod tests {
     }
 
     /// The wire codec saturates an unnameable-newer minor to
-    /// `MAX_KNOWN_PROTOCOL_VERSION`. As long as the pinned version is strictly
-    /// below that ceiling, a saturated label can never satisfy the equality gate,
-    /// so an arbitrary garbage minor is always rejected with the version error
-    /// rather than silently accepted.
+    /// `MAX_KNOWN_PROTOCOL_VERSION`, so while the pinned version stays strictly
+    /// below that ceiling no saturated label can satisfy the equality gate.
     ///
-    /// If `PINNED_PROTOCOL_VERSION` were ever raised to the ceiling, every label
-    /// above it would saturate *onto* the pinned value and pass the gate. That is
-    /// output-inert (the label is normalized away, so the semantics are the pinned
-    /// ones either way), but it would silently retire the gate's role as a
-    /// wire-validity check. Raise the ceiling first.
+    /// Raising `PINNED_PROTOCOL_VERSION` to the ceiling would make every label
+    /// above it saturate *onto* the pinned value and pass. That is output-inert —
+    /// the label is normalized away either way — but it retires the gate's role as
+    /// a wire-validity check, so raise the ceiling first.
     #[test]
     fn pinned_version_below_max_known_wire_version() {
         assert!(

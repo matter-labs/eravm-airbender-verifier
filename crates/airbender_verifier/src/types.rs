@@ -94,11 +94,10 @@ impl Default for CommitmentInput {
 /// corpus and the host↔guest channel and with JSON for the zksync-era prover
 /// service. There is no version envelope, and the protocol-minor labels it
 /// carries (`system_env.version`, `vm_run_data.protocol_version`) do not select
-/// behaviour: `execute` checks them against `PINNED_PROTOCOL_VERSION` — the one
-/// protocol version whose semantics this build models — and then overwrites
-/// them with it. The labels are read leniently, so an Era minor this build
-/// cannot name decodes and is reported by that check rather than aborting the
-/// payload decode.
+/// behaviour: `execute` checks them against `PINNED_PROTOCOL_VERSION` and then
+/// overwrites them with it. They are read leniently (see
+/// [`deserialize_wire_protocol_version`]) so an Era minor this build cannot name
+/// is named by that check instead of aborting the payload decode.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`

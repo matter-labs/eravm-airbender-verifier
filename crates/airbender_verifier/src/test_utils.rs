@@ -128,7 +128,11 @@ pub fn crosscheck_commitment(
     result: &VerificationResult,
     input: &AirbenderVerifierInput,
 ) -> anyhow::Result<()> {
-    let protocol_version = input.system_env.version;
+    // `execute` takes the input by value, so the caller's copy still carries the
+    // raw label. Reconstruct at the pinned version — the one the verifier
+    // committed under — or a relabelled fixture would cross-check against a
+    // different commitment shape.
+    let protocol_version = crate::PINNED_PROTOCOL_VERSION;
     let base = &input.system_env.base_system_smart_contracts;
     let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 

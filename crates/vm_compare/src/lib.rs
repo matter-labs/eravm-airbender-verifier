@@ -20,7 +20,7 @@ use zksync_multivm::{
     vm_latest::HistoryEnabled,
     FastVmInstance, LegacyVmInstance, MultiVmTracer,
 };
-use zksync_types::{u256_to_h256, Transaction, H256};
+use zksync_types::{protocol_version::MAX_KNOWN_PROTOCOL_VERSION, u256_to_h256, Transaction, H256};
 
 use crate::types::TransactionTrace;
 
@@ -36,6 +36,20 @@ struct TxExecutionCapture {
 }
 
 pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
+    // This harness replays under whatever the label says, with none of `execute`'s
+    // gate or normalization. Since the label is read leniently, a value at the
+    // saturation ceiling may be any minor from that one upwards — all of which
+    // replay under the newest semantics multivm models. Say so rather than report
+    // "no divergence" for a comparison that never ran the right rules.
+    if input.system_env.version >= MAX_KNOWN_PROTOCOL_VERSION {
+        eprintln!(
+            "warning: batch labelled {:?}, the highest minor this build can name; \
+             if the wire carried a newer one it was saturated to this value, and \
+             both VMs replay under the semantics of {:?}",
+            input.system_env.version, MAX_KNOWN_PROTOCOL_VERSION,
+        );
+    }
+
     let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
     let fast_storage = StorageView::new(storage_snapshot).to_rc_ptr();

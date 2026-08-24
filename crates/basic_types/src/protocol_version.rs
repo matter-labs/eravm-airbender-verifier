@@ -247,7 +247,8 @@ impl TryFrom<U256> for ProtocolVersionId {
     }
 }
 
-/// Highest protocol minor this build can name.
+/// Highest protocol minor this build can name, and the ceiling
+/// [`deserialize_wire_protocol_version`] saturates anything newer to.
 ///
 /// Pinned by `max_known_is_last_variant`: a dependency bump that adds a variant
 /// to [`ProtocolVersionId`] must move this constant in the same commit.
@@ -255,47 +256,55 @@ pub const MAX_KNOWN_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Ver
 
 /// `serde` adapter for the protocol-minor label on the verifier's input wire.
 ///
-/// Reads byte-for-byte the same encoding the derived [`ProtocolVersionId`] codec
-/// writes for every version this build can name, and additionally accepts a
-/// *newer* minor it cannot name, saturating it to
-/// [`MAX_KNOWN_PROTOCOL_VERSION`]. Without this the label's closed enum makes an
-/// unknown-but-newer Era minor a hard deserialization failure that aborts the
-/// whole payload decode, so the host and the fixture tooling cannot report
-/// *which* version they were handed. (In the guest both outcomes are an abort —
-/// `read().expect(..)` in `guest/src/main.rs` — so this buys diagnosis on the
-/// host side, not a different guest failure mode.)
+/// # What it does, and why
 ///
-/// Two independent reasons saturation cannot launder a bad label:
-/// - **Today** nothing saturated survives the verifier's accept gate at all,
-///   because `airbender_verifier::PINNED_PROTOCOL_VERSION` (`Version31`) is
-///   strictly below [`MAX_KNOWN_PROTOCOL_VERSION`] (`Version32`) and the gate is
-///   an equality. `pinned_version_below_max_known_wire_version` pins that.
-/// - **In general** the verifier never selects semantics from the decoded label:
-///   it checks the label and then overwrites both copies with the pinned
-///   constant before the VM runs. The label only feeds the accept gate, and
-///   every unnameable value is newer than every nameable one (the enum is
-///   contiguous `Version0..=Version32`).
+/// [`ProtocolVersionId`] is a closed enum, so its derived codec *rejects* a minor
+/// this build cannot name — and on a non-self-describing wire that rejection
+/// kills the whole payload decode, leaving nothing able to report which version
+/// arrived. This adapter saturates instead: any minor above
+/// [`MAX_KNOWN_PROTOCOL_VERSION`] reads as that ceiling. The payload decodes, and
+/// the verifier's version gate is what rejects it — a clear domain error instead
+/// of a serde error buried in the payload.
 ///
-/// Note the saturation is lossy in one way that matters only if the accept gate
-/// is ever widened: two *distinct* raw minors above
-/// [`MAX_KNOWN_PROTOCOL_VERSION`] decode to the same value, so a cross-bind
-/// comparing two such labels cannot tell them apart.
+/// That is the whole gain. The guest aborts either way (`read().expect(..)` in
+/// `guest/src/main.rs`), so this buys diagnosis, not a different outcome.
 ///
-/// Binary wires — bincode `standard()`, used by the fixture corpus, era's mirror
-/// structs and the host↔guest `AirbenderCodecV0` channel — read a varint
-/// integer. bincode encodes a `u16` and an enum variant index identically across
-/// the whole `u16` range (`varint_encode_u16` / `varint_encode_u32`: a single
-/// byte at or below `SINGLE_BYTE_MAX`, otherwise a `U16_BYTE` marker plus two
-/// little-endian bytes), so this is a drop-in read of the existing layout and no
-/// fixture needs re-encoding. `wire_version_bincode_is_byte_identical` pins it.
+/// # Why saturating is safe
 ///
-/// Human-readable wires — era's JSON prover API — accept the derived
-/// `"VersionNN"` form and, defensively, a bare integer.
+/// The decoded label selects nothing. `execute` checks it, then overwrites both
+/// copies with `PINNED_PROTOCOL_VERSION` before the VM runs, and no commitment
+/// ever hashes it. Today a saturated label cannot even reach the overwrite: the
+/// gate is an equality and `PINNED_PROTOCOL_VERSION` (`Version31`) sits strictly
+/// below the ceiling (`Version32`), so it is always rejected — pinned by
+/// `pinned_version_below_max_known_wire_version`.
 ///
-/// [`Serialize`] is deliberately left as the derive, so the codec is asymmetric:
-/// a label can be read that cannot be written. `load(save(x)) == x` still holds
-/// for every constructible `x`; only an unnameable label re-encodes differently,
-/// and such a value cannot be constructed in Rust.
+/// Saturating is lossy: raw 33 and raw 60000 both read as `Version32`. That only
+/// matters if the gate is ever widened to accept newer minors, where the
+/// `vm_run_data` cross-bind could no longer tell two unnameable labels apart.
+///
+/// # Scope
+///
+/// The two labels `execute` gates on: `SystemEnv::version` and
+/// `VMRunWitnessInputData::protocol_version`. A protocol-upgrade transaction
+/// carries a third, `ProtocolUpgradeTxCommonData::upgrade_id`, which keeps the
+/// strict codec — it feeds the upgrade tx's nonce and canonical hash, so
+/// saturating it would corrupt them. A payload whose upgrade tx names an
+/// unnameable minor therefore still fails to decode.
+///
+/// # Wire formats
+///
+/// *Binary* — bincode `standard()`: the fixture corpus, era's mirror structs and
+/// the host↔guest `AirbenderCodecV0` channel. The field is a varint integer, and
+/// bincode writes a `u16` and an enum variant index identically across the whole
+/// `u16` range, so reading it as a `u16` is a drop-in: no fixture needs
+/// re-encoding. Pinned by `wire_version_bincode_is_byte_identical`.
+///
+/// *JSON* — era's prover API: the derived `"VersionNN"` form, plus a bare integer
+/// accepted defensively.
+///
+/// [`Serialize`] stays the derive, making the codec deliberately asymmetric: a
+/// label can be read that cannot be written. Round-tripping is unaffected —
+/// `load(save(x)) == x` for every `x` constructible in Rust.
 pub fn deserialize_wire_protocol_version<'de, D>(
     deserializer: D,
 ) -> Result<ProtocolVersionId, D::Error>
@@ -330,19 +339,23 @@ impl<'de> de::Visitor<'de> for WireProtocolVersionVisitor {
         formatter.write_str("a protocol minor version as `\"VersionNN\"` or a number")
     }
 
+    /// Accepts exactly the form the derived `Serialize` writes. `u16::from_str`
+    /// alone would also take `"Version+31"` and `"Version031"`, which nothing
+    /// produces and the derived codec rejects.
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
         value
             .strip_prefix("Version")
+            .filter(|digits| {
+                !digits.is_empty()
+                    && digits.bytes().all(|b| b.is_ascii_digit())
+                    && (digits.len() == 1 || !digits.starts_with('0'))
+            })
             .and_then(|digits| digits.parse::<u16>().ok())
             .ok_or_else(|| E::invalid_value(de::Unexpected::Str(value), &self))
     }
 
     fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
         u16::try_from(value).map_err(|_| E::invalid_value(de::Unexpected::Unsigned(value), &self))
-    }
-
-    fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
-        u16::try_from(value).map_err(|_| E::invalid_value(de::Unexpected::Signed(value), &self))
     }
 }
 
@@ -561,11 +574,9 @@ mod wire_protocol_version_tests {
     /// [`MAX_KNOWN_PROTOCOL_VERSION`] in the same commit.
     ///
     /// A stale constant does *not* cause rejections — `try_from` still succeeds
-    /// for every nameable variant. The hazard is the inverse: an unnameable
-    /// value would saturate to a ceiling *below* the newest nameable version,
-    /// falsifying the "every unnameable value is newer than every nameable one"
-    /// invariant that [`deserialize_wire_protocol_version`]'s safety argument
-    /// rests on.
+    /// for every nameable variant. The hazard is the inverse: an unnameable value
+    /// would saturate to a ceiling *below* the newest nameable version, falsifying
+    /// the invariant [`deserialize_wire_protocol_version`] rests on.
     #[test]
     fn max_known_is_last_variant() {
         let max = MAX_KNOWN_PROTOCOL_VERSION as u16;
@@ -620,10 +631,9 @@ mod wire_protocol_version_tests {
         let raw = MAX_KNOWN_PROTOCOL_VERSION as u16 + 1;
 
         // `raw` is a single-byte varint; 60_000 exercises the `U16_BYTE` marker
-        // path (marker + 2 LE bytes), which no honest payload can carry but a
-        // hostile one can. Both must decode rather than abort the payload — the
-        // verifier's accept gate is what rejects them (a saturated label can
-        // never equal the pinned version), not the codec.
+        // path, which no honest payload carries but a hostile one can. Both must
+        // decode rather than abort the payload; rejecting them is the verifier's
+        // accept gate's job, not the codec's.
         for raw in [raw, 60_000_u16] {
             let bytes = bincode::serde::encode_to_vec(raw, cfg).expect("encode raw u16");
             let (decoded, read) = bincode::serde::decode_from_slice::<Wrapper, _>(&bytes, cfg)
@@ -649,6 +659,12 @@ mod wire_protocol_version_tests {
             r#"{"version":"Version"}"#,
             r#"{"version":-1}"#,
             r#"{"version":null}"#,
+            // Non-canonical string forms `u16::from_str` would otherwise accept.
+            r#"{"version":"Version+31"}"#,
+            r#"{"version":"Version031"}"#,
+            r#"{"version":"Version 31"}"#,
+            // The bare-digit form is the numeric case, not the string one.
+            r#"{"version":"31"}"#,
         ] {
             assert!(
                 serde_json::from_str::<Wrapper>(json).is_err(),
