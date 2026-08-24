@@ -1,143 +1,219 @@
-//! CI guard: **the table did not change unexpectedly** — NOT "the model is
-//! accurate".
+//! CI guard: **the table did not change unexpectedly** — not "the model is accurate".
 //!
-//! Both sides of the comparison are frozen committed data — the embedded
-//! `cost_table.json` and a fixture with its `effective_cycles` baked in — so this
-//! catches an accidental or accuracy-worsening edit to the table or the
-//! prediction code, and nothing else. It **cannot see guest drift**: the fixture
-//! ages with the table. The pre-delegation table reached 2.05× over-prediction
-//! with this test green throughout, and it did not notice the reweight that fixed
-//! it either. That job is `.github/workflows/cycle-model-drift.yaml`, which
-//! re-measures with the *current* guest.
+//! Both sides of the comparison are frozen committed data — the embedded table and a
+//! fixture with measured `effective_cycles` baked in — so this catches an accidental
+//! or accuracy-worsening edit to the table or the prediction code, and nothing else.
+//! It **cannot see guest drift**: the fixture ages with the table. A predecessor
+//! reached 2.05× over-prediction with this test green throughout. That job belongs to
+//! `.github/workflows/cycle-model-drift.yaml`, which re-measures against the guest
+//! built from HEAD.
 //!
-//! ⚠️ The fixture is **in-sample**: all 49 rows (513601-513649) are in the
-//! 176-batch corpus the table was fit on, so this is a tripwire, not a
-//! validation. The historical "122 train / 49 hold-out" split does not describe
-//! this table. Refresh only when the guest moves real cycle counts.
+//! The fixture is the whole reproducible corpus, so it is IN-SAMPLE by construction —
+//! a tripwire, not a validation.
 //!
-//! Re-measured 2026-08-19 on the delegation-enabled guest (zksync_vm2 v0.6.3).
-//! The measured binary was build/guest-markers/app.bin, sha256 9228b6e2… — a
-//! PHASE-MARKER-INSTRUMENTED guest, so a shipping guest will NOT match that
-//! checksum; it identifies the measurement build, not the release artifact.
+//! ## What "safe" means here now
 //!
-//! The feature counts are byte-identical to the previous fixture — only the cycle
-//! counts moved, by 1.54–2.44× (median 2.06×), as blake2/keccak work moved into
-//! delegated circuits.
-
+//! Every rate in the table is measured on an isolated family or is a deliberate bound;
+//! nothing is fitted. The worst under-prediction across 215 measured batches is 8.07%
+//! (deploy batch 900204) and on organic traffic 0.01%, which is what sets the margin at
+//! 1.15 — calibrated, not picked round.
+//!
+//! One warning for whoever next sees a large residual here. An earlier version of this
+//! table under-predicted organic traffic by 8.8%, and single-feature regression said the
+//! shortfall was unattributable — every feature correlates ~0.85 with it, because
+//! organic features all move together. It looked like irreducible model fidelity. It was
+//! one axis priced at zero (`arith_ptr_op`), and it was found by testing synthetic
+//! families for outlier ratios, not by staring at organic correlations. Check the
+//! isolation corpus before concluding the model is at its limit.
+//!
+//! That is a better structure than the predecessor's, which reached a flattering 1.26%
+//! MAPE by fitting eleven axes over these same batches — six of them to exactly zero.
+//! It was accurate in total and wrong on every axis an attacker can isolate, which is
+//! the only kind of accuracy a seal gate needs. `MAX_UNDER_PCT` is therefore a real
+//! tolerance, and it is meaningful because it stays well inside the margin it sits in.
 use serde::Deserialize;
-use zksync_era_airbender_cycles_estimator::{CostModel, FeatureVector};
+use zksync_era_airbender_cycles_estimator::{CostTable, FeatureVector};
 
-const FIXTURE: &str = include_str!("fixtures/holdout_513xxx.json");
+const FIXTURE: &str = include_str!("fixtures/measured_corpus.json");
 
-// MAPE here is 12.79% / max 16.41%, entirely OVER-prediction, and dominated by
-// the opcode floors rather than fit error — the unfloored fit scores 0.58%.
-// Measured on this table: far_call is a median 8.90% of a batch's prediction (max
-// 13.09%), all four opcode floors 10.06% (max 14.34%), and the two precompile
-// floors cost 1.13pp of organic MAPE (14.00% -> 15.13%) in exchange for not
-// pricing a flood far below its true cost.
-//
-// So the absolute bound has to be loose, which makes it useless as a safety
-// check: a 12%-UNDER table would pass it. MAX_UNDER_PCT is the one that matters,
-// under-prediction being the only unsafe direction, and it is 0.0 — strict
-// over-prediction — because this table over-predicts all 49 rows by >= 9.69% and
-// all 176 corpus batches without exception. The τ=0.9 fit plus monotone floors
-// make that the design intent, not luck.
-//
-// KNOWN LIMITATION: the fixture is 513xxx (Version29) only, and the LOW-error
-// half — 506xxx runs to +20.45%, median +15.84%. Of the 4 v31 batches,
-// 84730/84731/84732 UNDER-predict by 2.56% and would fail MAX_UNDER_PCT, but they
-// are one ~1.28e9-cycle workload measured three times; the only large v31 batch
-// (900065, 26.6e9) over-predicts 2.61%. All four stay inside the 1.05 seal margin
-// (1.246e9 * 1.05 > 1.279e9), so this is an out-of-distribution accuracy gap, not
-// a seal-then-cannot-prove vector. Widen the fixture when a v31 corpus exists.
-const MAX_MAPE_PCT: f64 = 13.5;
-const MAX_SINGLE_ERR_PCT: f64 = 17.5;
-const MAX_UNDER_PCT: f64 = 0.0;
+/// Bounds on the committed table's error over its own corpus. Set with headroom over
+/// the measured values so an ordinary re-measurement does not trip them, and tight
+/// enough that a real regression does.
+/// Loose because the deliberate bounds dominate it, and one of them is large on purpose:
+/// `arith_div_op` is bounded at 15,474 — the worst of five measured divisor shapes — and
+/// costs a mean 8% of the predicted total on real traffic. The previous 7,711 gave a
+/// prettier MAPE and under-predicted the worst shape by 67%. Do not tighten this by
+/// loosening a bound.
+const MAX_MAPE_PCT: f64 = 9.0;
+/// Over-prediction is safe but it is throughput given away. Loose on purpose: the
+/// deliberate bounds dominate it, `arith_div_op` and `decommit_repeat` most of all. The
+/// build prints each bound's cost on real traffic; tighten a bound there, never this.
+const MAX_OVER_PCT: f64 = 15.0;
+/// The one that matters: under-prediction is the only unsafe direction. It must stay
+/// far inside the table's own margin — that gap is the safety claim.
+const MAX_UNDER_PCT: f64 = 3.0;
 
 #[derive(Deserialize)]
 struct Row {
     batch_number: u64,
-    /// Effective/native cycles = raw cycles + weighted delegation-circuit cost —
-    /// the target the TOTAL model predicts and the sequencer gates on.
     effective_cycles: u64,
+    raw_cycles: u64,
     features: FeatureVector,
 }
 
 #[test]
-fn embedded_model_does_not_regress_on_frozen_holdout() {
+fn embedded_table_does_not_regress_on_measured_corpus() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
-    assert_eq!(rows.len(), 49, "fixture size changed unexpectedly");
+    assert_eq!(
+        rows.len(),
+        52,
+        "fixture size changed unexpectedly — it is a BUILD PRODUCT of the organic \
+         corpus (build_fixtures.py), so a size change means a batch was added or \
+         failed to measure"
+    );
+    let table = CostTable::embedded();
 
-    let model = CostModel::embedded();
     let mut sum_ape = 0.0;
-    let mut worst = (0u64, 0.0_f64); // (batch, ape%)
-    let mut worst_under = (0u64, 0.0_f64); // (batch, shortfall%)
+    let mut worst_over = (0u64, 0.0_f64);
+    let mut worst_under = (0u64, 0.0_f64);
     for r in &rows {
         let actual = r.effective_cycles as f64;
-        let pred = model.predict_total(&r.features) as f64;
-        let ape = 100.0 * (pred - actual).abs() / actual;
-        sum_ape += ape;
-        if ape > worst.1 {
-            worst = (r.batch_number, ape);
+        let pred = table.predict(&r.features) as f64;
+        sum_ape += 100.0 * (pred - actual).abs() / actual;
+        let signed = 100.0 * (pred - actual) / actual;
+        if signed > worst_over.1 {
+            worst_over = (r.batch_number, signed);
         }
-        // Signed shortfall: positive only when the model predicts LESS than the
-        // batch actually costs, i.e. the batch could seal and then fail to prove.
-        let under = 100.0 * (actual - pred) / actual;
-        if under > worst_under.1 {
-            worst_under = (r.batch_number, under);
+        if -signed > worst_under.1 {
+            worst_under = (r.batch_number, -signed);
         }
     }
     let mape = sum_ape / rows.len() as f64;
     println!(
-        "frozen hold-out: MAPE={mape:.3}%  worst=batch {} at {:.3}%  worst-under=batch {} at {:.3}%",
-        worst.0, worst.1, worst_under.0, worst_under.1
+        "measured corpus: MAPE={mape:.3}%  worst over=batch {} at {:.3}%  \
+         worst under=batch {} at {:.3}%",
+        worst_over.0, worst_over.1, worst_under.0, worst_under.1
     );
 
     assert!(
         worst_under.1 <= MAX_UNDER_PCT,
-        "batch {} is UNDER-predicted by {:.3}% (limit {MAX_UNDER_PCT}%) — under-prediction \
-         is the unsafe direction: such a batch can seal and then be unprovable",
+        "batch {} is UNDER-predicted by {:.3}% (limit {MAX_UNDER_PCT}%). Under-prediction \
+         is the unsafe direction: such a batch can seal and then be unprovable. The \
+         table's margin is {:.2}, so this must stay well inside it.",
         worst_under.0,
-        worst_under.1
+        worst_under.1,
+        table.margin
     );
-
+    assert!(
+        worst_under.1 * 1.5 < (table.margin - 1.0) * 100.0,
+        "the worst under-prediction ({:.2}%) has eaten most of the margin ({:.2}%). \
+         Either the rates have drifted or the margin needs raising — do not just \
+         loosen MAX_UNDER_PCT.",
+        worst_under.1,
+        (table.margin - 1.0) * 100.0
+    );
     assert!(
         mape <= MAX_MAPE_PCT,
-        "total-cycle MAPE {mape:.3}% regressed past {MAX_MAPE_PCT}% — model or prediction code changed"
+        "MAPE {mape:.3}% regressed past {MAX_MAPE_PCT}%"
     );
     assert!(
-        worst.1 <= MAX_SINGLE_ERR_PCT,
-        "batch {} error {:.3}% regressed past {MAX_SINGLE_ERR_PCT}%",
-        worst.0,
-        worst.1
+        worst_over.1 <= MAX_OVER_PCT,
+        "batch {} over-predicted {:.3}%, past {MAX_OVER_PCT}% — over-prediction is safe \
+         but it is throughput, and a jump here usually means a rate became a bound",
+        worst_over.0,
+        worst_over.1
     );
 }
 
-/// The calibration envelope must not fence organic traffic out.
+/// Every batch of real traffic must sit inside the calibrated domains.
 ///
-/// The envelope fails closed (an out-of-envelope batch is sealed, never
-/// silently trusted), so a fence that is too TIGHT costs throughput on ordinary
-/// batches instead of admitting an attack. That failure mode is invisible in
-/// the accuracy numbers, so pin it: every batch of the organic hold-out must be
-/// inside the envelope. If a refit narrows `feature_value_max` (a smaller or
-/// less varied training corpus) this is what notices.
+/// The domain check fails *closed* — an out-of-domain batch is declined, never
+/// silently trusted — so a domain that is too TIGHT costs throughput on ordinary
+/// batches rather than admitting an attack. That failure mode is invisible in the
+/// accuracy numbers, so pin it here: it is what notices if a rebuild narrows a domain
+/// because it was rebuilt from a smaller corpus.
 #[test]
-fn organic_holdout_is_inside_the_calibration_envelope() {
+fn real_traffic_is_inside_every_calibrated_domain() {
     let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
-    let model = CostModel::embedded();
+    let table = CostTable::embedded();
     for r in &rows {
-        let est = model.estimate(&r.features);
+        let est = table.estimate(&r.features);
         assert!(
             est.is_within_calibration(),
-            "organic batch {} was flagged out-of-envelope on {:?} — the fence is \
-             tighter than real traffic",
+            "corpus batch {} is outside the domain of {:?} — the domain is tighter than \
+             real traffic",
             r.batch_number,
-            est.extrapolated
+            est.extrapolating
         );
         assert!(
             !est.trace_missing,
-            "organic batch {} has a full trace; the missing-trace guard must stay quiet",
+            "corpus batch {} has a full trace; the missing-trace signal must stay quiet",
             r.batch_number
         );
     }
+}
+
+/// Tolerance on the RAW prediction. Deliberately looser than `MAX_UNDER_PCT` and for a
+/// different reason: `MAX_UNDER_PCT` is a safety bound on the quantity the gate compares
+/// against the proving ceiling, whereas raw is a diagnostic the gate never reads. An
+/// under-prediction here costs credibility in the feedback channel, not provability.
+///
+/// Worth noting which way the two differ. Raw is the *more* accurate target — MAPE 1.87%
+/// against 4.38% — because the effective table carries the deliberate bounds and their
+/// over-charge, while its worst under-prediction is larger (3.31% against 0.01%) for the
+/// same reason: that over-charge is what pushes effective to the safe side.
+const MAX_RAW_UNDER_PCT: f64 = 5.0;
+
+/// The RAW prediction must be accurate too, and must never exceed the effective one.
+///
+/// This is the number the consumer can actually check — `effective` folds in delegation
+/// weights that have no authoritative source in this tree, so an operator comparing
+/// predicted against actual has to use `raw` for the comparison to mean anything. If it
+/// were left unvalidated, the feedback channel would report the model's error and the
+/// weights' error mixed together, and the first production correction would chase the
+/// wrong one.
+#[test]
+fn raw_prediction_is_accurate_and_never_exceeds_effective() {
+    let rows: Vec<Row> = serde_json::from_str(FIXTURE).expect("parse fixture");
+    let table = CostTable::embedded();
+
+    let mut sum_ape = 0.0;
+    let mut worst_under = (0u64, 0.0_f64);
+    for r in &rows {
+        let raw = table.predict_raw(&r.features);
+        let eff = table.predict(&r.features);
+        assert!(
+            raw <= eff,
+            "batch {}: predicted raw {raw} exceeds predicted effective {eff}. \
+             effective = raw + weighted delegations and every weight is positive, so \
+             this is arithmetically impossible — a rate table has raw and effective \
+             swapped, or a raw rate is missing and defaulted to zero.",
+            r.batch_number
+        );
+        let actual = r.raw_cycles as f64;
+        let signed = 100.0 * (raw as f64 - actual) / actual;
+        sum_ape += signed.abs();
+        if -signed > worst_under.1 {
+            worst_under = (r.batch_number, -signed);
+        }
+    }
+    let mape = sum_ape / rows.len() as f64;
+    println!(
+        "raw prediction: MAPE={mape:.3}%  worst under=batch {} at {:.3}%",
+        worst_under.0, worst_under.1
+    );
+    assert!(
+        mape <= MAX_MAPE_PCT,
+        "raw MAPE {mape:.3}% regressed past {MAX_MAPE_PCT}%"
+    );
+    assert!(
+        worst_under.1 <= MAX_RAW_UNDER_PCT,
+        "batch {} has its RAW cycles under-predicted by {:.3}% (limit \
+         {MAX_RAW_UNDER_PCT}%). \
+         The gate does not read this field, so this is not itself an under-estimation \
+         vector — but it is the signal the operator uses to trust the table, and a biased \
+         one teaches them to distrust a correct gate.",
+        worst_under.0,
+        worst_under.1
+    );
 }

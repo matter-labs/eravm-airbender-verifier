@@ -1,113 +1,193 @@
 {
-  "batches": 176,
-  "phases": {
-    "vm_execution": {
-      "features": {
-        "rich_addressing_op": 163.05761935866568,
-        "average_op": 236.0,
-        "storage_read": 9050.053925081882,
-        "storage_write": 27089.792254395834,
-        "transient_storage_read": 500.0,
-        "transient_storage_write": 11000.0,
-        "event": 2287.0,
-        "precompile_call": 25809.291830264712,
-        "decommit": 285000.0,
-        "far_call": 15000.0,
-        "uma_write": 1750.9582796711632,
-        "uma_read": 77.0,
-        "near_call_count": 236.0,
-        "keccak256_cycles": 19688.84334451625,
-        "sha256_cycles": 91761.7407860955,
-        "ec_recover_cycles": 368000.0,
-        "decommit_cycles": 3433.3980404670588,
-        "storage_application": 27242.803684577324,
-        "transaction_count": 249970.66915660896,
-        "ec_add_cycles": 185724.0,
-        "ec_mul_cycles": 811000.0,
-        "ec_pairing_cycles": 66604671.0,
-        "mod_exp_cycles": 952644.0,
-        "secp256r1_verify_cycles": 12665313.0
-      },
-      "base": 685862109.799927,
-      "r2": 0.9998389033615582
+  "base": {
+    "cycles": 1154667710.0,
+    "raw_cycles": 949321655.0
+  },
+  "ops": {
+    "arith_cheap_op": {
+      "cycles_per_unit": 145.0,
+      "kind": "measured",
+      "domain_max": 6185264,
+      "raw_cycles_per_unit": 145.0
     },
-    "merkle_verification": {
-      "features": {
-        "merkle_leaf_count": 71438.96388894929,
-        "state_diff_count": 53776.92211093735
-      },
-      "base": 21201382.0946403,
-      "r2": 0.9999868132534401
+    "arith_div_op": {
+      "cycles_per_unit": 15474.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 7711.0
     },
-    "setup": {
-      "features": {
-        "merkle_leaf_count": 2110.052466482932,
-        "transaction_count": 0.0,
-        "used_bytecode_bytes": 62.87434320548455,
-        "used_bytecode_count": 5192.170998797961,
-        "storage_key_count": 3829.477491545426
-      },
-      "base": 15501269.897307904,
-      "r2": 0.9999994607924514
+    "arith_mul_op": {
+      "cycles_per_unit": 852.0,
+      "kind": "measured",
+      "domain_max": 113126,
+      "raw_cycles_per_unit": 852.0
     },
-    "commitment": {
-      "features": {
-        "pubdata_bytes": 244.34778887901902
-      },
-      "base": 138028975.3380927,
-      "r2": 0.8707755753854172
+    "arith_ptr_op": {
+      "cycles_per_unit": 1680.0,
+      "kind": "measured",
+      "domain_max": 471949,
+      "raw_cycles_per_unit": 1680.0
+    },
+    "arith_shift_op": {
+      "cycles_per_unit": 207.0,
+      "kind": "measured",
+      "domain_max": 675748,
+      "raw_cycles_per_unit": 207.0
+    },
+    "average_op": {
+      "cycles_per_unit": 107.0,
+      "kind": "measured",
+      "domain_max": 603130,
+      "raw_cycles_per_unit": 107.0
+    },
+    "decommit_cycles": {
+      "cycles_per_unit": 7123.0,
+      "kind": "measured",
+      "domain_max": 168682,
+      "raw_cycles_per_unit": 7123.0
+    },
+    "decommit_repeat": {
+      "cycles_per_unit": 2013801.2847999998,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 2013801.0
+    },
+    "ec_add_cycles": {
+      "cycles_per_unit": 58916.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 51670.0
+    },
+    "ec_mul_cycles": {
+      "cycles_per_unit": 683591.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 542836.0
+    },
+    "ec_pairing_cycles": {
+      "cycles_per_unit": 12452078.0,
+      "kind": "measured",
+      "domain_max": 900,
+      "raw_cycles_per_unit": 9921775.0
+    },
+    "ec_recover_cycles": {
+      "cycles_per_unit": 513649.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 303871.0
+    },
+    "event": {
+      "cycles_per_unit": 3788.0,
+      "kind": "measured",
+      "domain_max": 9138,
+      "raw_cycles_per_unit": 3788.0
+    },
+    "far_call": {
+      "cycles_per_unit": 14877.0,
+      "kind": "measured",
+      "domain_max": 62464,
+      "raw_cycles_per_unit": 14877.0
+    },
+    "keccak256_cycles": {
+      "cycles_per_unit": 6153.0,
+      "kind": "measured",
+      "domain_max": 30282,
+      "raw_cycles_per_unit": 3556.0
+    },
+    "mod_exp_cycles": {
+      "cycles_per_unit": 228241.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 201820.0
+    },
+    "near_call_count": {
+      "cycles_per_unit": 926.0,
+      "kind": "measured",
+      "domain_max": 174463,
+      "raw_cycles_per_unit": 926.0
+    },
+    "precompile_call": {
+      "cycles_per_unit": 484.0,
+      "kind": "measured",
+      "domain_max": 28735,
+      "raw_cycles_per_unit": 484.0
+    },
+    "pubdata_bytes": {
+      "cycles_per_unit": 735.0,
+      "kind": "measured",
+      "domain_max": 500000,
+      "raw_cycles_per_unit": 482.0
+    },
+    "secp256r1_verify_cycles": {
+      "cycles_per_unit": 811847.0,
+      "kind": "bounded",
+      "raw_cycles_per_unit": 470991.0
+    },
+    "sha256_cycles": {
+      "cycles_per_unit": 5602.0,
+      "kind": "measured",
+      "domain_max": 2654,
+      "raw_cycles_per_unit": 5599.0
+    },
+    "state_diff_count": {
+      "cycles_per_unit": 90208.0,
+      "kind": "measured",
+      "domain_max": 13513,
+      "raw_cycles_per_unit": 81495.0
+    },
+    "storage_application": {
+      "cycles_per_unit": 183168.0,
+      "kind": "measured",
+      "domain_max": 9009,
+      "raw_cycles_per_unit": 142048.0
+    },
+    "storage_read": {
+      "cycles_per_unit": 4996.0,
+      "kind": "measured",
+      "domain_max": 47425,
+      "raw_cycles_per_unit": 4996.0
+    },
+    "storage_write": {
+      "cycles_per_unit": 17615.0,
+      "kind": "measured",
+      "domain_max": 15274,
+      "raw_cycles_per_unit": 17612.0
+    },
+    "transaction_count": {
+      "cycles_per_unit": 251376.0,
+      "kind": "measured",
+      "domain_max": 10000,
+      "raw_cycles_per_unit": 70446.0
+    },
+    "transient_storage_read": {
+      "cycles_per_unit": 414.0,
+      "kind": "measured",
+      "domain_max": 3289,
+      "raw_cycles_per_unit": 414.0
+    },
+    "transient_storage_write": {
+      "cycles_per_unit": 11911.0,
+      "kind": "measured",
+      "domain_max": 1693,
+      "raw_cycles_per_unit": 11911.0
+    },
+    "uma_read": {
+      "cycles_per_unit": 475.0,
+      "kind": "measured",
+      "domain_max": 774780,
+      "raw_cycles_per_unit": 475.0
+    },
+    "uma_write": {
+      "cycles_per_unit": 507.0,
+      "kind": "measured",
+      "domain_max": 546812,
+      "raw_cycles_per_unit": 507.0
     }
   },
-  "total": {
-    "features": {
-      "rich_addressing_op": 117.26115779229531,
-      "average_op": 236.0,
-      "storage_read": 13814.625158711315,
-      "storage_write": 33390.65895473594,
-      "transient_storage_read": 500.0,
-      "transient_storage_write": 11000.0,
-      "event": 2287.0,
-      "precompile_call": 28434.91804784777,
-      "decommit": 285000.0,
-      "far_call": 15000.0,
-      "uma_write": 2813.8785543694826,
-      "uma_read": 77.0,
-      "keccak256_cycles": 16845.1359381302,
-      "sha256_cycles": 10311.295600962618,
-      "ec_recover_cycles": 368000.0,
-      "decommit_cycles": 10655.01397030851,
-      "storage_application": 69346.86389330102,
-      "transaction_count": 278015.46607112995,
-      "near_call_count": 508.4719100389476,
-      "pubdata_bytes": 4166.898771156542,
-      "merkle_leaf_count": 102952.69376165466,
-      "state_diff_count": 99969.4473715513,
-      "ec_add_cycles": 185724.0,
-      "ec_mul_cycles": 811000.0,
-      "ec_pairing_cycles": 66604671.0,
-      "mod_exp_cycles": 952644.0,
-      "secp256r1_verify_cycles": 12665313.0
-    },
-    "base": 1083057783.5487778,
-    "r2": 0.9998214230451604
-  },
-  "calibration": {
-    "rich_addressing_share_max": 0.1154144709730982,
-    "feature_value_max": {
-      "decommit_cycles": 302653,
-      "far_call": 477516,
-      "decommit": 586,
-      "storage_write": 148339,
-      "uma_write": 3435559
-    },
-    "feature_value_max_source": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
-  },
+  "unpriced": [
+    "decommit",
+    "merkle_leaf_count"
+  ],
+  "margin": 1.3,
   "provenance": {
-    "guest_sha256": "9228b6e21c4d29795ac7f7be8225995a1678d5a7bc8df8544f8259f91751bb76",
-    "verifier_commit": "5644a923217e91914491915c4163f0caed90e26b (+ uncommitted PR#103 dep overlay: vm2 v0.6.3, zksync-protocol v0.153.14)",
-    "vm2_rev": "0.6.3 (git+https://github.com/matter-labs/vm2?tag=v0.6.3#be1e50b59b3ba1a5e4eda2ca7e01f33cf373d779)",
-    "protocol_version": "Version29",
-    "fit_date": "2026-08-20",
-    "dataset": "176 organic mainnet batches (127x 506077-506204 + 49x 513601-513649), all ProtocolVersionId::Version29 re-encoded to the current wire format; measured 2026-08-19 on the delegation guest; tau=0.9. The 49x 513xxx are ALSO the model_regression fixture, so that fixture is IN-SAMPLE."
+    "guest_sha256": "8b9436a80e7a1d8378bfe77601622a5851ef3c89bf860c654cc1886f8ba7c9cc",
+    "verifier_commit": "4abd7ee",
+    "vm2_rev": "be1e50b59b3ba1a5e4eda2ca7e01f33cf373d779",
+    "measured_on": "2026-08-21",
+    "corpus": "52 organic batches (3 v31, 49 v29); rates from 197 v31 isolation fixtures; base is v31-derived"
   }
 }

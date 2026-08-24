@@ -1,3 +1,1 @@
-numpy
-scipy
-pandas
+# No numerical libraries: the table is built from measured literals, not fitted.
