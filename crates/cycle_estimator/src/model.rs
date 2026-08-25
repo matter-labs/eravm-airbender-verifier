@@ -65,7 +65,38 @@ pub const EMBEDDED_COST_TABLE: &str = include_str!("../model/cost_table.json");
 /// Slack on a calibrated domain before a count counts as extrapolation. A domain is
 /// the largest count an entry was measured over — a sample, not a bound — so it
 /// needs headroom for legitimately larger batches.
-const DOMAIN_SLACK: f64 = 1.8;
+///
+/// Public because it is part of the trip point, not an implementation detail: the largest
+/// count an axis is trusted at is `domain_max * DOMAIN_SLACK`, and both
+/// `scripts/cycle_model/build_cost_table.py` and `tests/gate_reachability.rs` have to
+/// compute it. It was duplicated by hand in the script before this.
+pub const DOMAIN_SLACK: f64 = 1.8;
+
+/// Axis groups where an all-zero sibling set is a PRODUCER signature rather than a batch
+/// shape — see [`CostTable::producer_gap`].
+///
+/// Each entry is `(heavy axis, siblings a real execution always accompanies it with,
+/// count above which their joint absence is not credible)`. The threshold is what keeps
+/// this from being a heuristic: across the 52-batch organic corpus every one of the five
+/// arithmetic axes is non-zero in every batch, at 64 to 179 cheap ops per division, so a
+/// batch retiring a million cheap ops has never had fewer than ~5,600 divisions. One
+/// million with *none* is not a shape, it is a producer that folded the classes together.
+///
+/// Deliberately NOT extended to `decommit`/`decommit_repeat`, though losing
+/// `decommit_repeat` in a port is the more expensive mistake (2.01e6 cycles per unit).
+/// A batch whose every DECOMMIT is fresh is a legitimate shape — `decommit_fresh_4blobs`
+/// in the adversarial fixture is exactly that — so a zero there would distrust real
+/// batches. Nothing in the trace separates that from a missing producer.
+const PRODUCER_COVERAGE: &[(FeatureId, &[FeatureId], u64)] = &[(
+    FeatureId::ArithCheapOp,
+    &[
+        FeatureId::ArithShiftOp,
+        FeatureId::ArithMulOp,
+        FeatureId::ArithDivOp,
+        FeatureId::ArithPtrOp,
+    ],
+    1_000_000,
+)];
 
 /// Where a rate came from. Two kinds, and deliberately no third.
 ///
@@ -120,6 +151,41 @@ impl CostEntry {
     /// corpus — a gate that declines everything while looking healthy. A bound holds
     /// outside the range it was taken over; a `Measured` entry with no domain is a number
     /// with no stated evidence, so any use of it is extrapolation.
+    ///
+    /// # What that makes the domain-free `Bounded` case, deliberately
+    ///
+    /// `Bounded` axes carry no domain, so they never extrapolate, so they are the ONLY
+    /// axes that can carry an estimate into a consumer's magnitude branch while the
+    /// estimate is still trusted. Every domain-carrying axis trips its domain first:
+    /// driving all of them at once to `1.8 x domain_max` reaches 0.61 of the ceiling
+    /// (0.79 after the table's margin), below the 0.95 at which the deployed consumer
+    /// closes a batch. `gate_reachability.rs` asserts it, so the claim is checked rather
+    /// than stated.
+    ///
+    /// Two consequences, both intended, and neither of them free:
+    ///
+    /// 1. **The domain guard is the effective seal condition** for measured axes. A flood
+    ///    on one of them is answered by distrust, not by magnitude, and the deployed
+    ///    consumer answers distrust with `IncludeAndSeal` — so the configured cycle budget
+    ///    only ever fires through a `Bounded` axis. That is the honest description of the
+    ///    gate, not an accident of the numbers.
+    /// 2. **A bound is sound to seal on and lossy to refuse on.** `conservative()` is an
+    ///    over-estimate by construction, which is exactly right when the answer is "seal
+    ///    early" and costs throughput when the answer is "refuse this transaction".
+    ///    `arith_div_op` is the live case: 15,474 is the worst operand shape, the cheapest
+    ///    measured shape is 1,162 (`div_fast_flood`), and the operands are gone by the
+    ///    time a count is recorded, so a tx of ~3.17M cheap divisions is refused at a true
+    ///    cost of 7% of the ceiling. [`CycleEstimate::bounded`] is reported so a consumer
+    ///    can see when a refusal rests on that rather than on a measurement.
+    ///
+    /// Giving `arith_div_op` a domain — the obvious fix for the over-refusal — was tried
+    /// and rejected: it moves the *worst* shape onto the distrust branch too, and distrust
+    /// means `IncludeAndSeal`, so the one flood that genuinely exceeds 2^36 would be
+    /// admitted and sealed. The over-refusal costs a sender a transaction; that trade
+    /// costs the chain a batch it cannot prove. Closing the gap for real needs the operand
+    /// shape to become observable (price per quotient digit, which is what the cost tracks)
+    /// — and vm2's `Tracer` cannot see an instruction's operands, so it needs a vm2 change,
+    /// not a table change.
     fn extrapolates(&self, count: u64) -> bool {
         match (self.domain_max, self.kind) {
             (Some(max), _) => count as f64 > max as f64 * DOMAIN_SLACK,
@@ -253,10 +319,61 @@ impl CostTable {
             marginal: self.predict_marginal(fv),
             margin: self.margin,
             raw: self.predict_raw(fv),
+            bounded: self.predict_bounded(fv),
             untrusted: self.untrusted_pricing(fv),
             extrapolating: self.extrapolating(fv),
             trace_missing: Self::trace_missing(fv),
+            producer_gap: Self::producer_gap(fv),
         }
+    }
+
+    /// The part of [`Self::predict`] that comes from [`Provenance::Bounded`] rates.
+    ///
+    /// A bound is an upper bound at the worst input an attacker can choose, and for the
+    /// operand-dependent axes the true cost sits far below it — `arith_div_op` is priced
+    /// at 15,474 against a measured 1,162 for the cheapest shape. Over-estimating is the
+    /// safe direction for a SEAL decision and the lossy one for a REFUSE decision, so a
+    /// consumer about to refuse a transaction needs to know how much of the number it is
+    /// refusing on is a bound. That is what this is for; nothing in the gate arithmetic
+    /// uses it.
+    pub fn predict_bounded(&self, fv: &FeatureVector) -> u64 {
+        let acc: f64 = self
+            .ops
+            .iter()
+            .filter(|(_, e)| e.kind == Provenance::Bounded)
+            .map(|(id, e)| e.cycles_per_unit * fv.get(*id) as f64)
+            .sum();
+        acc.max(0.0).round() as u64
+    }
+
+    /// Axes that a real execution never leaves at zero alongside the traffic this batch
+    /// claims — i.e. axes whose PRODUCER looks unwired, rather than unused.
+    ///
+    /// Every other trust signal keys on `count > 0`, so an axis a producer never fills is
+    /// indistinguishable from an axis the batch never used, and a mis-mapped feature is
+    /// therefore invisible: it reads as a batch that did none of that work. The schema
+    /// this crate ships makes that a live risk rather than a theoretical one, because it
+    /// splits era's single `RichAddressingOp` bucket into five measured cost classes
+    /// (`crates/cycle_tracer/src/tracer.rs` for the vm2 mapping; era's legacy-VM producer
+    /// in `core/lib/multivm/src/tracers/cycle_estimator/vm_latest/mod.rs` has to be
+    /// re-mapped to match). Renaming that one arm and leaving it lumped compiles, prices
+    /// every division at `arith_cheap_op`'s 145, and scores a batch that the correct
+    /// mapping puts at 1.06x of the ceiling (1.37x conservative) at 0.028x instead —
+    /// 37x under, silently, with every other signal green.
+    ///
+    /// So this signal exists to make that particular absence loud. It is not a general
+    /// plausibility check on batch shapes: see `PRODUCER_COVERAGE` for the one group it
+    /// covers, the organic evidence behind its threshold, and why `decommit_repeat` — the
+    /// axis where a lost producer costs the most — cannot be covered this way.
+    ///
+    /// A false positive here costs a conservative seal, which is the cheap direction.
+    pub fn producer_gap(fv: &FeatureVector) -> Vec<FeatureId> {
+        PRODUCER_COVERAGE
+            .iter()
+            .filter(|(heavy, _, floor)| fv.get(*heavy) >= *floor)
+            .filter(|(_, siblings, _)| siblings.iter().all(|id| fv.get(*id) == 0))
+            .flat_map(|(_, siblings, _)| siblings.iter().copied())
+            .collect()
     }
 
     /// Predicted RAW main-trace cycles, excluding delegation-circuit cost.

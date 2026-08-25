@@ -453,3 +453,33 @@ Read these before quoting a number.
   feature; the tracer can attribute the stat to the instruction that produced it.
 - **Three retired rows are uncovered coverage,** not cleanup — see
   `testdata/cycle_model/RETIRED_FIXTURES.md`.
+- **A bound refuses transactions it cannot price, and only bounds can refuse at all.**
+  `Bounded` entries carry no domain, so they never extrapolate, so they are the only axes
+  that can carry a *trusted* estimate as far as a consumer's budget: every measured axis
+  trips its domain first — all of them at once at 1.8x domain reach 0.61 of the ceiling,
+  0.79 after the margin, against the 0.95 at which era closes a batch. Two bounds are
+  reachable in practice (`arith_div_op` at ~3.17M divisions, `decommit_repeat` at ~24.4k
+  repeats); the five crypto bounds are gated by `precompile_call`'s own domain, since their
+  payload is one unit per call. The price is over-refusal: divisions cost 1,162 cycles at
+  the cheapest measured shape and 14,307 at the dearest, all charged at 15,474, so a
+  transaction of ~3.2M cheap divisions is refused while truly costing **7.0%** of the
+  ceiling. Attaching a domain to the axis is not the fix — distrust means `IncludeAndSeal`
+  downstream, so the worst-shape flood would then be admitted and sealed unprovable. It
+  closes when the operand shape becomes observable (cost tracks quotient digits), which
+  needs a vm2 change: a `Tracer` cannot see an instruction's operands.
+  `crates/cycle_estimator/tests/gate_reachability.rs` asserts every number in this
+  paragraph.
+- **Nothing in a feature vector reveals a producer that never filled an axis.** Every trust
+  signal keys on `count > 0`, so a mis-mapped feature reads exactly like work the batch did
+  not do. This schema makes that live: it splits era's single `RichAddressingOp` bucket
+  into five measured classes, and the mechanical port of that arm
+  (`core/lib/multivm/src/tracers/cycle_estimator/vm_latest/mod.rs`) prices every division
+  at `arith_cheap_op`'s 145 — a 4.6M-division batch the correct mapping puts at 1.06x of
+  the ceiling scores 0.028x, 37x under, trusted, with no signal raised.
+  `CostTable::producer_gap` catches the one
+  detectable signature (≥1M cheap ops with all four dearer arithmetic axes at zero, a shape
+  no organic batch has: all 52 run 64–179 cheap ops per division). The general case is not
+  detectable — `decommit_repeat`, where a lost producer costs the most, cannot be covered
+  this way, because a batch whose every DECOMMIT is fresh is a legitimate shape
+  (`decommit_fresh_4blobs` is one). Re-measure one batch through both producers after
+  touching either.

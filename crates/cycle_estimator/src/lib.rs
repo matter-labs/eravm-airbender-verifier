@@ -35,16 +35,31 @@
 //!    input sweeps: `mod_exp` linear in exponent bits and `ec_mul` saturating in scalar
 //!    bits, both invisible to the tracer and so bounded at the maximum; `ec_pairing`
 //!    carries its pair count and is measured per pair. **The open case is `arith_div_op`**
-//!    — the family designed to find the worst divisor path is dead in the corpus, so its
-//!    bound is the worst *measured* regime, on the one axis that alone approaches the
-//!    ceiling.
+//!    — its bound is the worst of five *measured* divisor regimes rather than a proof, on
+//!    the one axis that alone approaches the ceiling.
+//! 5. **A producer fills every axis it is supposed to.** Nothing in a feature vector
+//!    distinguishes an axis a batch never used from one its producer never filled, and this
+//!    schema splits era's single arithmetic bucket into five measured classes — so a
+//!    mechanical port that leaves them lumped prices every division at 145.
+//!    [`CostTable::producer_gap`] makes that one absence loud; the general case is not
+//!    detectable from the vector alone.
+//!
+//! # What the gate can decide, and on what
+//!
+//! An estimate feeds two different decisions and the provenance split lands differently on
+//! each. Sealing on an over-estimate is safe; refusing a transaction on one is not free,
+//! and `Bounded` axes are the only ones that can carry a trusted estimate as far as a
+//! budget — every measured axis leaves its calibrated domain first, so a flood on one is
+//! answered by distrust rather than by magnitude. The consequences, the liveness price on
+//! `arith_div_op`, and why giving it a domain would be worse are recorded on
+//! `CostEntry::extrapolates` and asserted in `tests/gate_reachability.rs`.
 //!
 //! # Cycles only — not a memory control
 //!
 //! [`CycleEstimate`] has no memory field, and on every measured decommit-flood
 //! shape the heap arena is exhausted *before* the cycle budget (memory binds at
 //! roughly a third of the cycle-binding gas level, where the prediction sits at
-//! ~26–37% of the limit and `fits()` is true). Peak memory needs its own
+//! ~26–37% of the limit and every trust signal is green). Peak memory needs its own
 //! criterion.
 pub mod estimator;
 pub mod features;
@@ -53,6 +68,6 @@ pub mod model;
 pub use estimator::{estimate_from_features, CycleEstimate};
 pub use features::{FeatureId, FeatureVector, VM_TRACE_FEATURES};
 pub use model::{
-    Base, CostEntry, CostTable, Provenance, TableProvenance, EMBEDDED_COST_TABLE,
+    Base, CostEntry, CostTable, Provenance, TableProvenance, DOMAIN_SLACK, EMBEDDED_COST_TABLE,
     PROVING_CYCLE_CEILING,
 };

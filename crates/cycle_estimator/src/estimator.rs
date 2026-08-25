@@ -2,8 +2,15 @@
 //! decide.
 //!
 //! The estimate is `base + Σ rate · count` (see [`crate::model`]) — arithmetic, not
-//! a fit. What this module adds is the decision surface: the two signals that say
-//! whether the number can be trusted, and the margin that covers the residual.
+//! a fit. What this module adds is the decision surface: the signals that say whether the
+//! number can be trusted, and the margin that covers the residual.
+//!
+//! The signals are not interchangeable, and which of them a decision may rest on depends
+//! on the decision. [`CycleEstimate::is_reliable`] and
+//! [`CycleEstimate::is_within_calibration`] gate whether the number means anything at all;
+//! [`CycleEstimate::bounded`] says how much of it is an upper bound rather than a
+//! measurement, which matters only when the answer is "refuse this transaction" — see
+//! `crate::model::CostEntry::extrapolates`.
 
 use crate::features::{FeatureId, FeatureVector};
 use crate::model::CostTable;
@@ -37,6 +44,19 @@ pub struct CycleEstimate {
     /// weights re-ranks the table rather than rescaling it. That is precisely why both
     /// numbers are worth carrying.
     pub raw: u64,
+    /// The part of `total` that comes from `Bounded` rates — see
+    /// [`CostTable::predict_bounded`].
+    ///
+    /// A bound over-estimates on purpose, so it is sound to SEAL on and lossy to REFUSE
+    /// on. This says how much of the number a refusal would rest on: `arith_div_op` is
+    /// priced at its worst operand shape, 13.3x the cheapest measured one, so a
+    /// division-heavy transaction can be refused at a true cost of 7% of the ceiling. A
+    /// consumer whose refusal margin is mostly this is refusing on an unobservable operand
+    /// shape rather than on a measurement, and should log it as such.
+    ///
+    /// Over the 52-batch organic corpus it is a mean 14.4% of `total` and at most 20.1%;
+    /// on the `div_fast_flood` fixture, 97.9%.
+    pub bounded: u64,
     /// Operations the batch uses that the table cannot price — see
     /// [`CostTable::untrusted_pricing`].
     ///
@@ -51,13 +71,26 @@ pub struct CycleEstimate {
     pub extrapolating: Vec<FeatureId>,
     /// The batch claims work but its VM trace is empty — nobody wired a tracer.
     pub trace_missing: bool,
+    /// Axes left at zero that a batch with this much traffic never leaves at zero — a
+    /// producer that is unwired rather than a batch that did none of that work. See
+    /// [`CostTable::producer_gap`].
+    pub producer_gap: Vec<FeatureId>,
 }
 
 impl CycleEstimate {
     /// Every operation the batch used is priced by a measurement or a deliberate
-    /// bound, and a tracer actually ran.
+    /// bound, a tracer actually ran, and it filled the axes it was supposed to.
     pub fn is_reliable(&self) -> bool {
-        self.untrusted.is_empty() && !self.trace_missing
+        self.untrusted.is_empty() && !self.trace_missing && self.producer_gap.is_empty()
+    }
+
+    /// Share of `total` that rests on a `Bounded` rate rather than a measurement — see
+    /// [`Self::bounded`]. `0.0` for an empty estimate.
+    pub fn bounded_share(&self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        self.bounded as f64 / self.total as f64
     }
 
     /// Every count is inside the range its rate was calibrated over.
@@ -110,9 +143,18 @@ mod tests {
 
     /// A minimal but real-shaped trace: enough opcode traffic that the
     /// missing-trace signal treats it as an actual execution.
+    ///
+    /// The arithmetic mix matters, not just the volume. Every one of the five arithmetic
+    /// axes is non-zero in all 52 organic batches, so a million cheap ops beside four
+    /// zeros is the signature of an unwired producer rather than a batch shape, and
+    /// [`CostTable::producer_gap`] says so. This helper used to be that shape.
     fn traced() -> FeatureVector {
         let mut fv = FeatureVector::default();
         fv.add(FeatureId::ArithCheapOp, 1_000_000);
+        fv.add(FeatureId::ArithShiftOp, 100_000);
+        fv.add(FeatureId::ArithMulOp, 15_000);
+        fv.add(FeatureId::ArithDivOp, 8_000);
+        fv.add(FeatureId::ArithPtrOp, 60_000);
         fv.add(FeatureId::AverageOp, 50_000);
         fv.add(FeatureId::FarCall, 500);
         fv.add(FeatureId::UmaRead, 20_000);
@@ -210,6 +252,94 @@ mod tests {
                 "doubling {name} did not change the estimate, so it reaches no priced axis"
             );
         }
+    }
+
+    /// The mis-port this signal exists for: era's producer lumps `Add`/`Sub`/`Mul`/`Div`/
+    /// `Jump`/`Binop`/`Shift`/`Ptr` into ONE bucket today, so the mechanical port of that
+    /// arm to the new schema fills `arith_cheap_op` alone. Nothing else in the estimate
+    /// can see it — the counts are positive, the axes are priced, the domains hold.
+    #[test]
+    fn a_producer_that_folded_the_arith_classes_together_is_caught() {
+        let mut folded = FeatureVector::default();
+        // What a mis-ported era tracer emits for a division flood: every arithmetic op,
+        // divisions included, arriving on the cheap axis.
+        folded.add(FeatureId::ArithCheapOp, 4_609_415 + 755_151);
+        folded.add(FeatureId::AverageOp, 50_000);
+        let est = CostTable::embedded().estimate(&folded);
+        assert_eq!(
+            est.producer_gap,
+            vec![
+                FeatureId::ArithShiftOp,
+                FeatureId::ArithMulOp,
+                FeatureId::ArithDivOp,
+                FeatureId::ArithPtrOp
+            ],
+            "an arithmetic flood with all four dearer classes at zero must read as an \
+             unwired producer"
+        );
+        assert!(!est.is_reliable(), "and it must not be trusted");
+
+        // The same volume with the classes mapped correctly is a batch the gate can judge
+        // — and it is the one that shows what the signal is worth: 1.06x of the ceiling
+        // against 0.028x for the folded vector above.
+        let mut mapped = FeatureVector::default();
+        mapped.add(FeatureId::ArithDivOp, 4_609_415);
+        mapped.add(FeatureId::ArithCheapOp, 755_151);
+        mapped.add(FeatureId::AverageOp, 50_000);
+        let mapped_est = CostTable::embedded().estimate(&mapped);
+        assert!(mapped_est.producer_gap.is_empty());
+        assert!(
+            mapped_est.total > 20 * est.total,
+            "the whole point of the split is that these two are not the same batch: \
+             folded={} mapped={}",
+            est.total,
+            mapped_est.total
+        );
+    }
+
+    /// And it must not fire on a real trace, which is the only reason it can be wired
+    /// into `is_reliable`.
+    #[test]
+    fn a_real_arith_mix_is_not_a_producer_gap() {
+        let est = CostTable::embedded().estimate(&traced());
+        assert!(est.producer_gap.is_empty());
+        assert!(est.is_reliable());
+        // Nor on a small batch that happens to run no dear arithmetic: below the
+        // threshold the joint absence is an ordinary shape.
+        let mut small = FeatureVector::default();
+        small.add(FeatureId::ArithCheapOp, 40_000);
+        small.add(FeatureId::AverageOp, 8_000);
+        assert!(CostTable::embedded()
+            .estimate(&small)
+            .producer_gap
+            .is_empty());
+    }
+
+    /// `bounded` has to separate the two kinds of number, because that is the only thing
+    /// it is for: a consumer deciding whether a refusal rests on a measurement.
+    #[test]
+    fn bounded_share_separates_a_bound_driven_estimate_from_a_measured_one() {
+        let organic = CostTable::embedded().estimate(&traced());
+        assert!(
+            organic.bounded_share() < 0.25,
+            "an organic-shaped batch is measured, not bounded: {:.3}",
+            organic.bounded_share()
+        );
+
+        let mut div_flood = FeatureVector::default();
+        div_flood.add(FeatureId::ArithDivOp, 4_000_035);
+        div_flood.add(FeatureId::ArithCheapOp, 755_151);
+        div_flood.add(FeatureId::ArithShiftOp, 454);
+        div_flood.add(FeatureId::ArithMulOp, 32);
+        div_flood.add(FeatureId::ArithPtrOp, 296);
+        let est = CostTable::embedded().estimate(&div_flood);
+        assert!(
+            est.bounded_share() > 0.9,
+            "`div_fast_flood` is priced almost entirely by one bound, and its true cost \
+             is 10.6x below the estimate: {:.3}",
+            est.bounded_share()
+        );
+        assert_eq!(CycleEstimate { total: 0, ..est }.bounded_share(), 0.0);
     }
 
     #[test]

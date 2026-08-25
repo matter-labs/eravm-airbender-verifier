@@ -200,6 +200,26 @@ MAX_DEPLOYABLE_BYTECODE = ((PUBDATA_CAP_HIGH // 32) | 1) * 32
 # BOUNDED rates: the cost-determining input is not observable through the tracer, so
 # no exact rate can be deployed at any level of modelling effort. Each is the worst
 # case over the inputs an attacker can choose.
+#
+# ⚠️ These entries deliberately carry NO domain (see where domains are computed), and that
+# has a consequence beyond accuracy: a domain-free entry never extrapolates, so a BOUNDED
+# axis is the only kind that can carry a *trusted* estimate up to the consumer's budget.
+# Every measured axis trips its domain first -- all of them together at 1.8x domain reach
+# 0.61 of the ceiling. So the reject branch is bounded-axis-only, and a bound over-charges
+# by however far the true cost sits below it: `arith_div_op` refuses a transaction at
+# ~3.17M divisions, which at the cheapest measured shape (1,162/div) truly costs 7.0% of
+# the ceiling.
+#
+# Giving the axis a domain looks like the fix and is not: distrust means IncludeAndSeal in
+# the deployed consumer, so the WORST-shape flood -- the one that genuinely exceeds 2^36 --
+# would then be admitted and sealed. Refusing an honest transaction costs its sender;
+# admitting that one costs the chain a batch it cannot prove. The gap closes only when the
+# operand shape becomes observable (price per quotient digit), which needs a vm2 change:
+# a `Tracer` cannot see an instruction's operands.
+#
+# `crates/cycle_estimator/tests/gate_reachability.rs` asserts all of the above, including
+# which bounds are reachable at all -- the five crypto ones are gated by
+# `precompile_call`'s domain, because their payload is one unit per call.
 # ---------------------------------------------------------------------------
 BOUNDED = {
     # Operand-dependent, and the operands are gone by the time a count is recorded, so a
@@ -400,7 +420,10 @@ PROTOCOL_CAPS = {
 }
 
 CEILING = 2**36  # MAX_NUMBER_OF_CYCLES, zksync-airbender cs/src/definitions/constants.rs
-SLACK = 1.8  # DOMAIN_SLACK in model.rs; kept in step with it by hand
+# DOMAIN_SLACK in model.rs, where it is now `pub` so the Rust side can stop duplicating it
+# too. Still transcribed here -- this script does not link against the crate -- but there is
+# one authority for it, and gate_reachability.rs reads that one rather than a copy.
+SLACK = 1.8
 
 # ---------------------------------------------------------------------------
 # ⚠️ THE BASE IS PROTOCOL-VERSION SPECIFIC. It is the smallest batch in the corpus, which
@@ -578,7 +601,10 @@ def main() -> int:
     # organic traffic keeps it honest for axes whose isolation family was smaller than
     # real batches, and the isolation corpus supplies the axes real traffic never
     # exercises at all. BOUNDED entries carry no domain: a bound holds outside the range
-    # it was taken over, which is the point of it.
+    # it was taken over, which is the point of it -- and, less obviously, it is what makes
+    # a bounded axis the only route to the consumer's budget. That is a deliberate trade
+    # with a liveness price on it; the note above BOUNDED has the argument and
+    # gate_reachability.rs has the assertions.
     # A domain must describe REAL traffic, not the synthetic floods used to measure
     # rates. Taking the maximum over both corpora looks harmless and is not: the
     # isolation fixtures are deliberately extreme single-axis batches, so widening a

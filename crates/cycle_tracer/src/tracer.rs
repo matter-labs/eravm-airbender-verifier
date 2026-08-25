@@ -16,6 +16,25 @@ use zksync_vm2::interface::{
 /// Cloning shares one recorder: clone the tracer per transaction (matching how
 /// the fast VM's tuple `TracerDispatcher` is fed) and all counts accumulate into
 /// the same [`FeatureVector`].
+///
+/// # If you are porting the OTHER producer, read this first
+///
+/// zksync-era has its own legacy-VM tracer filling the same vector
+/// (`core/lib/multivm/src/tracers/cycle_estimator/vm_latest/mod.rs`), and it currently
+/// maps `Add`/`Sub`/`Mul`/`Div`/`Jump`/`Binop`/`Shift`/`Ptr` into a single
+/// `RichAddressingOp` arm. This schema has no such feature: those opcodes measure 145 to
+/// 15,474 cycles apiece, so they are five separate axes and the port has to split that arm
+/// the way the `match` below does. `DecommitRepeat` likewise has to be derived, from the
+/// absence of a fresh-decommit stat.
+///
+/// Getting it wrong is quiet. Every trust signal in the estimator keys on `count > 0`, so
+/// an axis a producer never fills is indistinguishable from an axis the batch never used:
+/// renaming the lumped arm to `ArithCheapOp` compiles, and then a batch of 4.6M divisions
+/// the correct mapping puts at 1.06x of the proving ceiling is priced at 0.028x of it —
+/// 37x under, trusted. The one case that is detectable — a large `arith_cheap_op` with all
+/// four dearer arithmetic axes at zero — is caught by `CostTable::producer_gap`; nothing
+/// catches the general case, so re-measure a batch through both producers after any change
+/// here.
 #[derive(Debug, Clone, Default)]
 pub struct CycleFeatureTracer {
     recorder: Arc<Mutex<FeatureVector>>,
