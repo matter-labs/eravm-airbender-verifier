@@ -1377,6 +1377,60 @@ mod tests {
         }
     }
 
+    /// The composition gap behind `upgrade_id`'s strict codec: the first batch of a
+    /// new minor carries an upgrade tx naming that minor, so the whole payload
+    /// aborted inside serde before any gate could report it. Reading the two labels
+    /// leniently did not help — this is a third minor, inside the transaction.
+    #[test]
+    fn payload_with_unnameable_upgrade_tx_minor_decodes() {
+        use zksync_types::protocol_upgrade::ProtocolUpgradeTxCommonData;
+        use zksync_types::protocol_version::{ProtocolUpgradeId, MAX_KNOWN_PROTOCOL_VERSION};
+        use zksync_types::{Execute, ExecuteTransactionCommon, Transaction};
+
+        let raw = MAX_KNOWN_PROTOCOL_VERSION as u16 + 1;
+        assert!(
+            ProtocolVersionId::try_from(raw).is_err(),
+            "pick a minor this build cannot name"
+        );
+
+        let mut input = sample_payload(
+            PINNED_PROTOCOL_VERSION,
+            L2PubdataValidator::Address(H256::zero().into()),
+        );
+        input.l2_blocks_execution_data = vec![L2BlockExecutionData {
+            number: Default::default(),
+            timestamp: 0,
+            prev_block_hash: H256::zero(),
+            virtual_blocks: 0,
+            txs: vec![Transaction {
+                common_data: ExecuteTransactionCommon::ProtocolUpgrade(
+                    ProtocolUpgradeTxCommonData {
+                        upgrade_id: ProtocolUpgradeId::from(raw),
+                        ..Default::default()
+                    },
+                ),
+                execute: Execute::default(),
+                received_timestamp_ms: 0,
+                raw_bytes: None,
+            }],
+            interop_roots: vec![],
+        }];
+
+        let cfg = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&input, cfg).expect("encode");
+        let (decoded, read) =
+            bincode::serde::decode_from_slice::<AirbenderVerifierInput, _>(&bytes, cfg)
+                .expect("the whole payload must decode");
+        assert_eq!(read, bytes.len(), "trailing bytes");
+
+        let ExecuteTransactionCommon::ProtocolUpgrade(common) =
+            &decoded.l2_blocks_execution_data[0].txs[0].common_data
+        else {
+            panic!("expected a protocol-upgrade tx");
+        };
+        assert_eq!(common.upgrade_id.raw(), raw, "upgrade_id must be lossless");
+    }
+
     fn sample_payload(
         version: ProtocolVersionId,
         pubdata_validator: L2PubdataValidator,

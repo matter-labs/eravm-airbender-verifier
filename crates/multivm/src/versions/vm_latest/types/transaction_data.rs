@@ -161,7 +161,7 @@ impl TransactionData {
                     max_fee_per_gas: common_data.max_fee_per_gas,
                     max_priority_fee_per_gas: U256::zero(),
                     paymaster: Address::default(),
-                    nonce: U256::from(common_data.upgrade_id as u16),
+                    nonce: U256::from(common_data.upgrade_id.raw()),
                     value: execute_tx.execute.value,
                     reserved: [
                         common_data.to_mint,
