@@ -247,7 +247,77 @@ fn default_location(input: &AirbenderVerifierInput) -> TxLocation {
     }
 }
 
-fn create_storage_snapshot(input: &AirbenderVerifierInput) -> StorageSnapshot {
+/// Run the fast VM over an entire batch with a caller-supplied passive tracer,
+/// returning the finished batch.
+///
+/// Mirrors the verifier's `execute_tx` compression dance (snapshot → try with
+/// bytecode compression → on failure roll back and retry without), so the
+/// executed instruction stream — and thus the features counted by `tracer` —
+/// matches what the proved guest runs, INCLUDING transactions re-executed on
+/// compression fallback (the guest pays those cycles too).
+///
+/// `tracer` is cloned into each execution attempt; if its clones share a
+/// recorder (as `zksync_cycle_model`'s tracer does), all counts accumulate
+/// there, and the caller reads them from its own handle after this returns.
+/// Used by the cycle-cost calibration harness.
+pub fn run_fast_vm_with_tracer<Tr>(
+    input: &AirbenderVerifierInput,
+    tracer: Tr,
+) -> Result<FinishedL1Batch>
+where
+    Tr: zksync_vm2::interface::Tracer + Clone + Default + 'static,
+{
+    let storage = StorageView::new(create_storage_snapshot(input)).to_rc_ptr();
+    let mut vm = FastVmInstance::<CompareStorage, Tr>::fast(
+        input.l1_batch_env.clone(),
+        input.system_env.clone(),
+        storage,
+    );
+
+    let next_blocks = input.l2_blocks_execution_data.iter().skip(1);
+    for (block, next_block) in input.l2_blocks_execution_data.iter().zip(next_blocks) {
+        for tx in &block.txs {
+            run_tx_fast_with_tracer(&mut vm, tx, &tracer)?;
+        }
+        vm.start_new_l2_block(L2BlockEnv::from_l2_block_data(next_block));
+    }
+
+    Ok(vm.finish_batch(pubdata_params_to_builder(
+        input.pubdata_params,
+        input.system_env.version,
+    )))
+}
+
+/// One transaction through the fast VM with `tracer`, replicating the verifier's
+/// bytecode-compression fallback so the observed instruction stream matches.
+fn run_tx_fast_with_tracer<Tr>(
+    vm: &mut FastVmInstance<CompareStorage, Tr>,
+    tx: &Transaction,
+    tracer: &Tr,
+) -> Result<()>
+where
+    Tr: zksync_vm2::interface::Tracer + Clone + Default + 'static,
+{
+    vm.make_snapshot();
+    let mut dispatcher = (tracer.clone(), FastValidationTracer::default());
+    let (compression, _execution) =
+        vm.inspect_transaction_with_bytecode_compression(&mut dispatcher, tx.clone(), true);
+    if compression.is_ok() {
+        vm.pop_snapshot_no_rollback();
+        return Ok(());
+    }
+
+    vm.rollback_to_the_latest_snapshot();
+    let mut dispatcher = (tracer.clone(), FastValidationTracer::default());
+    let (compression, _execution) =
+        vm.inspect_transaction_with_bytecode_compression(&mut dispatcher, tx.clone(), false);
+    if compression.is_err() {
+        bail!("compression can't fail if we don't apply it");
+    }
+    Ok(())
+}
+
+pub fn create_storage_snapshot(input: &AirbenderVerifierInput) -> StorageSnapshot {
     let storage = input
         .vm_run_data
         .witness_block_state

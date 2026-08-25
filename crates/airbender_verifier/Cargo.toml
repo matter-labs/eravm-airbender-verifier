@@ -16,8 +16,15 @@ default = ["circuit_tracer"]
 # (proving) build sets `default-features = false` to compile out the
 # sequencer-only circuit tracer the verifier never reads.
 circuit_tracer = ["zksync_multivm/circuit_tracer"]
+# Emit Airbender cycle markers around verify() phases for offline cycle-cost
+# calibration. OFF by default and must NEVER ship in a proved guest (see the
+# airbender guest `cycle` docs) — enabled only for the calibration bench guest
+# build. Markers are no-ops off the riscv32 target.
+cycle-markers = ["dep:airbender"]
 
 [dependencies]
+# Only pulled in under the `cycle-markers` feature (guest bench build).
+airbender = { workspace = true, optional = true }
 zksync_crypto_primitives.workspace = true
 zksync_merkle_tree = { workspace = true, default-features = false }
 # Explicit path dep (not `workspace = true`) so `default-features = false` is
