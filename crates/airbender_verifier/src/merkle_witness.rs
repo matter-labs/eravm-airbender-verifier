@@ -276,7 +276,7 @@ pub(crate) fn verify_paths_and_new_root(
     // per-entry allocation.
     let mut root_hash = old_root_hash;
     let mut full = Vec::with_capacity(TREE_DEPTH);
-    for (meta, (base, instruction)) in metas.iter().zip(instructions.into_iter()) {
+    for (meta, (base, instruction)) in metas.iter().zip(instructions) {
         load_path_into(&meta.merkle_paths, &mut full);
         let op_root = ValueHash::from(meta.root_hash);
         if matches!(instruction, TreeInstruction::Read(_)) {
