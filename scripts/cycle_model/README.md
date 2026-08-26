@@ -170,7 +170,7 @@ a property of the precompiles.
 ```sh
 # 1. Guest + measurement (see REFIT-RUNBOOK.md for the full sequence)
 cargo airbender build --project guest -- --features cycle-markers   # NEVER ship this guest
-cargo run --release -p zksync_cycle_model --bin cycle_bench -- \
+cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
     --all-batches --batches-dir <dir> --app-bin-dir guest/dist/app \
     --jobs 8 --out artifacts/<run>
 

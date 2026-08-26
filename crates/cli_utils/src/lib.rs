@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 
+pub mod labeled;
+
+use crate::labeled::LabeledVerifierInput;
+
 /// Initialize the global tracing subscriber for a binary.
 ///
 /// Log verbosity follows the standard `RUST_LOG` environment variable (via
@@ -91,9 +95,27 @@ pub fn resolve_batch_inputs(
 /// or as gzipped `.bin.gz` tracked in Git LFS; the format detail is hidden
 /// from callers.
 ///
-/// Returns the versioned wire wrapper; callers extract the payload with
-/// `.into_v1()`.
+/// The stored payload is the *labeled* form — it still carries the operator's
+/// protocol-version labels, exactly as zksync-era exported it. They are gated
+/// and stripped here (see [`labeled::LabeledVerifierInput::into_verifier_input`]):
+/// a label predating the pinned version is refused; the guest-facing input
+/// carries no version at all (the verifier injects the pin itself). The
+/// `cycle-markers` calibration flavour keeps each batch's own version instead.
+/// Use [`load_labeled_batch`] to inspect the raw labels without gating.
 pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput> {
+    load_labeled_batch(batch_input)?
+        .into_verifier_input()
+        .with_context(|| {
+            format!(
+                "while checking the protocol-version labels of batch {}",
+                batch_input.number
+            )
+        })
+}
+
+/// Load a batch file in its stored, still-labeled form — no version gating, so
+/// tools can report a batch's labels regardless of the build flavour.
+pub fn load_labeled_batch(batch_input: &BatchInputFile) -> Result<LabeledVerifierInput> {
     let raw = read_batch_text(&batch_input.path)
         .with_context(|| format!("while attempting to read {}", batch_input.path.display()))?;
     let mut bytes = parse_hex_bytes(&raw).with_context(|| {
@@ -119,7 +141,7 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput
     );
     bytes.truncate(byte_len);
 
-    let (input, decoded_len): (AirbenderVerifierInput, usize) =
+    let (input, decoded_len): (LabeledVerifierInput, usize) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .with_context(|| format!("while decoding batch {} as bincode", batch_input.number))?;
     anyhow::ensure!(
@@ -135,7 +157,7 @@ pub fn load_batch(batch_input: &BatchInputFile) -> Result<AirbenderVerifierInput
 /// 4-byte big-endian length prefix, the payload, then zero-padding up to a
 /// 4-byte boundary (so the hex encoding is a whole number of 4-byte words, as
 /// [`parse_hex_bytes`] requires). Inverse of the length/drain/truncate step in
-/// [`load_batch`].
+/// [`load_labeled_batch`].
 fn frame_payload(payload: &[u8]) -> Vec<u8> {
     let byte_len = u32::try_from(payload.len()).expect("batch payload exceeds u32::MAX bytes");
     let mut framed = Vec::with_capacity(4 + payload.len() + 3);
@@ -158,12 +180,15 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 /// Encode an [`AirbenderVerifierInput`] into the exact framed byte layout that
-/// [`load_batch`] decodes: a `bincode(standard)` payload wrapped by
-/// [`frame_payload`]. This is the inverse of the decode path in [`load_batch`],
-/// so `load_batch(save_batch(x)) == x`.
+/// [`load_batch`] decodes: the *labeled* form, with the label slots stamped by
+/// [`labeled::LabeledVerifierInput::from_verifier_input`], wrapped in the
+/// length-prefixed frame. Inverse of the decode path in [`load_batch`], so
+/// `load_batch(save_batch(x)) == x` for every input this build accepts — but
+/// see `from_verifier_input` for the direction that does NOT hold.
 pub fn encode_batch(input: &AirbenderVerifierInput) -> Result<Vec<u8>> {
-    let payload = bincode::serde::encode_to_vec(input, bincode::config::standard())
-        .context("while attempting to bincode-encode AirbenderVerifierInput")?;
+    let labeled = LabeledVerifierInput::from_verifier_input(input.clone());
+    let payload = bincode::serde::encode_to_vec(&labeled, bincode::config::standard())
+        .context("while attempting to bincode-encode the labeled verifier input")?;
     Ok(frame_payload(&payload))
 }
 

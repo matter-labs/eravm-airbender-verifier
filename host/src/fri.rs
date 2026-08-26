@@ -252,31 +252,7 @@ pub(crate) fn load_verifier_input(
     .into_iter()
     .next()
     .context("resolve_batch_inputs returned no entries")?;
-    let input = zksync_cli_utils::load_batch(&batch_input)?;
-
-    // The in-guest gate accepts any minor at or after the version this build
-    // models, so it no longer reports a producer/guest version skew — a newer
-    // batch is proved under the pinned semantics and, if those differ, surfaces
-    // much later as a commitment mismatch that looks like witness corruption.
-    // Say it out loud here instead. Non-fatal by design: proving a newer minor is
-    // the intended behaviour, this is only the breadcrumb for when it goes wrong.
-    let pinned = zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
-    if input.system_env.version != pinned {
-        let outcome = if input.system_env.version < pinned {
-            "the in-guest version gate will reject it"
-        } else {
-            "it will be proved under the modelled semantics"
-        };
-        tracing::warn!(
-            batch_number = batch_input.number,
-            batch_version = ?input.system_env.version,
-            modelled_version = ?pinned,
-            "batch protocol version differs from the version this build models; {}",
-            outcome,
-        );
-    }
-
-    Ok(input)
+    zksync_cli_utils::load_batch(&batch_input)
 }
 
 pub(crate) fn load_raw_proof(path: &Path) -> Result<RawFriProof> {

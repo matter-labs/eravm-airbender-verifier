@@ -8,7 +8,7 @@
 //!   cargo run --release -p zksync_cycle_model --example dump_batch_shape -- <dir> [files...]
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use zksync_cli_utils::{load_batch, resolve_batch_inputs};
+use zksync_cli_utils::{load_labeled_batch, resolve_batch_inputs};
 use zksync_types::ExecuteTransactionCommon;
 
 fn main() -> Result<()> {
@@ -33,7 +33,19 @@ fn main() -> Result<()> {
          factory_deps,tx_types"
     );
     for bi in resolve_batch_inputs(&dir, sel, all).context("resolving batches")? {
-        let input = match load_batch(&bi) {
+        // The typed input carries no protocol version; read the stored label
+        // from the labeled form, then apply the usual gate.
+        let labeled = match load_labeled_batch(&bi) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("skip {}: {e}", bi.number);
+                continue;
+            }
+        };
+        // Rendered as `VersionNN` to keep the column stable now that the label
+        // is a raw minor rather than a `ProtocolVersionId` (cf. `cycle_bench`).
+        let protocol_version = format!("Version{}", labeled.labels().vm_run_data_protocol_version);
+        let input = match labeled.into_verifier_input() {
             Ok(i) => i,
             Err(e) => {
                 eprintln!("skip {}: {e}", bi.number);
@@ -82,9 +94,9 @@ fn main() -> Result<()> {
         }
         let type_list: Vec<String> = types.iter().map(|t| t.to_string()).collect();
         println!(
-            "{},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             bi.number,
-            input.vm_run_data.protocol_version,
+            protocol_version,
             blocks.len(),
             interop,
             virt,

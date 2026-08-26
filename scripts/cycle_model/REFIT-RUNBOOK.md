@@ -29,6 +29,8 @@ independent hold-out.
 ```sh
 git lfs pull --include='testdata/era_mainnet_batches/binary/*'
 cargo run --release -p zksync_cycle_model --bin cycle_bench -- --all-batches --check-only
+# (check-only reads the STORED labels and works in either flavour; the
+# measurement run below must be built with --features cycle-markers)
 ```
 
 Keep the split the committed table used: **train** on 506077–506204 (122 measured of
@@ -41,7 +43,7 @@ why its output is reference-only rather than shippable.
 
 ```sh
 cargo airbender build --project guest -- --features cycle-markers   # NEVER ship this guest
-cargo run --release -p zksync_cycle_model --bin cycle_bench -- \
+cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
     --all-batches --batches-dir <train-dir> --app-bin-dir guest/dist/app \
     --jobs 8 --out artifacts/cycle_model/train
 ```
