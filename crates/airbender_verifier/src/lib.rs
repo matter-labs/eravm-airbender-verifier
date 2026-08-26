@@ -149,8 +149,8 @@ impl VmExecutionState {
 /// never reaches any of them — `execute` checks it against this constant and then
 /// overwrites it.
 ///
-/// A repo-local constant rather than `ProtocolVersionId::latest()`, so a
-/// `zksync_basic_types` bump cannot silently change the modelled semantics.
+/// A repo-local constant rather than one imported from `zksync_basic_types`, so
+/// a dependency bump cannot silently change the modelled semantics.
 ///
 /// Bump it only when an Era minor changes one of the behaviours above. A minor
 /// that changes none needs no guest change: the gate is `>=`, and the commitment
@@ -1543,10 +1543,10 @@ mod tests {
         );
     }
 
-    /// Change detector for the accept set. `PINNED == latest()` would contradict
-    /// this gate's premise, so assert the *verdict* per nameable version instead: a
-    /// vendored variant fails here and prompts "does this minor change anything we
-    /// model?" without demanding the pin move.
+    /// Change detector for the accept set. Tying `PINNED` to the newest vendored
+    /// variant would contradict this gate's premise, so assert the *verdict* per
+    /// nameable version instead: a vendored variant fails here and prompts "does
+    /// this minor change anything we model?" without demanding the pin move.
     ///
     /// Production-only — the calibration build compiles the gate out, so every
     /// version would read as accepted.

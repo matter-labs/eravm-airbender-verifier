@@ -24,11 +24,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use rayon::prelude::*;
+use zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
 use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_cycle_model::{
     extract_features, run_guest, write_dataset, DatasetProvenance, DatasetRow,
 };
-use zksync_types::ProtocolVersionId;
 
 #[derive(Parser)]
 #[command(about = "Airbender cycle-cost calibration: emit a (features, cycles) dataset")]
@@ -61,7 +61,7 @@ struct Args {
 /// Returns the batch's OWN protocol version alongside the row — the provenance
 /// stamp must report what was measured, and a calibration guest is built with
 /// `--features cycle-markers`, which relaxes the version pin precisely so that
-/// batches older than `ProtocolVersionId::latest()` decode.
+/// batches older than `PINNED_PROTOCOL_VERSION` decode.
 fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<(DatasetRow, String)> {
     // v31 is a single canonical `AirbenderVerifierInput` (no version envelope):
     // the same decoded input feeds both the guest run and native feature extraction.
@@ -89,7 +89,7 @@ fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<(DatasetRow,
 /// The protocol version(s) actually observed across the measured batches. A
 /// corpus that spans versions says so — a single label would be a false stamp,
 /// and this is not theoretical: the committed table's corpus is entirely
-/// `Version29` while `latest()` is `Version31`.
+/// `Version29` while the pinned version is `Version31`.
 fn describe_versions(versions: &BTreeSet<String>) -> String {
     match versions.len() {
         0 => "unknown (no batch measured)".to_string(),
@@ -204,9 +204,9 @@ fn main() -> Result<()> {
 }
 
 /// Pre-flight: report each batch's protocol version and whether it matches the
-/// verifier's pinned `latest()`. Non-zero exit if any batch is incompatible.
+/// verifier's `PINNED_PROTOCOL_VERSION`. Non-zero exit if any batch is incompatible.
 fn run_check(inputs: &[BatchInputFile]) -> Result<()> {
-    let expected = ProtocolVersionId::latest();
+    let expected = PINNED_PROTOCOL_VERSION;
     let mut incompatible = 0usize;
     for bf in inputs {
         // v31 has no version envelope: loading the batch is the whole check.

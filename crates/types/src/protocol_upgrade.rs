@@ -160,10 +160,11 @@ async fn prepare_upgrade_call(
         return Ok(vec![]);
     }
 
-    let minor_version = proposed_upgrade.l2_protocol_upgrade_tx.nonce;
-    if ProtocolVersionId::try_from(minor_version.as_u32() as u16).unwrap()
-        != ProtocolVersionId::gateway_upgrade()
-    {
+    // The nonce is the upgrade's protocol minor, carried losslessly — a minor
+    // this build cannot name is simply not the gateway upgrade.
+    let minor_version = ProtocolUpgradeId::try_from(proposed_upgrade.l2_protocol_upgrade_tx.nonce)
+        .map_err(|err| anyhow::format_err!("{err}"))?;
+    if minor_version != ProtocolUpgradeId::from(ProtocolVersionId::gateway_upgrade()) {
         // We'll just keep it the same for non-Gateway upgrades
         return Ok(proposed_upgrade.l2_protocol_upgrade_tx.data.clone());
     }

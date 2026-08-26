@@ -36,6 +36,7 @@ pub const PACKED_SEMVER_MINOR_MASK: u32 = 0xFFFF;
     PartialOrd,
     Ord,
     Hash,
+    Default,
     TryFromPrimitive,
     Serialize,
     Deserialize,
@@ -75,20 +76,13 @@ pub enum ProtocolVersionId {
     Version29,
     // Version `30` was skipped as an Era upgrade due to version clash with ZKsync OS.
     Version30,
+    #[default]
     Version31,
     // Speculative next protocol version for the upgrade integration tests etc.
     Version32,
 }
 
 impl ProtocolVersionId {
-    pub const fn latest() -> Self {
-        Self::Version31
-    }
-
-    pub const fn next() -> Self {
-        Self::Version32
-    }
-
     pub fn try_from_packed_semver(packed_semver: U256) -> Result<Self, String> {
         ProtocolSemanticVersion::try_from_packed(packed_semver).map(|p| p.minor)
     }
@@ -218,12 +212,6 @@ impl ProtocolVersionId {
 
     pub const fn gateway_upgrade() -> Self {
         ProtocolVersionId::Version26
-    }
-}
-
-impl Default for ProtocolVersionId {
-    fn default() -> Self {
-        Self::latest()
     }
 }
 
