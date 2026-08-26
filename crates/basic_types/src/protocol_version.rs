@@ -263,24 +263,20 @@ pub const MAX_KNOWN_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Ver
 /// kills the whole payload decode, leaving nothing able to report which version
 /// arrived. This adapter saturates instead: any minor above
 /// [`MAX_KNOWN_PROTOCOL_VERSION`] reads as that ceiling. The payload decodes, and
-/// the verifier's version gate is what rejects it — a clear domain error instead
-/// of a serde error buried in the payload.
-///
-/// That is the whole gain. The guest aborts either way (`read().expect(..)` in
-/// `guest/src/main.rs`), so this buys diagnosis, not a different outcome.
+/// the verifier's `>=` gate accepts the saturated label — this is what makes the
+/// gate mean "any newer minor" rather than only the ones this build can name
+/// (`saturated_wire_version_is_accepted`).
 ///
 /// # Why saturating is safe
 ///
 /// The decoded label selects nothing. `execute` checks it, then overwrites both
 /// copies with `PINNED_PROTOCOL_VERSION` before the VM runs, and no commitment
-/// ever hashes it. Today a saturated label cannot even reach the overwrite: the
-/// gate is an equality and `PINNED_PROTOCOL_VERSION` (`Version31`) sits strictly
-/// below the ceiling (`Version32`), so it is always rejected — pinned by
-/// `pinned_version_below_max_known_wire_version`.
+/// ever hashes it.
 ///
-/// Saturating is lossy: raw 33 and raw 60000 both read as `Version32`. That only
-/// matters if the gate is ever widened to accept newer minors, where the
-/// `vm_run_data` cross-bind could no longer tell two unnameable labels apart.
+/// Saturating is lossy: raw 33 and raw 60000 both read as `Version32`, so the
+/// `vm_run_data` cross-bind cannot tell two unnameable labels apart. Inert for
+/// the same reason: past the gate both copies are overwritten before anything
+/// version-gated reads them.
 ///
 /// # Scope
 ///

@@ -260,13 +260,19 @@ pub(crate) fn load_verifier_input(
     // much later as a commitment mismatch that looks like witness corruption.
     // Say it out loud here instead. Non-fatal by design: proving a newer minor is
     // the intended behaviour, this is only the breadcrumb for when it goes wrong.
-    if input.system_env.version != zksync_airbender_verifier::PINNED_PROTOCOL_VERSION {
+    let pinned = zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
+    if input.system_env.version != pinned {
+        let outcome = if input.system_env.version < pinned {
+            "the in-guest version gate will reject it"
+        } else {
+            "it will be proved under the modelled semantics"
+        };
         tracing::warn!(
             batch_number = batch_input.number,
             batch_version = ?input.system_env.version,
-            modelled_version = ?zksync_airbender_verifier::PINNED_PROTOCOL_VERSION,
-            "batch protocol version differs from the version this build models; \
-             it will be proved under the modelled semantics"
+            modelled_version = ?pinned,
+            "batch protocol version differs from the version this build models; {}",
+            outcome,
         );
     }
 

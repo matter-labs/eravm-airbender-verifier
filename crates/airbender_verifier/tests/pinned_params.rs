@@ -8,7 +8,9 @@
 use std::path::Path;
 
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
-use zksync_airbender_verifier::{Verify, PINNED_PROTOCOL_VERSION};
+use zksync_airbender_verifier::Verify;
+#[cfg(not(feature = "cycle-markers"))]
+use zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
 use zksync_cli_utils::{load_batch, BatchInputFile};
 use zksync_types::ProtocolVersionId;
 
@@ -78,6 +80,10 @@ fn validation_gas_limit_pinned_to_canonical() {
 /// The protocol-minor labels the input carries are operator-supplied and bound
 /// by no commitment. A real batch carries the version this build models, and an
 /// *older* minor is refused before the VM runs.
+///
+/// Production-only, like the unit tests on the gate: the calibration build
+/// compiles it out.
+#[cfg(not(feature = "cycle-markers"))]
 #[test]
 fn pre_pinned_protocol_version_is_rejected() {
     let Some(v1) = load_batch_84730() else {

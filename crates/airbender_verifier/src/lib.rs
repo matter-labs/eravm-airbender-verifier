@@ -1626,9 +1626,10 @@ mod tests {
         //   the guard the gate-relaxation comment on `execute` claims still stands, and
         //   this is where that claim is checked.
         //
-        // Both copies must move together: the `vm_run_data` cross-bind runs before both
-        // guards, so relabelling only `system_env` would trip the cross-bind instead and
-        // this test would stop testing what it names.
+        // Both copies must move together: in the calibration build the `vm_run_data`
+        // cross-bind runs before the FastVM guard, so relabelling only `system_env`
+        // would trip the cross-bind instead and this test would stop testing what it
+        // names.
         input.system_env.version = ProtocolVersionId::Version23;
         input.vm_run_data.protocol_version = ProtocolVersionId::Version23;
         // `VmExecutionState` isn't `Debug`, so match rather than `unwrap_err`.
