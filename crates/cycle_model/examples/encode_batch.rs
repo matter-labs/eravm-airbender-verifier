@@ -86,8 +86,9 @@ fn main() -> Result<()> {
     // The typed input carries no label, so `save_batch` re-stamps both slots.
     // In production that is the pin, which silently RELABELS an above-pin
     // fixture — say so rather than letting the round-trip check below (which
-    // compares the label-free typed form) imply nothing changed.
-    let written = LabeledVerifierInput::from_verifier_input(input.clone()).labels();
+    // compares the label-free typed form) imply nothing changed. Read from the
+    // borrow — `from_verifier_input` would deep-copy the input a second time.
+    let written = LabeledVerifierInput::stamped_labels(&input);
     if written != source_labels {
         eprintln!(
             "NOTE: labels re-stamped on write: system_env.version {} -> {}, \

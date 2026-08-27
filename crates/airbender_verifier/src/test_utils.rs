@@ -128,10 +128,11 @@ pub fn crosscheck_commitment(
     result: &VerificationResult,
     input: &AirbenderVerifierInput,
 ) -> anyhow::Result<()> {
-    // The input carries no version, so reconstruct at the pin — the version a
-    // production `execute` committed under. (Under `cycle-markers` `execute`
-    // commits at the batch's own version, so this helper is production-only.)
-    let protocol_version = crate::PINNED_PROTOCOL_VERSION;
+    // Reconstruct at the version `execute` committed under. Asking the shared
+    // helper rather than hardcoding the pin is what stops the calibration
+    // flavour firing the `metadataHash` assertion below — blaming the verifier
+    // for a harness bug.
+    let protocol_version = crate::stf_protocol_version(&input.system_env);
     let base = &input.system_env.base_system_smart_contracts;
     let evm_emulator_code_hash = base.evm_emulator.as_ref().map(|e| e.hash);
 

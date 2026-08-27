@@ -12,9 +12,10 @@ categories.workspace = true
 
 [features]
 # Replay each batch under its own protocol version instead of the pin, so
-# native feature extraction matches what the calibration guest measures.
-# Both listed crates construct the flavour-dependent `SystemEnvInput`, so their
-# flavours must stay in lockstep with this one.
+# native feature extraction matches what the calibration guest measures. This
+# crate has no `#[cfg]` of its own (it asks `stf_protocol_version`); the feature
+# exists to put both listed crates — which construct the flavour-dependent
+# `SystemEnvInput` — into the matching flavour when this one is selected.
 cycle-markers = [
     "zksync_airbender_verifier/cycle-markers",
     "zksync_cli_utils/cycle-markers",

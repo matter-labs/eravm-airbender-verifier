@@ -33,9 +33,11 @@ fn main() -> Result<()> {
          factory_deps,tx_types"
     );
     for bi in resolve_batch_inputs(&dir, sel, all).context("resolving batches")? {
-        // The typed input carries no protocol version; read the stored label
-        // from the labeled form, then apply the usual gate.
-        let labeled = match load_labeled_batch(&bi) {
+        // Read the stored form and stay in it: every quantity below is present
+        // on the labeled shape, so `into_verifier_input`'s proving gate would
+        // only make this analysis tool skip the below-pin corpus it exists to
+        // analyse — silently, since a skipped row still exits 0.
+        let input = match load_labeled_batch(&bi) {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("skip {}: {e}", bi.number);
@@ -44,14 +46,7 @@ fn main() -> Result<()> {
         };
         // Rendered as `VersionNN` to keep the column stable now that the label
         // is a raw minor rather than a `ProtocolVersionId` (cf. `cycle_bench`).
-        let protocol_version = format!("Version{}", labeled.labels().vm_run_data_protocol_version);
-        let input = match labeled.into_verifier_input() {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("skip {}: {e}", bi.number);
-                continue;
-            }
-        };
+        let protocol_version = format!("Version{}", input.labels().vm_run_data_protocol_version);
         let blocks = &input.l2_blocks_execution_data;
         let interop: usize = blocks.iter().map(|b| b.interop_roots.len()).sum();
         let virt: u32 = blocks.iter().map(|b| b.virtual_blocks).sum();

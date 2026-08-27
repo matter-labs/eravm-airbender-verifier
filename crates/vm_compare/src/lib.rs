@@ -8,7 +8,9 @@ use anyhow::{bail, Result};
 use fast::FastTraceTracer;
 use legacy::LegacyTraceTracer;
 pub use types::{CompareOptions, ComparisonOutcome, ComparisonReport, Divergence, TxLocation};
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+// The harness must replay at exactly the version the verifier commits at, so it
+// asks rather than re-deriving it.
+use zksync_airbender_verifier::{stf_protocol_version, types::AirbenderVerifierInput};
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
@@ -20,7 +22,7 @@ use zksync_multivm::{
     vm_latest::HistoryEnabled,
     FastVmInstance, LegacyVmInstance, MultiVmTracer,
 };
-use zksync_types::{u256_to_h256, ProtocolVersionId, Transaction, H256};
+use zksync_types::{u256_to_h256, Transaction, H256};
 
 use crate::types::TransactionTrace;
 
@@ -35,22 +37,8 @@ struct TxExecutionCapture {
     trace: TransactionTrace,
 }
 
-/// The protocol version the harness replays under: the input carries none, so
-/// inject the pin — exactly what `execute` does.
-#[cfg(not(feature = "cycle-markers"))]
-fn replay_protocol_version(_input: &AirbenderVerifierInput) -> ProtocolVersionId {
-    zksync_airbender_verifier::PINNED_PROTOCOL_VERSION
-}
-
-/// Calibration: replay each corpus batch under its own semantics, from the
-/// field that flavour keeps on the wire shape.
-#[cfg(feature = "cycle-markers")]
-fn replay_protocol_version(input: &AirbenderVerifierInput) -> ProtocolVersionId {
-    input.system_env.version
-}
-
 pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
-    let protocol_version = replay_protocol_version(&input);
+    let protocol_version = stf_protocol_version(&input.system_env);
     let system_env = input.system_env.clone().into_system_env(protocol_version);
     let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
@@ -279,7 +267,7 @@ pub fn run_fast_vm_with_tracer<Tr>(
 where
     Tr: zksync_vm2::interface::Tracer + Clone + Default + 'static,
 {
-    let protocol_version = replay_protocol_version(input);
+    let protocol_version = stf_protocol_version(&input.system_env);
     let storage = StorageView::new(create_storage_snapshot(input)).to_rc_ptr();
     let mut vm = FastVmInstance::<CompareStorage, Tr>::fast(
         input.l1_batch_env.clone(),

@@ -51,10 +51,11 @@ jobs:
       # "cycle-markers")]` tests, the only place that flavour's behaviour is
       # asserted. Every crate that reads the flavour must be named explicitly:
       # `zksync_cli_utils` constructs the flavour-dependent `SystemEnvInput`,
-      # and `zksync_vm_compare` / `zksync_cycle_model` consume it and carry
-      # their own cfg'd code. The verifier's feature forwards only to
-      # `zksync_cli_utils` (its dev-dependency), so the other two would
-      # otherwise never be compiled in this flavour by any PR-triggered job.
+      # `zksync_cycle_model` carries its own cfg'd code, and `zksync_vm_compare`
+      # must still typecheck against the calibration `SystemEnvInput`. The
+      # verifier's feature forwards only to `zksync_cli_utils` (its
+      # dev-dependency), so the other two would otherwise never be compiled in
+      # this flavour by any PR-triggered job.
       - name: Clippy (cycle-markers calibration build)
         run: |
           cargo clippy -p zksync_airbender_verifier -p zksync_cli_utils \
@@ -205,6 +206,29 @@ jobs:
           path: guest/dist/app
           if-no-files-found: error
           retention-days: 1
+
+      # `cycle-markers` changes the guest's INPUT STRUCT (`SystemEnvInput` gains
+      # `version`), not just the CSR markers, and the workspace lints run for the
+      # host target while the guest only builds for riscv32 — so a cfg mistake
+      # here surfaced only on the next `cycle-model-drift` run, which is not
+      # PR-triggered. Same invocation as that workflow; +30 s on the ~210 s above,
+      # since the dependency tree and build-std are feature-independent.
+      #
+      # The CSR allowlist is what actually keeps this flavour unshippable, so
+      # assert it rather than assume it. ONE step, so nothing can be inserted
+      # between build and scan; LAST, because it overwrites the already-uploaded
+      # dist with a binary that must never ship.
+      - name: Calibration guest builds, and the RV32IM scan rejects it
+        run: |
+          cargo airbender build --project guest -- --features cycle-markers
+          if bash scripts/check_guest_riscv_code.sh \
+               target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+               --baseline scripts/guest_softfloat_baseline.txt \
+               --min-insns 500000
+          then
+            echo "::error::the RV32IM scan ACCEPTED the cycle-markers guest — CSR 0x7ff is no longer rejected, so nothing stops a calibration guest being proved"
+            exit 1
+          fi
 
   host-run-batches:
     name: host-run-batches

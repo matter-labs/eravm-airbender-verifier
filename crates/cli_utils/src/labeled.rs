@@ -43,6 +43,8 @@ use zksync_types::ProtocolVersionId;
 /// Mirror of [`VMRunWitnessInputData`] with the version label present, exactly
 /// as zksync-era serializes it. Field order and serde attributes must match
 /// that struct 1:1 (minus the label's type) — the bincode wire is positional.
+/// A REORDER is the drift the compiler cannot see (adding or dropping a field
+/// breaks the struct literals below); `stored_wire_bytes_are_pinned` guards it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LabeledVmRunData {
     pub l1_batch_number: L1BatchNumber,
@@ -95,12 +97,32 @@ pub struct BatchLabels {
     pub vm_run_data_protocol_version: u16,
 }
 
+/// The label both stored slots get on write-back. A guest-shaped input is by
+/// construction a batch at the version this build runs it under, so the honest
+/// stamp is whatever `execute` would commit at.
+fn stamp_for(input: &AirbenderVerifierInput) -> ProtocolUpgradeId {
+    ProtocolUpgradeId::from(zksync_airbender_verifier::stf_protocol_version(
+        &input.system_env,
+    ))
+}
+
 impl LabeledVerifierInput {
     /// The operator's labels, before any gating.
     pub fn labels(&self) -> BatchLabels {
         BatchLabels {
             system_env_version: self.system_env.version.raw(),
             vm_run_data_protocol_version: self.vm_run_data.protocol_version.raw(),
+        }
+    }
+
+    /// The labels [`Self::from_verifier_input`] would stamp, without building the
+    /// stored form — it consumes by value, so recovering two u16s through it
+    /// deep-copied the whole witness.
+    pub fn stamped_labels(input: &AirbenderVerifierInput) -> BatchLabels {
+        let raw = stamp_for(input).raw();
+        BatchLabels {
+            system_env_version: raw,
+            vm_run_data_protocol_version: raw,
         }
     }
 
@@ -144,12 +166,16 @@ impl LabeledVerifierInput {
                  `load_batch`, which skips this proving gate.",
             );
             if raw > pin {
+                // Without the batch number a warning from a 49-batch run is
+                // unattributable; `load_batch`'s context attaches only on `Err`.
                 tracing::warn!(
+                    batch = self.l1_batch_env.number.0,
                     minor = raw,
                     pinned = pin,
                     "batch labels a protocol minor newer than the pinned version; it will be \
-                     proved under the pinned semantics and the commitment check is what \
-                     certifies the equivalence"
+                     proved under the pinned semantics. A difference is caught only where it \
+                     moves a hash L1 reconstructs, and the new state root is operator-supplied \
+                     on both sides — a diagnostic, not a proof of equivalence"
                 );
             }
         }
@@ -203,10 +229,7 @@ impl LabeledVerifierInput {
     /// label is absent from. To preserve labels, stay in the labeled domain
     /// ([`crate::load_labeled_batch`]). Pinned by `above_pin_label_is_restamped`.
     pub fn from_verifier_input(input: AirbenderVerifierInput) -> Self {
-        #[cfg(not(feature = "cycle-markers"))]
-        let label = ProtocolUpgradeId::from(PINNED_PROTOCOL_VERSION);
-        #[cfg(feature = "cycle-markers")]
-        let label = ProtocolUpgradeId::from(input.system_env.version);
+        let label = stamp_for(&input);
 
         Self {
             vm_run_data: LabeledVmRunData {
@@ -251,6 +274,10 @@ mod tests {
     use zksync_types::H256;
     use zksync_vm_interface::L2BlockEnv;
 
+    /// Same-encoding fields carry DISTINCT values on purpose: four empty vectors
+    /// all encode as one zero byte, so with defaults a transposition moves nothing
+    /// and `stored_wire_bytes_are_pinned` passes vacuously (verified by planting
+    /// one).
     fn sample(label: u16) -> LabeledVerifierInput {
         let contract = SystemContractCode {
             code: vec![1; 32],
@@ -258,22 +285,22 @@ mod tests {
         };
         LabeledVerifierInput {
             vm_run_data: LabeledVmRunData {
-                l1_batch_number: Default::default(),
+                l1_batch_number: L1BatchNumber(11),
                 used_bytecodes: Default::default(),
-                initial_heap_content: vec![],
+                initial_heap_content: vec![(1, U256::from(2))],
                 protocol_version: ProtocolUpgradeId::from(label),
-                bootloader_code: vec![],
-                default_account_code_hash: Default::default(),
-                evm_emulator_code_hash: Some(Default::default()),
-                storage_refunds: vec![],
-                pubdata_costs: vec![],
+                bootloader_code: vec![[3; 32]],
+                default_account_code_hash: U256::from(4),
+                evm_emulator_code_hash: Some(U256::from(5)),
+                storage_refunds: vec![6],
+                pubdata_costs: vec![-7],
                 witness_block_state: Default::default(),
             },
             merkle_paths: WitnessInputMerklePaths::new(4),
             l2_blocks_execution_data: vec![],
             l1_batch_env: L1BatchEnv {
                 previous_batch_hash: Some(H256([1; 32])),
-                number: Default::default(),
+                number: L1BatchNumber(11),
                 timestamp: 0,
                 fee_input: Default::default(),
                 interop_fee: U256::zero(),
@@ -296,7 +323,7 @@ mod tests {
                     default_aa: contract,
                     evm_emulator: None,
                 },
-                bootloader_gas_limit: 0,
+                bootloader_gas_limit: 8,
                 execution_mode: TxExecutionMode::VerifyExecute,
                 default_validation_computational_gas_limit: u32::MAX,
                 chain_id: Default::default(),
@@ -448,5 +475,34 @@ mod tests {
                 .expect("decode");
         assert_eq!(read, bytes.len(), "trailing bytes");
         assert_eq!(decoded, labeled);
+    }
+
+    /// Golden pin on the STORED wire, mirroring the typed side's
+    /// `version_fields_are_absent_from_the_production_wire`. Catches the one drift
+    /// nothing else does — a REORDER: `stored_bytes_round_trip` compares the
+    /// mirror against ITSELF, so swapping `storage_refunds` with `pubdata_costs`
+    /// would decode cleanly and silently transpose the corpus. Fixture-free, so
+    /// it cannot pass vacuously on an LFS-pointer checkout.
+    #[test]
+    fn stored_wire_bytes_are_pinned() {
+        /// `encode_to_vec(&sample(PIN), standard()).len()`, captured here.
+        const GOLDEN_STORED_WIRE_LEN: usize = 539;
+        /// `keccak256` of those bytes, lowercase hex.
+        const GOLDEN_STORED_WIRE_KECCAK: &str =
+            "3db4f3b880d62350065e199c5deef9d10a9c94fb1e9106fa3293a7ffdbbc5032";
+
+        let bytes = bincode::serde::encode_to_vec(sample(PIN), bincode::config::standard())
+            .expect("encode");
+        assert_eq!(
+            bytes.len(),
+            GOLDEN_STORED_WIRE_LEN,
+            "stored wire length moved"
+        );
+        assert_eq!(
+            format!("{:x}", H256(zksync_types::web3::keccak256(&bytes))),
+            GOLDEN_STORED_WIRE_KECCAK,
+            "stored wire bytes moved: a field was reordered, retyped or its \
+             serde attributes changed — the on-disk corpus no longer decodes"
+        );
     }
 }

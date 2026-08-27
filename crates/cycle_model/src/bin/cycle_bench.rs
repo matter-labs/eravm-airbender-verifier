@@ -215,44 +215,34 @@ fn main() -> Result<()> {
 }
 
 /// Pre-flight: report each batch's STORED protocol label and whether THIS build
-/// can consume it. The criterion is flavour-dependent and must match what
-/// `load_batch` actually enforces, or `--check-only` contradicts the run that
-/// follows: production requires the pin, calibration only requires a minor this
-/// build can name (it replays each batch under its own semantics, and the
-/// corpus is largely v29). Non-zero exit if any batch is incompatible.
+/// can consume it. Non-zero exit if any batch is incompatible.
+///
+/// The flavour-dependent criterion is deliberately NOT restated here: each batch
+/// goes through the same `into_verifier_input` gate `load_batch` applies. A
+/// re-implemented one inspected only `system_env.version`, missed the
+/// label-agreement check, and passed `(31, 60000)` that every worker of the
+/// hours-long run then rejected. Still blind to `execute`'s FastVM guard, which
+/// under `cycle-markers` refuses Version23-25; the corpus is v29/v31.
 fn run_check(inputs: &[BatchInputFile]) -> Result<()> {
-    let accepts = |v: u16| {
-        #[cfg(not(feature = "cycle-markers"))]
-        {
-            v >= zksync_airbender_verifier::PINNED_PROTOCOL_VERSION as u16
-        }
-        #[cfg(feature = "cycle-markers")]
-        {
-            zksync_types::ProtocolVersionId::try_from(v).is_ok()
-        }
-    };
     let criterion = if cfg!(feature = "cycle-markers") {
-        "nameable minor (calibration)"
+        "loads + names a minor this build can replay (calibration)"
     } else {
-        ">= pinned version"
+        "loads + labels >= the pinned version"
     };
 
     let mut incompatible = 0usize;
     for bf in inputs {
-        match load_labeled_batch(bf).map(|labeled| labeled.labels().system_env_version) {
-            Ok(v) if accepts(v) => tracing::info!(batch = bf.number, version = v, "ok"),
-            Ok(v) => {
-                incompatible += 1;
-                tracing::error!(
-                    batch = bf.number,
-                    version = v,
-                    criterion,
-                    "INCOMPATIBLE protocol version"
-                );
-            }
+        // Read the label before the gate consumes the labeled form, so an
+        // accepted batch is reported with the version it carries.
+        let checked = load_labeled_batch(bf).and_then(|labeled| {
+            let version = labeled.labels().system_env_version;
+            labeled.into_verifier_input().map(|_| version)
+        });
+        match checked {
+            Ok(version) => tracing::info!(batch = bf.number, version, "ok"),
             Err(e) => {
                 incompatible += 1;
-                tracing::error!(batch = bf.number, "load failed: {e:#}");
+                tracing::error!(batch = bf.number, criterion, "INCOMPATIBLE: {e:#}");
             }
         }
     }

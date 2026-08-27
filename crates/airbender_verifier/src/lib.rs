@@ -48,7 +48,9 @@ use crate::commitment::expand_bootloader_heap;
 use crate::merkle_witness::build_view_from_merkle_paths;
 #[cfg(test)]
 use crate::merkle_witness::get_bowp;
-use crate::types::{AirbenderVerifierInput, CommitmentInput, TOTAL_BLOBS_IN_COMMITMENT};
+use crate::types::{
+    AirbenderVerifierInput, CommitmentInput, SystemEnvInput, TOTAL_BLOBS_IN_COMMITMENT,
+};
 
 /// A structure to hold the result of verification.
 pub struct VerificationResult {
@@ -127,13 +129,37 @@ impl Verify for AirbenderVerifierInput {
 /// the modelled semantics.
 ///
 /// Bump it only when an Era minor changes one of the behaviours above; a minor
-/// that changes none needs no guest change, since every batch is replayed under
-/// these rules and the per-batch commitment check certifies the equivalence
-/// (reproduce every committed hash or fail closed on L1). Residual: a change
-/// confined to a parameter no commitment binds — the known ones
-/// (`default_validation_computational_gas_limit`, `fee_input`, `execution_mode`)
-/// are pinned or triaged in `execute`.
+/// that changes none needs no guest change, since a divergence that moves a hash
+/// L1 reconstructs fails closed there. Not a proof of equivalence — L1 takes the
+/// new state root from the operator rather than deriving it, so per-version
+/// guest + VK deployment is the real control.
+///
+/// Residual: a change confined to a parameter no commitment binds — illustrative,
+/// not exhaustive. `default_validation_computational_gas_limit`, `fee_input` and
+/// `execution_mode` are pinned or triaged in `execute`; `bootloader_gas_limit` is
+/// unbound but work-bound, not semantic.
 pub const PINNED_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version31;
+
+/// The version this build runs an input under, and therefore commits at: the pin
+/// in production (the input types cannot carry one), the batch's own under
+/// `cycle-markers`.
+///
+/// The single definition: a drifted copy reconstructs a commitment at the wrong
+/// version. Costs the guest +165 instructions vs binding the constant inline in
+/// `execute` — optimisation ordering, not a lost constant-fold, so don't chase
+/// it (`#[inline(always)]` and a whole-input parameter both change nothing).
+#[cfg(not(feature = "cycle-markers"))]
+#[inline]
+pub fn stf_protocol_version(_system_env: &SystemEnvInput) -> ProtocolVersionId {
+    PINNED_PROTOCOL_VERSION
+}
+
+/// Calibration arm of [`stf_protocol_version`].
+#[cfg(feature = "cycle-markers")]
+#[inline]
+pub fn stf_protocol_version(system_env: &SystemEnvInput) -> ProtocolVersionId {
+    system_env.version
+}
 
 /// Whether this build is the calibration flavour, so a consumer can refuse it
 /// at compile time.
@@ -214,12 +240,9 @@ pub fn execute(mut input: AirbenderVerifierInput) -> anyhow::Result<VmExecutionS
     input.merkle_paths.normalize_stored_paths()?;
 
     // The STF assigns the version it models; the input cannot express one, so
-    // there is nothing to check against. The calibration flavour puts the field
-    // back on its never-shipped channel, and there the wire chooses.
-    #[cfg(not(feature = "cycle-markers"))]
-    let protocol_version = PINNED_PROTOCOL_VERSION;
-    #[cfg(feature = "cycle-markers")]
-    let protocol_version = input.system_env.version;
+    // there is nothing to check against — except under `cycle-markers`, where the
+    // never-shipped channel puts the field back and the wire chooses.
+    let protocol_version = stf_protocol_version(&input.system_env);
 
     // Static in production (see `pinned_version_is_supported_by_fast_vm`),
     // load-bearing only where the wire chooses.
@@ -1150,7 +1173,7 @@ mod tests {
             vec![],
             vm,
             PubdataParams::genesis(),
-            ProtocolVersionId::latest(),
+            PINNED_PROTOCOL_VERSION,
         )
         .unwrap_err();
         assert!(
@@ -1390,7 +1413,7 @@ mod tests {
         );
 
         let mut input = sample_payload(
-            ProtocolVersionId::latest(),
+            PINNED_PROTOCOL_VERSION,
             L2PubdataValidator::Address(H256::zero().into()),
         );
         input.l2_blocks_execution_data = vec![L2BlockExecutionData {
@@ -1634,7 +1657,7 @@ mod tests {
     /// is kept consistent so the pubdata-validator guard passes.
     fn fastvm_input_with_execution_mode(mode: TxExecutionMode) -> AirbenderVerifierInput {
         let mut input = sample_payload(
-            ProtocolVersionId::latest(),
+            PINNED_PROTOCOL_VERSION,
             L2PubdataValidator::CommitmentScheme(L2DACommitmentScheme::BlobsAndPubdataKeccak256),
         );
         input.system_env.execution_mode = mode;
