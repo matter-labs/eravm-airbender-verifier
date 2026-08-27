@@ -132,8 +132,9 @@ impl LabeledVerifierInput {
     /// newer one; nothing is assigned — the guest types have no version field
     /// to carry a label. Calibration flavour (`cycle-markers`): keeps each
     /// batch's own `system_env` version on the input, refusing a minor this
-    /// build cannot name (it could not be replayed under its own semantics);
-    /// the `vm_run_data` label has no destination in any flavour.
+    /// build cannot name or the FastVM cannot run (it could not be replayed
+    /// under its own semantics); the `vm_run_data` label has no destination in
+    /// any flavour.
     ///
     /// Both flavours first require the two labels to agree. They are redundant
     /// copies of one fact and `execute` used to cross-bind them; that check
@@ -181,8 +182,17 @@ impl LabeledVerifierInput {
         }
 
         #[cfg(feature = "cycle-markers")]
-        let system_env_version =
-            ProtocolVersionId::try_from(self.system_env.version).map_err(anyhow::Error::msg)?;
+        let system_env_version = {
+            let named =
+                ProtocolVersionId::try_from(self.system_env.version).map_err(anyhow::Error::msg)?;
+            // The same guard `execute` applies, so a pre-flight cannot admit a
+            // batch every worker of the run then rejects.
+            anyhow::ensure!(
+                zksync_airbender_verifier::is_supported_by_fast_vm(named),
+                "protocol version {named:?} is not supported by the FastVM verifier",
+            );
+            named
+        };
 
         Ok(AirbenderVerifierInput {
             vm_run_data: VMRunWitnessInputData {
@@ -434,6 +444,13 @@ mod tests {
         assert!(
             sample(u16::MAX).into_verifier_input().is_err(),
             "an unnameable minor cannot be replayed under its own semantics"
+        );
+        // Version23 is nameable but maps to a VM the FastVM cannot run.
+        assert!(
+            sample(ProtocolVersionId::Version23 as u16)
+                .into_verifier_input()
+                .is_err(),
+            "a minor the FastVM cannot run must be refused at load, not mid-run"
         );
     }
 

@@ -26,10 +26,10 @@ use zksync_multivm::{
     utils::get_used_bootloader_memory_bytes,
     FastVmInstance,
 };
-// Referenced only by the calibration flavour's FastVM guard and the
-// `pinned_version_is_supported_by_fast_vm` change detector.
+// Referenced only by the calibration flavour's FastVM guard, the
+// `pinned_version_is_supported_by_fast_vm` change detector, and the host loader.
 #[cfg(any(test, feature = "cycle-markers"))]
-use zksync_multivm::is_supported_by_fast_vm;
+pub use zksync_multivm::is_supported_by_fast_vm;
 use zksync_types::{
     block::L2BlockExecutionData,
     bytecode::{BytecodeHash, BytecodeMarker},

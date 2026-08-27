@@ -221,8 +221,7 @@ fn main() -> Result<()> {
 /// goes through the same `into_verifier_input` gate `load_batch` applies. A
 /// re-implemented one inspected only `system_env.version`, missed the
 /// label-agreement check, and passed `(31, 60000)` that every worker of the
-/// hours-long run then rejected. Still blind to `execute`'s FastVM guard, which
-/// under `cycle-markers` refuses Version23-25; the corpus is v29/v31.
+/// hours-long run then rejected.
 fn run_check(inputs: &[BatchInputFile]) -> Result<()> {
     let criterion = if cfg!(feature = "cycle-markers") {
         "loads + names a minor this build can replay (calibration)"

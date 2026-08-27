@@ -221,14 +221,22 @@ jobs:
       - name: Calibration guest builds, and the RV32IM scan rejects it
         run: |
           cargo airbender build --project guest -- --features cycle-markers
-          if bash scripts/check_guest_riscv_code.sh \
-               target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
-               --baseline scripts/guest_softfloat_baseline.txt \
-               --min-insns 500000
-          then
-            echo "::error::the RV32IM scan ACCEPTED the cycle-markers guest — CSR 0x7ff is no longer rejected, so nothing stops a calibration guest being proved"
-            exit 1
-          fi
+          # Only exit 1 is the expected rejection; as an `if` condition, the
+          # scanner's exit 2 (broken scan) would also have passed the step.
+          status=0
+          bash scripts/check_guest_riscv_code.sh \
+            target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+            --baseline scripts/guest_softfloat_baseline.txt \
+            --min-insns 500000 || status=$?
+          case "$status" in
+            1) ;;
+            0)
+              echo "::error::the RV32IM scan ACCEPTED the cycle-markers guest — CSR 0x7ff is no longer rejected, so nothing stops a calibration guest being proved"
+              exit 1 ;;
+            *)
+              echo "::error::the RV32IM scan did not run (exit $status); it asserted nothing"
+              exit "$status" ;;
+          esac
 
   host-run-batches:
     name: host-run-batches

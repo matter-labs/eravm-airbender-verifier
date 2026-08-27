@@ -65,10 +65,14 @@ pub fn run_guest(
     let markers = execution
         .cycle_markers
         .context("no cycle markers collected — the runner used JIT; ensure JIT is off")?;
+    // Exactly one more mark than labels: a short or padded set would silently
+    // yield a partial or misaligned phase map.
     anyhow::ensure!(
-        !markers.markers.is_empty(),
-        "the guest emitted no cycle markers — build it with `--features cycle-markers`, \
-         and build this bench with the matching flavour"
+        markers.markers.len() == PHASE_LABELS.len() + 1,
+        "expected {} cycle markers, got {} — build the guest with `--features cycle-markers`, \
+         and build this bench with the matching flavour",
+        PHASE_LABELS.len() + 1,
+        markers.markers.len()
     );
 
     Ok(GuestMeasurement {
