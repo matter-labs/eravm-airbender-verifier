@@ -9,10 +9,7 @@ use std::path::Path;
 
 use zksync_airbender_verifier::types::AirbenderVerifierInput;
 use zksync_airbender_verifier::Verify;
-#[cfg(not(feature = "cycle-markers"))]
-use zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
 use zksync_cli_utils::{load_batch, BatchInputFile};
-use zksync_types::ProtocolVersionId;
 
 fn load_batch_84730() -> Option<AirbenderVerifierInput> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -74,75 +71,5 @@ fn validation_gas_limit_pinned_to_canonical() {
         err.to_string()
             .contains("default_validation_computational_gas_limit"),
         "expected a validation-gas-limit rejection, got: {err}"
-    );
-}
-
-/// The protocol-minor labels the input carries are operator-supplied and bound
-/// by no commitment. A real batch carries the version this build models, and an
-/// *older* minor is refused before the VM runs.
-///
-/// Production-only, like the unit tests on the gate: the calibration build
-/// compiles it out.
-#[cfg(not(feature = "cycle-markers"))]
-#[test]
-fn pre_pinned_protocol_version_is_rejected() {
-    let Some(v1) = load_batch_84730() else {
-        return;
-    };
-
-    assert_eq!(
-        v1.system_env.version, PINNED_PROTOCOL_VERSION,
-        "real mainnet batch should carry the protocol version this build models"
-    );
-    assert_eq!(
-        v1.vm_run_data.protocol_version, PINNED_PROTOCOL_VERSION,
-        "the redundant copy in vm_run_data should agree"
-    );
-
-    let mut tampered = v1;
-    tampered.system_env.version = ProtocolVersionId::Version29;
-    tampered.vm_run_data.protocol_version = ProtocolVersionId::Version29;
-    let err = match tampered.verify() {
-        Ok(_) => panic!("a pre-pinned protocol version must be rejected"),
-        Err(e) => e,
-    };
-    assert!(
-        err.to_string().contains("predates the semantics"),
-        "expected a protocol-version rejection, got: {err}"
-    );
-}
-
-/// The `>=` gate on a real batch: relabelling both copies to a newer minor must
-/// produce a byte-identical `proof_public_input`. That is the normalization doing
-/// the work, not the accept predicate.
-///
-/// Limit: `Version32` maps to the same `FastVmVersion` as the pin, so this does
-/// **not** show that a genuinely divergent minor fails closed — no such fixture
-/// exists, and that half stays analytical.
-#[test]
-fn newer_protocol_version_label_does_not_affect_output() {
-    let Some(v1) = load_batch_84730() else {
-        return;
-    };
-
-    let baseline = v1
-        .clone()
-        .verify()
-        .expect("84730 verifies at its own label");
-
-    let mut relabelled = v1;
-    relabelled.system_env.version = ProtocolVersionId::Version32;
-    relabelled.vm_run_data.protocol_version = ProtocolVersionId::Version32;
-    let newer = relabelled
-        .verify()
-        .expect("a newer label must be accepted under the >= gate");
-
-    assert_eq!(
-        baseline.proof_public_input, newer.proof_public_input,
-        "the protocol-version label must not affect the proof public input"
-    );
-    assert_eq!(
-        baseline.commitment, newer.commitment,
-        "the protocol-version label must not affect the batch commitment"
     );
 }

@@ -6,15 +6,21 @@
 //! to get ground-truth cycles / phases / delegations. Rows are written to
 //! `dataset.{json,csv}` for the Python fit.
 //!
-//! Usage (needs the LFS corpus and a guest built with `--features cycle-markers`):
+//! Usage (needs the LFS corpus and a guest built with `--features cycle-markers`;
+//! the bench itself must be built with the MATCHING `cycle-markers` feature —
+//! it keeps each batch's own protocol version at load and puts the labels on
+//! the host→guest channel the calibration guest expects; a production-flavour
+//! bench refuses older-minor batches at load and would drive the guest with a
+//! label-less channel it cannot decode):
 //!
 //! ```text
-//! cargo airbender build --project guest --features cycle-markers   # → app.bin/app.text
+//! cargo airbender build --project guest -- --features cycle-markers  # → app.bin/app.text
 //! ./scripts/fetch_lfs_batches.sh --all
-//! # cheap pre-flight: confirm every batch loads at the pinned protocol version
-//! cargo run --release -p zksync_cycle_model --bin cycle_bench -- --all-batches --check-only
+//! # cheap pre-flight: report every batch's stored label vs what this build accepts
+//! cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
+//!     --all-batches --check-only
 //! # full measurement, parallel across cores
-//! cargo run --release -p zksync_cycle_model --bin cycle_bench -- \
+//! cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
 //!     --all-batches --app-bin-dir guest/dist/app --jobs 16 --out artifacts/cycle_model
 //! ```
 
@@ -24,8 +30,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use rayon::prelude::*;
-use zksync_airbender_verifier::PINNED_PROTOCOL_VERSION;
-use zksync_cli_utils::{load_batch, resolve_batch_inputs, BatchInputFile};
+use zksync_cli_utils::{load_labeled_batch, resolve_batch_inputs, BatchInputFile};
 use zksync_cycle_model::{
     extract_features, run_guest, write_dataset, DatasetProvenance, DatasetRow,
 };
@@ -47,8 +52,8 @@ struct Args {
     app_bin_dir: Option<PathBuf>,
     #[arg(long, default_value = "artifacts/cycle_model")]
     out: PathBuf,
-    /// Only verify each batch loads + is at the pinned protocol version; no
-    /// guest run, no dataset. Fast pre-flight compatibility check.
+    /// Only verify each batch loads + carries a label this build can consume;
+    /// no guest run, no dataset. Fast pre-flight compatibility check.
     #[arg(long)]
     check_only: bool,
     /// Parallel workers for the measurement run. 0 = one per available core.
@@ -58,15 +63,21 @@ struct Args {
 }
 
 /// Full measurement for one batch: native features + guest cycle measurement.
-/// Returns the batch's OWN protocol version alongside the row — the provenance
-/// stamp must report what was measured, and a calibration guest is built with
-/// `--features cycle-markers`, which relaxes the version pin precisely so that
-/// batches older than `PINNED_PROTOCOL_VERSION` decode.
+/// Returns the batch's OWN stored protocol label alongside the row — the
+/// provenance stamp must report what was measured. Under `cycle-markers` the
+/// conversion keeps that version in the input (so the guest replays the batch
+/// under its own semantics); a production build refuses older labels, so build
+/// this bench with the flavour matching the guest.
 fn process_batch(app_bin_dir: &Path, bf: &BatchInputFile) -> Result<(DatasetRow, String)> {
-    // v31 is a single canonical `AirbenderVerifierInput` (no version envelope):
-    // the same decoded input feeds both the guest run and native feature extraction.
-    let input = load_batch(bf).with_context(|| format!("loading batch {}", bf.number))?;
-    let version = format!("{:?}", input.system_env.version);
+    // Decode ONCE — this runs `--jobs N` wide alongside a transpiler VM per
+    // worker, so a second full hex+gunzip+bincode pass would double both decode
+    // time and peak RSS. The stored label is the honest provenance stamp in
+    // either flavour; the conversion is where flavour-dependent gating applies.
+    let labeled = load_labeled_batch(bf).with_context(|| format!("loading batch {}", bf.number))?;
+    let version = format!("Version{}", labeled.labels().system_env_version);
+    let input = labeled
+        .into_verifier_input()
+        .with_context(|| format!("checking the protocol labels of batch {}", bf.number))?;
 
     let features = extract_features(&input)
         .with_context(|| format!("extracting features for batch {}", bf.number))?;
@@ -203,30 +214,41 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Pre-flight: report each batch's protocol version and whether it matches the
-/// verifier's `PINNED_PROTOCOL_VERSION`. Non-zero exit if any batch is incompatible.
+/// Pre-flight: report each batch's STORED protocol label and whether THIS build
+/// can consume it. Non-zero exit if any batch is incompatible.
+///
+/// The flavour-dependent criterion is deliberately NOT restated here: each batch
+/// goes through the same `into_verifier_input` gate `load_batch` applies. A
+/// re-implemented one inspected only `system_env.version`, missed the
+/// label-agreement check, and passed `(31, 60000)` that every worker of the
+/// hours-long run then rejected.
 fn run_check(inputs: &[BatchInputFile]) -> Result<()> {
-    let expected = PINNED_PROTOCOL_VERSION;
+    let criterion = if cfg!(feature = "cycle-markers") {
+        "loads + names a minor this build can replay (calibration)"
+    } else {
+        "loads + labels >= the pinned version"
+    };
+
     let mut incompatible = 0usize;
     for bf in inputs {
-        // v31 has no version envelope: loading the batch is the whole check.
-        match load_batch(bf).map(|input| input.system_env.version) {
-            Ok(v) if v == expected => tracing::info!(batch = bf.number, version = ?v, "ok"),
-            Ok(v) => {
-                incompatible += 1;
-                tracing::error!(batch = bf.number, version = ?v, expected = ?expected,
-                    "INCOMPATIBLE protocol version");
-            }
+        // Read the label before the gate consumes the labeled form, so an
+        // accepted batch is reported with the version it carries.
+        let checked = load_labeled_batch(bf).and_then(|labeled| {
+            let version = labeled.labels().system_env_version;
+            labeled.into_verifier_input().map(|_| version)
+        });
+        match checked {
+            Ok(version) => tracing::info!(batch = bf.number, version, "ok"),
             Err(e) => {
                 incompatible += 1;
-                tracing::error!(batch = bf.number, "load failed: {e:#}");
+                tracing::error!(batch = bf.number, criterion, "INCOMPATIBLE: {e:#}");
             }
         }
     }
     tracing::info!(
         total = inputs.len(),
         incompatible,
-        expected = ?expected,
+        criterion,
         "compatibility check complete"
     );
     if incompatible > 0 {

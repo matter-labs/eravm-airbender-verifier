@@ -6323,9 +6323,13 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "flate2",
+ "serde",
  "tracing",
  "tracing-subscriber",
  "zksync_airbender_verifier",
+ "zksync_contracts",
+ "zksync_types",
+ "zksync_vm_interface",
 ]
 
 [[package]]
