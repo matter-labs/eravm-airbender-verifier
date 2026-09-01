@@ -1,4 +1,3 @@
-==> /private/tmp/claude-501/-Users-0xvolosnikov-Desktop-work-eravm-airbender-verifier/1c785c18-4eb4-4938-92ef-ecb264a807fa/scratchpad/prec/run_sweep3.sh <==
 #!/usr/bin/env bash
 # storage_read / storage_write / pubdata_bytes / transaction_count families,
 # plus the decoupling probes and a matched empty-batch control.
@@ -7,10 +6,12 @@ export PATH="$HOME/.foundry/bin:$PATH"
 RPC=${RPC:-http://localhost:3050}
 HANDLER=${HANDLER:-http://localhost:4320}
 S=${INVOKER:-0xab76105a40fBb928dD603dA69896759c4E493879}
-KEY=${KEY:-0x4c6389032f2f00a8401a4c8d8af5251886b14c6c20880d47f6445935b58e747a}
+# Default: the era-test-node standard rich-wallet dev key -- publicly documented,
+# local-only funds. Override KEY for any other setup.
+KEY="${KEY:-0x7726827caac94a7f9e1b160f7ea819f172f7b6f9d2a97f992c38edeab82d4110}"
 SENDER=${SENDER:-0x97d2a9f132bd5d74c11c2f12e6c9cfa43febc379}
 D="$(cd "$(dirname "$0")" && pwd)"
-REPO=/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31
+REPO="${REPO:-$(cd "$D/../.." && pwd)}"
 BIN="$REPO/testdata/era_mainnet_batches/binary"
 LOG="$D/sweep_log8.csv"
 ONLY="${ONLY:-}"

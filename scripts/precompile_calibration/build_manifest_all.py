@@ -13,7 +13,8 @@ testdata/cycle_model/isolation_input_corpus.csv plus a per-family report:
 import csv, json, os, subprocess, sys
 from statistics import mean
 
-REPO = "/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31"
+REPO = os.environ.get("REPO") or os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 BIN = os.path.join(REPO, "testdata/era_mainnet_batches/binary")
 D = os.path.dirname(os.path.abspath(__file__))
 DUMP = os.path.join(REPO, "target/release/examples/dump_features")

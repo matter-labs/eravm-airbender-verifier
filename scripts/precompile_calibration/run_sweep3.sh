@@ -6,10 +6,12 @@ export PATH="$HOME/.foundry/bin:$PATH"
 RPC=${RPC:-http://localhost:3050}
 HANDLER=${HANDLER:-http://localhost:4320}
 S=${STORE:-0x41a58A7e84eF7D5D4b3e2368119f146bF4FA3CB3}
-KEY=${KEY:-0x4c6389032f2f00a8401a4c8d8af5251886b14c6c20880d47f6445935b58e747a}
+# Default: the era-test-node standard rich-wallet dev key -- publicly documented,
+# local-only funds. Override KEY for any other setup.
+KEY="${KEY:-0x7726827caac94a7f9e1b160f7ea819f172f7b6f9d2a97f992c38edeab82d4110}"
 SENDER=${SENDER:-0x97d2a9f132bd5d74c11c2f12e6c9cfa43febc379}
 D="$(cd "$(dirname "$0")" && pwd)"
-REPO=/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31
+REPO="${REPO:-$(cd "$D/../.." && pwd)}"
 BIN="$REPO/testdata/era_mainnet_batches/binary"
 LOG="$D/sweep_log3.csv"
 ONLY="${ONLY:-}"
