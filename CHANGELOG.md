@@ -1,5 +1,27 @@
 # Changelog
 
+## [31.2.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v31.1.1...v31.2.0) (2026-09-02)
+
+
+### Features
+
+* **cycle-model:** Airbender guest cycle estimator — per-operation measured cost table + sequencer API ([#82](https://github.com/matter-labs/eravm-airbender-verifier/issues/82)) ([9e097c9](https://github.com/matter-labs/eravm-airbender-verifier/commit/9e097c9f3d4fceb3210cd4ed1d78405a168b72c6))
+* enable Airbender precompile delegations in the fast VM ([#90](https://github.com/matter-labs/eravm-airbender-verifier/issues/90)) ([2d5b296](https://github.com/matter-labs/eravm-airbender-verifier/commit/2d5b296717063147cb0df13b42aca7acc1411e84))
+
+
+### Bug Fixes
+
+* **calibration:** make the precompile-calibration scripts runnable ([#111](https://github.com/matter-labs/eravm-airbender-verifier/issues/111)) ([fe8d8c2](https://github.com/matter-labs/eravm-airbender-verifier/commit/fe8d8c256afa018e3688f0f06a8833b695dd0ff5))
+* **deps:** bump crossbeam-epoch to 0.9.20 (RUSTSEC-2026-0204) ([#87](https://github.com/matter-labs/eravm-airbender-verifier/issues/87)) ([a11a6fe](https://github.com/matter-labs/eravm-airbender-verifier/commit/a11a6fecbddfa654fe0fbe0579da83c9d806a0d0))
+* **merkle:** store witness paths per-path truncated, not delta vs first path ([#104](https://github.com/matter-labs/eravm-airbender-verifier/issues/104)) ([ff32688](https://github.com/matter-labs/eravm-airbender-verifier/commit/ff3268830f70801fabf8f91d98c2d962cfe21dc5))
+
+
+### Performance Improvements
+
+* **merkle:** fuse blake2s compress in the Merkle-path fold ([#96](https://github.com/matter-labs/eravm-airbender-verifier/issues/96)) ([ba9ffeb](https://github.com/matter-labs/eravm-airbender-verifier/commit/ba9ffeb31a3341cdcd57d2c33e4a583574192dd9))
+* **vm_fast:** fetch raw bytecode in `decommit_code` without decoding ([#101](https://github.com/matter-labs/eravm-airbender-verifier/issues/101)) ([009b27e](https://github.com/matter-labs/eravm-airbender-verifier/commit/009b27e78eb75d8e5eaf6c5f32c2a939b31dd59a))
+* **vm_fast:** stop retaining storage-loaded bytecodes in `bytecode_cache` ([#100](https://github.com/matter-labs/eravm-airbender-verifier/issues/100)) ([d778956](https://github.com/matter-labs/eravm-airbender-verifier/commit/d7789562f1c19ba82792b2e1e7df1ad16b6dd86b))
+
 ## [29.9.0](https://github.com/matter-labs/eravm-airbender-verifier/compare/v29.8.0...v29.9.0) (2026-07-06)
 
 

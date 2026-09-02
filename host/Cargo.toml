@@ -1,6 +1,6 @@
 [package]
 name = "eravm-prover-host"
-version = "29.9.0"
+version = "31.2.0"
 edition = "2021"
 authors.workspace = true
 homepage.workspace = true
