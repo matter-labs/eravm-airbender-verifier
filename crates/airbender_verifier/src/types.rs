@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use zksync_contracts::BaseSystemContracts;
 use zksync_types::{
     block::L2BlockExecutionData,
     commitment::{BlobHash, PubdataParams},
     witness_block_state::WitnessStorageState,
-    L1BatchNumber, ProtocolVersionId, H256, U256,
+    L1BatchNumber, L2ChainId, ProtocolVersionId, H256, U256,
 };
-use zksync_vm_interface::{L1BatchEnv, SystemEnv};
+use zksync_vm_interface::{L1BatchEnv, SystemEnv, TxExecutionMode};
 
 pub use zksync_merkle_tree::{StorageLogMetadata, WitnessInputMerklePaths};
 
@@ -30,16 +31,84 @@ mod blob_constant_tests {
     }
 }
 
+/// The operator-facing shape of the execution environment: [`SystemEnv`] minus
+/// the protocol version, which is not an input — `execute` injects
+/// `PINNED_PROTOCOL_VERSION` at [`SystemEnvInput::into_system_env`].
+///
+/// Field order is the bincode wire order. Under `cycle-markers` `version` sits
+/// at position 2 as it does in [`SystemEnv`]; the calibration channel still
+/// moved overall, since [`VMRunWitnessInputData`]'s mirror is gone in every
+/// flavour, so a calibration guest must be rebuilt alongside its host.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemEnvInput {
+    pub zk_porter_available: bool,
+    /// Calibration-only: each corpus batch replays under its own semantics.
+    /// Structurally absent from the production build — not just skipped.
+    #[cfg(feature = "cycle-markers")]
+    pub version: ProtocolVersionId,
+    pub base_system_smart_contracts: BaseSystemContracts,
+    pub bootloader_gas_limit: u32,
+    pub execution_mode: TxExecutionMode,
+    pub default_validation_computational_gas_limit: u32,
+    pub chain_id: L2ChainId,
+}
+
+impl SystemEnvInput {
+    /// The single place a version enters the STF. `execute` passes
+    /// `PINNED_PROTOCOL_VERSION`; the calibration flavour passes the batch's
+    /// own.
+    pub fn into_system_env(self, version: ProtocolVersionId) -> SystemEnv {
+        SystemEnv {
+            zk_porter_available: self.zk_porter_available,
+            version,
+            base_system_smart_contracts: self.base_system_smart_contracts,
+            bootloader_gas_limit: self.bootloader_gas_limit,
+            execution_mode: self.execution_mode,
+            default_validation_computational_gas_limit: self
+                .default_validation_computational_gas_limit,
+            chain_id: self.chain_id,
+        }
+    }
+}
+
+// Mirrors `SystemEnv`'s manual impl: print contract hashes, not the bytecodes.
+impl std::fmt::Debug for SystemEnvInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("SystemEnvInput");
+        s.field("zk_porter_available", &self.zk_porter_available);
+        #[cfg(feature = "cycle-markers")]
+        s.field("version", &self.version);
+        s.field(
+            "base_system_smart_contracts",
+            &self.base_system_smart_contracts.hashes(),
+        )
+        .field("gas_limit", &self.bootloader_gas_limit)
+        .field(
+            "default_validation_computational_gas_limit",
+            &self.default_validation_computational_gas_limit,
+        )
+        .field("execution_mode", &self.execution_mode)
+        .field("chain_id", &self.chain_id)
+        .finish()
+    }
+}
+
 /// VM execution witness used by verifier input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VMRunWitnessInputData {
     pub l1_batch_number: L1BatchNumber,
     pub used_bytecodes: HashMap<U256, Vec<[u8; HASH_LEN]>>,
     pub initial_heap_content: Vec<(usize, U256)>,
-    pub protocol_version: ProtocolVersionId,
     pub bootloader_code: Vec<[u8; HASH_LEN]>,
     pub default_account_code_hash: U256,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `None` on an EVM-emulator-disabled chain, which `verify_commitment`
+    /// supports.
+    ///
+    /// NOT `skip_serializing_if`: bincode reads a fixed field count, so
+    /// `default` never fires and an omitted field left the `None` payload
+    /// undecodable. `default` stays for the JSON path; `Some` encodes
+    /// identically either way, so the corpus is unaffected.
+    #[serde(default)]
     pub evm_emulator_code_hash: Option<U256>,
     pub storage_refunds: Vec<u32>,
     pub pubdata_costs: Vec<i32>,
@@ -83,12 +152,17 @@ impl Default for CommitmentInput {
     }
 }
 
-/// Verifier input payload (v31 wire layout).
+/// Verifier input payload — the guest-facing shape, bincode-encoded on the
+/// host↔guest channel.
 ///
-/// This is the single canonical shape, encoded with bincode for the on-disk
-/// corpus and the host↔guest channel and with JSON for the zksync-era prover
-/// service. There is no version envelope: the repository targets the latest
-/// protocol version only.
+/// The wire cannot express a protocol version: [`SystemEnvInput`] has no
+/// version field and [`VMRunWitnessInputData`]'s mirror is deleted. `execute`
+/// injects `PINNED_PROTOCOL_VERSION` — the STF chooses, not the operator. The
+/// era export and on-disk corpus keep the historical labels host-side
+/// (`zksync_cli_utils::labeled`); the only minor on the wire is an upgrade tx's
+/// `upgrade_id` (batch content). Under `cycle-markers` the wire also carries
+/// `system_env.version`, so the calibration guest replays each batch under its
+/// own semantics.
 ///
 /// `commitment_input` carries the L1 chain context the verifier needs to
 /// produce a `proof_public_input` bound to L1 settlement; `Verify::verify`
@@ -101,7 +175,7 @@ pub struct AirbenderVerifierInput {
     pub merkle_paths: WitnessInputMerklePaths,
     pub l2_blocks_execution_data: Vec<L2BlockExecutionData>,
     pub l1_batch_env: L1BatchEnv,
-    pub system_env: SystemEnv,
+    pub system_env: SystemEnvInput,
     pub pubdata_params: PubdataParams,
     pub commitment_input: Option<CommitmentInput>,
 }
@@ -109,6 +183,37 @@ pub struct AirbenderVerifierInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_vm_run_data(evm_emulator_code_hash: Option<U256>) -> VMRunWitnessInputData {
+        VMRunWitnessInputData {
+            l1_batch_number: Default::default(),
+            used_bytecodes: Default::default(),
+            initial_heap_content: vec![],
+            bootloader_code: vec![],
+            default_account_code_hash: Default::default(),
+            evm_emulator_code_hash,
+            storage_refunds: vec![],
+            pubdata_costs: vec![],
+            witness_block_state: Default::default(),
+        }
+    }
+
+    /// Regression: `skip_serializing_if` left the `None` payload one field
+    /// short and undecodable. The `Some` arm pins that dropping it kept the
+    /// corpus wire byte-identical.
+    #[test]
+    fn evm_emulator_none_round_trips() {
+        let cfg = bincode::config::standard();
+        for value in [Some(U256::zero()), None] {
+            let input = sample_vm_run_data(value);
+            let bytes = bincode::serde::encode_to_vec(&input, cfg).expect("encode");
+            let (decoded, read) =
+                bincode::serde::decode_from_slice::<VMRunWitnessInputData, _>(&bytes, cfg)
+                    .unwrap_or_else(|e| panic!("{value:?} must decode: {e}"));
+            assert_eq!(read, bytes.len(), "trailing bytes for {value:?}");
+            assert_eq!(decoded, input, "round trip differs for {value:?}");
+        }
+    }
 
     #[test]
     fn witness_merkle_paths_roundtrip() {

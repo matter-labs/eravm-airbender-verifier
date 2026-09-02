@@ -302,7 +302,7 @@ impl TryFrom<Transaction> for abi::Transaction {
                     max_fee_per_gas: data.max_fee_per_gas,
                     max_priority_fee_per_gas: 0.into(),
                     paymaster: 0.into(),
-                    nonce: (data.upgrade_id as u16).into(),
+                    nonce: data.upgrade_id.raw().into(),
                     value: tx.execute.value,
                     reserved: [
                         data.to_mint,
@@ -380,7 +380,10 @@ impl Transaction {
                         }
                         t if t == PROTOCOL_UPGRADE_TX_TYPE.into() => {
                             ExecuteTransactionCommon::ProtocolUpgrade(ProtocolUpgradeTxCommonData {
-                                upgrade_id: tx.nonce.try_into().unwrap(),
+                                upgrade_id: tx
+                                    .nonce
+                                    .try_into()
+                                    .map_err(|err| anyhow::format_err!("{err}"))?,
                                 canonical_tx_hash: hash,
                                 sender: u256_to_address(&tx.from),
                                 to_mint: tx.reserved[0],

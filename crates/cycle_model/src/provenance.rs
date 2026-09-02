@@ -31,11 +31,11 @@ pub struct DatasetProvenance {
     /// that agree on it).
     pub vm2_rev: Option<String>,
     /// Protocol version(s) the measured batches actually carry — read per batch
-    /// from `system_env.version`, NOT `ProtocolVersionId::latest()`. A calibration
-    /// guest is built with `--features cycle-markers`, which relaxes the version
-    /// pin precisely so older batches decode, so `latest()` would be a false
-    /// stamp: the committed table's corpus is entirely `Version29` while `latest()`
-    /// is `Version31`. A mixed corpus is labelled `MIXED: ...`.
+    /// from `system_env.version`, NOT the verifier's pin. A calibration guest is
+    /// built with `--features cycle-markers`, which relaxes the version pin
+    /// precisely so older batches decode, so the pin would be a false stamp: the
+    /// committed table's corpus is entirely `Version29` while the pin is
+    /// `Version31`. A mixed corpus is labelled `MIXED: ...`.
     pub protocol_version: Option<String>,
     /// Wall-clock of the measurement run, seconds since the UNIX epoch.
     pub measured_at_unix: Option<u64>,

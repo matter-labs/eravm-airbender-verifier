@@ -3,7 +3,7 @@ use std::convert::{TryFrom, TryInto};
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use zksync_basic_types::protocol_version::{
-    L1VerifierConfig, ProtocolSemanticVersion, ProtocolVersionId, VerifierParams,
+    L1VerifierConfig, ProtocolSemanticVersion, ProtocolUpgradeId, ProtocolVersionId, VerifierParams,
 };
 use zksync_contracts::BaseSystemContractsHashes;
 
@@ -160,10 +160,11 @@ async fn prepare_upgrade_call(
         return Ok(vec![]);
     }
 
-    let minor_version = proposed_upgrade.l2_protocol_upgrade_tx.nonce;
-    if ProtocolVersionId::try_from(minor_version.as_u32() as u16).unwrap()
-        != ProtocolVersionId::gateway_upgrade()
-    {
+    // The nonce is the upgrade's protocol minor, carried losslessly — a minor
+    // this build cannot name is simply not the gateway upgrade.
+    let minor_version = ProtocolUpgradeId::try_from(proposed_upgrade.l2_protocol_upgrade_tx.nonce)
+        .map_err(|err| anyhow::format_err!("{err}"))?;
+    if minor_version != ProtocolUpgradeId::from(ProtocolVersionId::gateway_upgrade()) {
         // We'll just keep it the same for non-Gateway upgrades
         return Ok(proposed_upgrade.l2_protocol_upgrade_tx.data.clone());
     }
@@ -447,7 +448,7 @@ impl ProtocolVersion {
 #[serde(rename_all = "camelCase")]
 struct ProtocolUpgradeTxCommonDataSerde {
     pub sender: Address,
-    pub upgrade_id: ProtocolVersionId,
+    pub upgrade_id: ProtocolUpgradeId,
     pub max_fee_per_gas: U256,
     pub gas_limit: U256,
     pub gas_per_pubdata_limit: U256,
@@ -467,7 +468,7 @@ pub struct ProtocolUpgradeTxCommonData {
     /// Sender of the transaction.
     pub sender: Address,
     /// ID of the upgrade.
-    pub upgrade_id: ProtocolVersionId,
+    pub upgrade_id: ProtocolUpgradeId,
     /// The maximal fee per gas to be used for L1->L2 transaction
     pub max_fee_per_gas: U256,
     /// The maximum number of gas that a transaction can spend at a price of gas equals 1.

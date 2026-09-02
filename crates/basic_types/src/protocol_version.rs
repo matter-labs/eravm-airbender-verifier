@@ -7,7 +7,7 @@ use std::{
 };
 
 use num_enum::TryFromPrimitive;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::{
@@ -247,6 +247,135 @@ impl TryFrom<U256> for ProtocolVersionId {
     }
 }
 
+/// Highest protocol minor this build can name.
+///
+/// Tests use it to construct minors this build *cannot* name (the interesting
+/// case for [`ProtocolUpgradeId`]). Pinned by `max_known_is_last_variant`: a
+/// dependency bump that appends a variant to [`ProtocolVersionId`] must move
+/// this constant in the same commit.
+pub const MAX_KNOWN_PROTOCOL_VERSION: ProtocolVersionId = ProtocolVersionId::Version32;
+
+/// Reads a raw protocol-minor number from either wire form: the derived
+/// `"VersionNN"` string (JSON) or a bare integer (bincode, plus JSON
+/// defensively). See [`ProtocolUpgradeId`].
+struct WireProtocolVersionVisitor;
+
+impl<'de> de::Visitor<'de> for WireProtocolVersionVisitor {
+    type Value = u16;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a protocol minor version as `\"VersionNN\"` or a number")
+    }
+
+    /// Accepts exactly the form the derived `Serialize` writes. `u16::from_str`
+    /// alone would also take `"Version+31"` and `"Version031"`, which nothing
+    /// produces and the derived codec rejects.
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        value
+            .strip_prefix("Version")
+            .filter(|digits| {
+                !digits.is_empty()
+                    && digits.bytes().all(|b| b.is_ascii_digit())
+                    && (digits.len() == 1 || !digits.starts_with('0'))
+            })
+            .and_then(|digits| digits.parse::<u16>().ok())
+            .ok_or_else(|| E::invalid_value(de::Unexpected::Str(value), &self))
+    }
+
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+        u16::try_from(value).map_err(|_| E::invalid_value(de::Unexpected::Unsigned(value), &self))
+    }
+}
+
+/// The protocol minor named by a protocol-upgrade transaction, as the raw wire
+/// number.
+///
+/// [`ProtocolVersionId`] is a closed enum, so its derived codec *rejects* a
+/// minor this build cannot name — and on a non-self-describing wire that
+/// rejection kills the whole payload decode. The first batch of a new minor
+/// carries a protocol-upgrade transaction naming that minor, so with the strict
+/// codec that batch could not even be decoded until a new build shipped.
+///
+/// This newtype carries the value losslessly instead. It is not clamped or
+/// validated against the variant list: the value becomes the upgrade tx's nonce
+/// and so feeds its canonical hash — mangling it would corrupt the transaction
+/// rather than fail cleanly. Wire form is byte-identical to the derived
+/// [`ProtocolVersionId`] codec in both directions; it can additionally carry,
+/// and re-emit unchanged, a minor this build cannot name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtocolUpgradeId(u16);
+
+impl ProtocolUpgradeId {
+    /// The raw minor as it appeared on the wire; the upgrade tx's nonce.
+    pub const fn raw(self) -> u16 {
+        self.0
+    }
+}
+
+impl Default for ProtocolUpgradeId {
+    fn default() -> Self {
+        Self::from(ProtocolVersionId::default())
+    }
+}
+
+impl From<ProtocolVersionId> for ProtocolUpgradeId {
+    fn from(value: ProtocolVersionId) -> Self {
+        Self(value as u16)
+    }
+}
+
+impl From<u16> for ProtocolUpgradeId {
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
+/// Fails for a minor this build cannot name; use [`ProtocolUpgradeId::raw`] for
+/// the nonce.
+impl TryFrom<ProtocolUpgradeId> for ProtocolVersionId {
+    type Error = String;
+
+    fn try_from(value: ProtocolUpgradeId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0).map_err(|_| format!("unknown protocol version ID: {}", value.0))
+    }
+}
+
+impl TryFrom<U256> for ProtocolUpgradeId {
+    type Error = String;
+
+    fn try_from(value: U256) -> Result<Self, Self::Error> {
+        if value > U256::from(u16::MAX) {
+            Err(format!("protocol upgrade ID out of range: {value}"))
+        } else {
+            Ok(Self(value.as_u32() as u16))
+        }
+    }
+}
+
+impl Serialize for ProtocolUpgradeId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Mirror the derived codec: variant name when self-describing, index
+        // otherwise. The host re-encodes for the guest, so this side matters too.
+        if s.is_human_readable() {
+            s.serialize_str(&format!("Version{}", self.0))
+        } else {
+            s.serialize_u16(self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtocolUpgradeId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // bincode cannot `deserialize_any`, so pick the form by wire kind.
+        let raw = if d.is_human_readable() {
+            d.deserialize_any(WireProtocolVersionVisitor)?
+        } else {
+            d.deserialize_u16(WireProtocolVersionVisitor)?
+        };
+        Ok(Self(raw))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VerifierParams {
     pub recursion_node_level_vk_hash: H256,
@@ -436,5 +565,151 @@ impl Default for ProtocolSemanticVersion {
             minor: Default::default(),
             patch: 0.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod protocol_upgrade_id_tests {
+    use super::*;
+
+    fn nameable() -> impl Iterator<Item = ProtocolVersionId> {
+        (0..=MAX_KNOWN_PROTOCOL_VERSION as u16)
+            .map(|raw| ProtocolVersionId::try_from(raw).expect("the variant list is contiguous"))
+    }
+
+    /// Change detector: a bump that appends a variant must move
+    /// [`MAX_KNOWN_PROTOCOL_VERSION`] in the same commit, or the tests here
+    /// would pick a nameable minor when they need an unnameable one.
+    #[test]
+    fn max_known_is_last_variant() {
+        let max = MAX_KNOWN_PROTOCOL_VERSION as u16;
+        assert!(ProtocolVersionId::try_from(max).is_ok());
+        assert!(
+            ProtocolVersionId::try_from(max + 1).is_err(),
+            "ProtocolVersionId gained a variant above {MAX_KNOWN_PROTOCOL_VERSION:?}; \
+             update MAX_KNOWN_PROTOCOL_VERSION"
+        );
+    }
+
+    /// Byte-identical to the codec it replaces, both directions — the host
+    /// re-encodes the input for the guest.
+    #[test]
+    fn upgrade_id_bincode_matches_protocol_version_id() {
+        let cfg = bincode::config::standard();
+        for version in nameable() {
+            let from_enum = bincode::serde::encode_to_vec(version, cfg).expect("encode enum");
+            let from_new = bincode::serde::encode_to_vec(ProtocolUpgradeId::from(version), cfg)
+                .expect("encode newtype");
+            assert_eq!(from_new, from_enum, "byte layout differs for {version:?}");
+
+            let (decoded, read) =
+                bincode::serde::decode_from_slice::<ProtocolUpgradeId, _>(&from_enum, cfg)
+                    .expect("decode newtype");
+            assert_eq!(decoded.raw(), version as u16, "{version:?}");
+            assert_eq!(read, from_enum.len(), "trailing bytes for {version:?}");
+        }
+    }
+
+    /// [`WireProtocolVersionVisitor::visit_str`] is hand-rolled and strict on
+    /// purpose, and this is the only coverage of that. It is now
+    /// [`ProtocolUpgradeId`]'s sole JSON deserializer — it parses era's
+    /// `proof_inputs_*.json` and the `upgrade_id` that becomes an upgrade tx's
+    /// nonce, so a loosened parser would corrupt that tx's canonical hash.
+    #[test]
+    fn upgrade_id_json_rejects_malformed_labels() {
+        for bad in [
+            "\"Version+31\"",
+            "\"Version031\"",
+            "\"Version 31\"",
+            "\"Version\"",
+            "\"Version-1\"",
+            "\"31\"",
+            "\"v31\"",
+            "\"VersionNaN\"",
+        ] {
+            assert!(
+                serde_json::from_str::<ProtocolUpgradeId>(bad).is_err(),
+                "{bad} must be rejected, not coerced"
+            );
+        }
+        // The one string form that IS accepted, for contrast.
+        assert_eq!(
+            serde_json::from_str::<ProtocolUpgradeId>("\"Version31\"")
+                .expect("the canonical form must parse")
+                .raw(),
+            31
+        );
+    }
+
+    /// Same on the JSON wire.
+    #[test]
+    fn upgrade_id_json_matches_protocol_version_id() {
+        for version in nameable() {
+            let from_enum = serde_json::to_string(&version).expect("serialize enum");
+            let from_new = serde_json::to_string(&ProtocolUpgradeId::from(version))
+                .expect("serialize newtype");
+            assert_eq!(from_new, from_enum, "JSON form differs for {version:?}");
+
+            let decoded: ProtocolUpgradeId =
+                serde_json::from_str(&from_enum).expect("decode newtype");
+            assert_eq!(decoded.raw(), version as u16);
+        }
+    }
+
+    /// Why this type exists: the value is the tx nonce, so an unnameable minor
+    /// must decode *and re-encode to the same bytes*. Clamping must not happen.
+    #[test]
+    fn unnameable_minor_round_trips_losslessly() {
+        let cfg = bincode::config::standard();
+        for raw in [MAX_KNOWN_PROTOCOL_VERSION as u16 + 1, 45, 60_000, u16::MAX] {
+            assert!(
+                ProtocolVersionId::try_from(raw).is_err(),
+                "raw {raw} is nameable; pick a value this build cannot name"
+            );
+
+            let bytes = bincode::serde::encode_to_vec(raw, cfg).expect("encode raw u16");
+
+            // The strict enum rejects exactly these bytes — the original abort.
+            assert!(
+                bincode::serde::decode_from_slice::<ProtocolVersionId, _>(&bytes, cfg).is_err(),
+                "raw {raw} should be undecodable as the closed enum; the comparison below is \
+                 meaningless otherwise"
+            );
+
+            let (decoded, read) =
+                bincode::serde::decode_from_slice::<ProtocolUpgradeId, _>(&bytes, cfg)
+                    .unwrap_or_else(|e| panic!("decode of raw {raw}: {e}"));
+
+            assert_eq!(decoded.raw(), raw, "value must survive decode unchanged");
+            assert_ne!(
+                decoded.raw(),
+                MAX_KNOWN_PROTOCOL_VERSION as u16,
+                "raw {raw} was saturated — that would corrupt the upgrade tx nonce"
+            );
+            assert_eq!(read, bytes.len(), "trailing bytes for raw {raw}");
+
+            let re_encoded = bincode::serde::encode_to_vec(decoded, cfg).expect("re-encode");
+            assert_eq!(re_encoded, bytes, "re-encode differs for raw {raw}");
+
+            // The same value on the JSON wire, and back.
+            let json = serde_json::to_string(&decoded).expect("serialize");
+            assert_eq!(json, format!("\"Version{raw}\""));
+            let back: ProtocolUpgradeId = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back.raw(), raw);
+        }
+    }
+
+    /// Naming stays fallible; the newtype only widens what can be carried.
+    #[test]
+    fn naming_an_unnameable_minor_fails() {
+        assert_eq!(
+            ProtocolVersionId::try_from(ProtocolUpgradeId::from(ProtocolVersionId::latest()))
+                .unwrap(),
+            ProtocolVersionId::latest()
+        );
+        assert!(ProtocolVersionId::try_from(ProtocolUpgradeId::from(
+            MAX_KNOWN_PROTOCOL_VERSION as u16 + 1
+        ))
+        .is_err());
     }
 }

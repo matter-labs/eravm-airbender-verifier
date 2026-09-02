@@ -50,10 +50,30 @@ pub fn run_guest(
     words.push(input).context("encoding verifier input")?;
     let execution = runner.run(words.words()).context("guest run failed")?;
 
-    let markers = execution.cycle_markers.context(
-        "no cycle markers collected — build the guest with `--features cycle-markers` \
-         and ensure JIT is off",
-    )?;
+    // `run` returns `Ok` even when the guest trapped, so without this an
+    // aborted guest is recorded as a valid, very cheap measurement.
+    anyhow::ensure!(
+        execution.reached_end,
+        "the guest trapped or ran out of cycles, so this measurement is \
+         meaningless. A decode failure here usually means host and guest were \
+         built with different `cycle-markers` flavours; they must match."
+    );
+
+    // `None` only on the JIT path, which this runner never selects; a guest
+    // built without the feature yields `Some(empty)` instead, so the contents
+    // are what actually need checking.
+    let markers = execution
+        .cycle_markers
+        .context("no cycle markers collected — the runner used JIT; ensure JIT is off")?;
+    // Exactly one more mark than labels: a short or padded set would silently
+    // yield a partial or misaligned phase map.
+    anyhow::ensure!(
+        markers.markers.len() == PHASE_LABELS.len() + 1,
+        "expected {} cycle markers, got {} — build the guest with `--features cycle-markers`, \
+         and build this bench with the matching flavour",
+        PHASE_LABELS.len() + 1,
+        markers.markers.len()
+    );
 
     Ok(GuestMeasurement {
         raw_cycles: execution.cycles_executed as u64,

@@ -28,20 +28,34 @@ independent hold-out.
 
 ```sh
 git lfs pull --include='testdata/era_mainnet_batches/binary/*'
-cargo run --release -p zksync_cycle_model --bin cycle_bench -- --all-batches --check-only
+cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
+    --all-batches --check-only
 ```
 
+Build `--check-only` with the same `--features cycle-markers` as the measurement run:
+it runs in either flavour but its **criterion differs** — calibration accepts any minor
+it can name (the point: the corpus is v29), production only labels at or above
+`PINNED_PROTOCOL_VERSION`, which rejects the whole train split. It applies the same gate
+`load_batch` does, so a batch it passes is one the run can load.
+
+> **The 506xxx/513xxx corpus does not decode against the current wire** — it is in the
+> pre-#76 merkle layout, so step 1 reports `invalid utf-8 sequence` for every batch, in
+> **both** flavours. Stale corpus, not a flavour mismatch; no feature flag fixes it.
+> Only 84730–84732 and 900065 decode today (all `Version31`; see
+> `cycle-model-drift.yaml`'s `DRIFT_BATCHES`). **Re-export or transcode the corpus
+> first** — everything below assumes decodable inputs.
+
 Keep the split the committed table used: **train** on 506077–506204 (122 measured of
-127 present — five did not decode; `--check-only` shows which), **hold out**
-513601–513649 (49). Do not fit on the hold-out: an earlier reference refit had to,
-because the training set was unfetchable without LFS credentials, and that alone is
-why its output is reference-only rather than shippable.
+127 present at the time — five did not decode; `--check-only` shows which), **hold
+out** 513601–513649 (49). Do not fit on the hold-out: an earlier reference refit had
+to, because the training set was unfetchable without LFS credentials, and that alone
+is why its output is reference-only rather than shippable.
 
 ### 2. Guest + organic measurement
 
 ```sh
 cargo airbender build --project guest -- --features cycle-markers   # NEVER ship this guest
-cargo run --release -p zksync_cycle_model --bin cycle_bench -- \
+cargo run --release -p zksync_cycle_model --features cycle-markers --bin cycle_bench -- \
     --all-batches --batches-dir <train-dir> --app-bin-dir guest/dist/app \
     --jobs 8 --out artifacts/cycle_model/train
 ```

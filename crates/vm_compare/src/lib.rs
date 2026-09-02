@@ -8,7 +8,9 @@ use anyhow::{bail, Result};
 use fast::FastTraceTracer;
 use legacy::LegacyTraceTracer;
 pub use types::{CompareOptions, ComparisonOutcome, ComparisonReport, Divergence, TxLocation};
-use zksync_airbender_verifier::types::AirbenderVerifierInput;
+// The harness must replay at exactly the version the verifier commits at, so it
+// asks rather than re-deriving it.
+use zksync_airbender_verifier::{stf_protocol_version, types::AirbenderVerifierInput};
 use zksync_multivm::{
     interface::{
         storage::{StorageSnapshot, StorageView},
@@ -36,20 +38,18 @@ struct TxExecutionCapture {
 }
 
 pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result<ComparisonReport> {
+    let protocol_version = stf_protocol_version(&input.system_env);
+    let system_env = input.system_env.clone().into_system_env(protocol_version);
     let storage_snapshot = create_storage_snapshot(&input);
     let legacy_storage = StorageView::new(storage_snapshot.clone()).to_rc_ptr();
     let fast_storage = StorageView::new(storage_snapshot).to_rc_ptr();
 
     let mut legacy_vm = <LegacyCompareVm as VmFactory<CompareStorageView>>::new(
         input.l1_batch_env.clone(),
-        input.system_env.clone(),
+        system_env.clone(),
         legacy_storage,
     );
-    let mut fast_vm = FastCompareVm::fast(
-        input.l1_batch_env.clone(),
-        input.system_env.clone(),
-        fast_storage,
-    );
+    let mut fast_vm = FastCompareVm::fast(input.l1_batch_env.clone(), system_env, fast_storage);
 
     let mut compared_transactions = 0usize;
     let compared_l2_blocks = input.l2_blocks_execution_data.len().saturating_sub(1);
@@ -184,11 +184,11 @@ pub fn compare(input: AirbenderVerifierInput, options: CompareOptions) -> Result
 
     let legacy_batch = legacy_vm.finish_batch(pubdata_params_to_builder(
         input.pubdata_params,
-        input.system_env.version,
+        protocol_version,
     ));
     let fast_batch = fast_vm.finish_batch(pubdata_params_to_builder(
         input.pubdata_params,
-        input.system_env.version,
+        protocol_version,
     ));
 
     let final_location = last_location.unwrap_or_else(|| default_location(&input));
@@ -267,10 +267,11 @@ pub fn run_fast_vm_with_tracer<Tr>(
 where
     Tr: zksync_vm2::interface::Tracer + Clone + Default + 'static,
 {
+    let protocol_version = stf_protocol_version(&input.system_env);
     let storage = StorageView::new(create_storage_snapshot(input)).to_rc_ptr();
     let mut vm = FastVmInstance::<CompareStorage, Tr>::fast(
         input.l1_batch_env.clone(),
-        input.system_env.clone(),
+        input.system_env.clone().into_system_env(protocol_version),
         storage,
     );
 
@@ -284,7 +285,7 @@ where
 
     Ok(vm.finish_batch(pubdata_params_to_builder(
         input.pubdata_params,
-        input.system_env.version,
+        protocol_version,
     )))
 }
 

@@ -24,7 +24,7 @@ fn extract_features_on_real_batch() {
         .expect("batches dir must exist");
     let inputs = resolve_batch_inputs(&dir, Some(&[PathBuf::from("84730.bin.gz")]), false)
         .expect("resolve batch");
-    // v31 has no version envelope — load_batch returns the canonical input.
+    // load_batch gates on the stored label and returns the guest-facing input.
     let input = load_batch(&inputs[0]).expect("load batch 84730");
 
     let features = extract_features(&input).expect("feature extraction");

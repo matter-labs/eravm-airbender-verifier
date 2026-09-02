@@ -40,20 +40,27 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --exclude eravm-prover-guest --locked -- -D warnings
 
-      # `cycle-markers` is the offline cycle-cost calibration build. It is
-      # non-default and never shipped, so every command above — which runs with
-      # default features — compiles a DIFFERENT `execute()`: the feature erases
-      # the protocol-version pin (so a v29 batch can be measured under v29
-      # semantics) and emits CSR 0x7ff phase markers. That code path is
-      # therefore invisible to CI unless it is asked for explicitly, and it
-      # drifted unnoticed: a test asserting the version pin's error message was
-      # already failing under this feature before anyone looked.
+      # `cycle-markers` is the offline calibration build: non-default, never
+      # shipped, and it compiles a DIFFERENT `execute()`. The feature ADDS a
+      # `version` field to `SystemEnvInput` (a protocol version on the host↔guest
+      # wire, which the production build cannot express) so a v29 batch can be
+      # measured under v29 semantics, and it emits CSR 0x7ff phase markers. That
+      # path is invisible to CI unless asked for, and it has drifted unnoticed.
       #
-      # `--all-targets` is the point — it compiles the tests, which is where the
-      # `#[cfg(not(feature = "cycle-markers"))]` blocks are actually exercised.
-      # Only the verifier crate needs it; nothing else reads the feature.
+      # `--all-targets` is the point — it compiles the `#[cfg(feature =
+      # "cycle-markers")]` tests, the only place that flavour's behaviour is
+      # asserted. Every crate that reads the flavour must be named explicitly:
+      # `zksync_cli_utils` constructs the flavour-dependent `SystemEnvInput`,
+      # `zksync_cycle_model` carries its own cfg'd code, and `zksync_vm_compare`
+      # must still typecheck against the calibration `SystemEnvInput`. The
+      # verifier's feature forwards only to `zksync_cli_utils` (its
+      # dev-dependency), so the other two would otherwise never be compiled in
+      # this flavour by any PR-triggered job.
       - name: Clippy (cycle-markers calibration build)
-        run: cargo clippy -p zksync_airbender_verifier --features cycle-markers --all-targets --locked -- -D warnings
+        run: |
+          cargo clippy -p zksync_airbender_verifier -p zksync_cli_utils \
+                       -p zksync_vm_compare -p zksync_cycle_model \
+                       --features cycle-markers --all-targets --locked -- -D warnings
 
   tests:
     name: tests
@@ -93,13 +100,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --exclude eravm-prover-guest --locked
 
-      # Compiling the calibration build is not enough — the tests that assert the
-      # protocol-version gate are `#[cfg(not(feature = "cycle-markers"))]`, and a
-      # mis-gated one fails only when RUN (with the gate erased, the
-      # unconditional `vm_run_data` cross-bind reports first, so the asserted
-      # error message never appears). `--lib` keeps this off the LFS fixtures.
+      # Compiling the calibration build is not enough — the version handling is
+      # `#[cfg]`-split between the flavours (the guest-channel wire keeps or
+      # drops the label fields, `load_batch` keeps or pins each batch's
+      # version), and a mis-gated branch fails only when RUN. `--lib` keeps
+      # this off the LFS fixtures; `zksync_cli_utils` carries the calibration
+      # label-gate tests.
       - name: Run tests (cycle-markers calibration build)
-        run: cargo test -p zksync_airbender_verifier --features cycle-markers --lib --locked
+        run: cargo test -p zksync_airbender_verifier -p zksync_cli_utils --features cycle-markers --lib --locked
 
   vm-compare-batches:
     name: vm-compare-batches
@@ -198,6 +206,37 @@ jobs:
           path: guest/dist/app
           if-no-files-found: error
           retention-days: 1
+
+      # `cycle-markers` changes the guest's INPUT STRUCT (`SystemEnvInput` gains
+      # `version`), not just the CSR markers, and the workspace lints run for the
+      # host target while the guest only builds for riscv32 — so a cfg mistake
+      # here surfaced only on the next `cycle-model-drift` run, which is not
+      # PR-triggered. Same invocation as that workflow; +30 s on the ~210 s above,
+      # since the dependency tree and build-std are feature-independent.
+      #
+      # The CSR allowlist is what actually keeps this flavour unshippable, so
+      # assert it rather than assume it. ONE step, so nothing can be inserted
+      # between build and scan; LAST, because it overwrites the already-uploaded
+      # dist with a binary that must never ship.
+      - name: Calibration guest builds, and the RV32IM scan rejects it
+        run: |
+          cargo airbender build --project guest -- --features cycle-markers
+          # Only exit 1 is the expected rejection; as an `if` condition, the
+          # scanner's exit 2 (broken scan) would also have passed the step.
+          status=0
+          bash scripts/check_guest_riscv_code.sh \
+            target/riscv32im-risc0-zkvm-elf/release/eravm-prover-guest \
+            --baseline scripts/guest_softfloat_baseline.txt \
+            --min-insns 500000 || status=$?
+          case "$status" in
+            1) ;;
+            0)
+              echo "::error::the RV32IM scan ACCEPTED the cycle-markers guest — CSR 0x7ff is no longer rejected, so nothing stops a calibration guest being proved"
+              exit 1 ;;
+            *)
+              echo "::error::the RV32IM scan did not run (exit $status); it asserted nothing"
+              exit "$status" ;;
+          esac
 
   host-run-batches:
     name: host-run-batches

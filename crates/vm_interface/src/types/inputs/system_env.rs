@@ -9,6 +9,9 @@ use zksync_types::{L2ChainId, ProtocolVersionId};
 pub struct SystemEnv {
     // Always false for VM
     pub zk_porter_available: bool,
+    /// Protocol minor the VM models. Internal: on the proving path this struct
+    /// is built by `SystemEnvInput::into_system_env`, never decoded from
+    /// operator input.
     pub version: ProtocolVersionId,
     pub base_system_smart_contracts: BaseSystemContracts,
     pub bootloader_gas_limit: u32,

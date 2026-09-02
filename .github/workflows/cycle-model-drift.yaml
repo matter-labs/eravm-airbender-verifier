@@ -93,9 +93,12 @@ jobs:
       - name: Build marker-instrumented guest
         run: cargo airbender build --project guest -- --features cycle-markers
 
+      # MUST match the guest's flavour above: `cycle-markers` changes the
+      # host↔guest wire, so a production-flavour bench cannot encode an input
+      # this guest can decode.
       - name: Measure batches with the current guest
         run: |
-          cargo run --release -p zksync_cycle_model --locked --bin cycle_bench -- \
+          cargo run --release -p zksync_cycle_model --locked --features cycle-markers --bin cycle_bench -- \
             --batch-files "$DRIFT_BATCHES" \
             --app-bin-dir guest/dist/app \
             --jobs 4 --out artifacts/drift
