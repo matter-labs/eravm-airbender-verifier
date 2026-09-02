@@ -4,10 +4,13 @@
 # the deploy's own decommit stay out of the measured batches entirely.
 set -uo pipefail
 export PATH="$HOME/.foundry/bin:$PATH"
-T=/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31/scripts/precompile_calibration
 D="$(cd "$(dirname "$0")" && pwd)"
-RPC=http://localhost:3050
-KEY=0x4c6389032f2f00a8401a4c8d8af5251886b14c6c20880d47f6445935b58e747a
+# forge runs from this directory (foundry.toml + src/ live here).
+T="$D"
+RPC="${RPC:-http://localhost:3050}"
+# Default: the era-test-node standard rich-wallet dev key -- publicly documented,
+# local-only funds. Override KEY for any other setup.
+KEY="${KEY:-0x7726827caac94a7f9e1b160f7ea819f172f7b6f9d2a97f992c38edeab82d4110}"
 OUT="$D/deployed.txt"; touch "$OUT"
 dep() { # file:Contract label
   grep -q "^$2 " "$OUT" && return 0

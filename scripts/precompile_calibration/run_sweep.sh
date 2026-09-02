@@ -7,9 +7,11 @@ export PATH="$HOME/.foundry/bin:$PATH"
 RPC=${RPC:-http://localhost:3050}
 HANDLER=${HANDLER:-http://localhost:4320}
 H=${HAMMER:-0x79d87985e7E80d26d7E96a8Fad30578078dDD603}
-KEY=${KEY:-0x4c6389032f2f00a8401a4c8d8af5251886b14c6c20880d47f6445935b58e747a}
+# Default: the era-test-node standard rich-wallet dev key -- publicly documented,
+# local-only funds. Override KEY for any other setup.
+KEY="${KEY:-0x7726827caac94a7f9e1b160f7ea819f172f7b6f9d2a97f992c38edeab82d4110}"
 D="$(cd "$(dirname "$0")" && pwd)"
-REPO=/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31
+REPO="${REPO:-$(cd "$D/../.." && pwd)}"
 BIN="$REPO/testdata/era_mainnet_batches/binary"
 LOG="$D/sweep_log.csv"
 ONLY="${ONLY:-}"
@@ -70,7 +72,7 @@ except Exception: print('-','0','')")"
     echo "  convert failed"; echo "$fx,$fam,$vec,$ip,$bits,$cnt,$addr,$hash,$bn,$gas,CONVERT_FAIL" >> "$LOG"; return 1
   fi
   rm -f "$json"
-  echo "  -> $fx.bin.gz ($(stat -f%z "$BIN/$fx.bin.gz") B)"
+  echo "  -> $fx.bin.gz ($(wc -c < "$BIN/$fx.bin.gz" | tr -d " ") B)"
   echo "$fx,$fam,$vec,$ip,$bits,$cnt,$addr,$hash,$bn,$gas,ok" >> "$LOG"
 }
 

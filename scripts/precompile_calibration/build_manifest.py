@@ -6,7 +6,8 @@ Shape follows testdata/cycle_model/decommit_corpus.csv, plus `input_param`
 """
 import csv, json, os, subprocess, sys
 
-REPO = "/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31"
+REPO = os.environ.get("REPO") or os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 BIN = os.path.join(REPO, "testdata/era_mainnet_batches/binary")
 D = os.path.dirname(os.path.abspath(__file__))
 AXIS = {"modexp": "mod_exp_cycles", "ecmul": "ec_mul_cycles", "ecadd": "ec_add_cycles",
@@ -40,7 +41,7 @@ with open(OUT, "w", newline="") as f:
         want = int(r["count"]) + organic
         status = ("ok" if organic == 0 else "ok (+1 bootloader tx-sig recover)") \
             if n == want else f"AXIS MISMATCH: {axis}={n} vs expected {want}"
-        w.writerow([fx, fam, r["input_param"], axis, r["input_param"], r["bits"],
+        w.writerow([fx, fam, r["vector"], axis, r["input_param"], r["bits"],
                     r["count"], n, c.get("far_call", 0), c.get("precompile_call", 0),
                     r["gas_used"], c.get("pubdata_bytes", 0), c.get("transaction_count", 0),
                     r["l1_batch"], os.path.getsize(os.path.join(BIN, fx + ".bin.gz")), status])

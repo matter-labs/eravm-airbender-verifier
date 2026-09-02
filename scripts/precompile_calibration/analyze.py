@@ -9,7 +9,8 @@ once a cycle_bench dataset.json exists. Everything here is host-side only.
 import csv, json, os, sys
 from statistics import mean
 
-REPO = "/Users/0xvolosnikov/Desktop/work/eravm-airbender-verifier/.claude/worktrees/refit-v31"
+REPO = os.environ.get("REPO") or os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 D = os.path.dirname(os.path.abspath(__file__))
 man = list(csv.DictReader(open(REPO + "/testdata/cycle_model/isolation_input_corpus.csv")))
 feat = json.load(open(os.path.join(D, "all_features.json")))
