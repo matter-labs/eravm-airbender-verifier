@@ -286,8 +286,8 @@ pub fn expand_bootloader_heap(
 /// and the proof rejects L1's public input.
 fn bytes32_to_u32x8(hash: [u8; 32]) -> [u32; 8] {
     let mut result = [0u32; 8];
-    for (i, chunk) in hash.chunks_exact(4).enumerate() {
-        result[i] = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (i, chunk) in hash.as_chunks::<4>().0.iter().enumerate() {
+        result[i] = u32::from_le_bytes(*chunk);
     }
     result
 }
