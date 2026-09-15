@@ -17,6 +17,16 @@ Download them from a release (alongside `app.bin` / `app.text` and a
 (`FRI_VK`) and the guest dist env var. Local files placed in this directory are
 git-ignored.
 
+## Caching the intermediate wrapper VKs
+
+The release ships only the final `snark_vk.json`; the phase-1 and phase-2
+wrapper VKs (`risc_wrapper_vk.json`, `compression_vk.json`) are still derived
+at startup. To skip that too, pass `--vk-cache-dir <dir>` to `prove-snark`:
+any VK found in the directory is loaded instead of derived, and any VK that
+had to be computed is written back, so the first run warms the cache and
+later runs start without the multi-minute derivation. An explicitly passed
+`--snark-vk` (the release asset) takes precedence over a cached copy.
+
 ## Regenerating for development
 
 ```bash

@@ -166,6 +166,13 @@ struct ProveSnarkArgs {
     #[arg(long)]
     snark_vk: Option<PathBuf>,
 
+    /// Optional directory caching the wrapper VKs (`risc_wrapper_vk.json`,
+    /// `compression_vk.json`, `snark_vk.json`). Any VK present is loaded
+    /// instead of derived; any VK that had to be computed is written back, so
+    /// subsequent runs skip the multi-minute derivation.
+    #[arg(long)]
+    vk_cache_dir: Option<PathBuf>,
+
     #[arg(long)]
     use_zk: bool,
 
@@ -218,6 +225,7 @@ fn main() -> Result<()> {
                 save_intermediates: args.save_intermediates,
                 bin: app_bin_path(&dist_dir),
                 text: app_text_path(&dist_dir),
+                vk_cache_dir: args.vk_cache_dir,
             };
             let snark_vk = load_snark_vk(args.snark_vk.as_deref())?;
             wrap_to_snark(
@@ -248,6 +256,7 @@ fn main() -> Result<()> {
                 save_intermediates: false,
                 bin: app_bin_path(&dist_dir),
                 text: app_text_path(&dist_dir),
+                vk_cache_dir: None,
             };
             generate_snark_vk(&snark_vk_path, &snark_options)
                 .context("while generating the SNARK verification key")?;
@@ -291,6 +300,28 @@ mod tests {
                     vec![PathBuf::from("./artifacts/proofs/batch-42/fri_proof.json")]
                 );
                 assert_eq!(args.output_dir, PathBuf::from("./artifacts/proofs"));
+            }
+            _ => panic!("expected prove-snark command"),
+        }
+    }
+
+    #[test]
+    fn prove_snark_parses_vk_cache_dir() {
+        let cli = Cli::try_parse_from([
+            "eravm-prover-host",
+            "prove-snark",
+            "--proof-files",
+            "./artifacts/proofs/batch-42/fri_proof.json",
+            "--output-dir",
+            "./artifacts/proofs",
+            "--vk-cache-dir",
+            "./vks",
+        ])
+        .expect("prove-snark arguments should parse");
+
+        match cli.command {
+            Command::ProveSnark(args) => {
+                assert_eq!(args.vk_cache_dir, Some(PathBuf::from("./vks")));
             }
             _ => panic!("expected prove-snark command"),
         }
