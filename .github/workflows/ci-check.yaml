@@ -57,7 +57,7 @@ jobs:
 
   tests:
     name: tests
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: matterlabs-ci-runner-standard-16
     env:
       ZKSYNC_USE_CUDA_STUBS: true
     steps:
@@ -103,7 +103,7 @@ jobs:
 
   vm-compare-batches:
     name: vm-compare-batches
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: matterlabs-ci-runner-standard-16
     env:
       ZKSYNC_USE_CUDA_STUBS: true
       BATCHES_DIR: testdata/era_mainnet_batches/binary
@@ -149,7 +149,7 @@ jobs:
   # -----------------------------------------------------------------------------
   guest-build:
     name: guest-build
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: matterlabs-ci-runner-standard-8
     timeout-minutes: 60
     container:
       image: ghcr.io/matter-labs/cargo-airbender:v0.2.3
