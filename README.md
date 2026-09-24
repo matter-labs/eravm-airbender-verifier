@@ -127,7 +127,7 @@ So if you have CUDA 13 installed, your options are either to rely on CPU proving
 
 ```bash
 # `era-bellman-cuda` & SNARK wrapper use old code that doesn't always respect `CUDA_HOME` and instead
-# on linux checks `/usr/local/cuda`
+# on Linux checks `/usr/local/cuda`
 echo $CUDA_HOME
 # If your output is not `/usr/local/cuda`, you might want to create a symlink, e.g. `sudo ln -s /opt/cuda /usr/local/cuda`.
 
